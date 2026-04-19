@@ -76,7 +76,7 @@ export function formatGitHubSummary(rows: SummaryRow[]): string {
 |------|----------|---------|--------|
 ${tableRows}
 
-_Automated triage by [claude-autopilot](https://github.com/obra/claude-autopilot)_`;
+_Automated triage by [claude-autopilot](https://github.com/axledbetter/claude-autopilot)_`;
 }
 
 export function postSummaryComment(prNumber: number, summary: string): void {

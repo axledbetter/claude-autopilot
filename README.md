@@ -2,7 +2,7 @@
 
 End-to-end Claude Code pipeline: approved spec → implementation plan → git worktree → subagent-driven implementation → migrations → validation → PR → Codex review → bugbot triage. Runs without pausing between steps.
 
-Status: **v0.1 — extracted from a working internal deployment. Delegance-specific rules remain in the validate phase files. Config surface is minimal (stack description only). See _customize_ below.**
+Status: **v0.1 — extracted from a working internal deployment and cleaned up for general use. Stack-specific rules have been stubbed or disabled. See _customize_ below.**
 
 ## What it is
 
