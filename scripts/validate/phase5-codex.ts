@@ -59,12 +59,12 @@ function buildSpecContext(): string {
   const parts: string[] = [];
   if (spec) {
     try {
-      parts.push(`# Spec: ${path.basename(spec)}\n${fs.readFileSync(spec, 'utf-8').slice(0, 4000)}`);
+      parts.push(`# Spec: ${path.basename(spec)}\n${fs.readFileSync(spec, 'utf-8')}`);
     } catch { /* ignore */ }
   }
   if (plan) {
     try {
-      parts.push(`# Plan: ${path.basename(plan)}\n${fs.readFileSync(plan, 'utf-8').slice(0, 2000)}`);
+      parts.push(`# Plan: ${path.basename(plan)}\n${fs.readFileSync(plan, 'utf-8')}`);
     } catch { /* ignore */ }
   }
   return parts.length > 0 ? parts.join('\n\n---\n\n') + '\n\n---\n\n' : '';
