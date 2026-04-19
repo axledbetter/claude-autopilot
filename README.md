@@ -40,8 +40,8 @@ plan → worktree → implement → migrate → validate → PR → Codex review
 cp -R /path/to/claude-autopilot/.claude/skills/autopilot ./.claude/skills/
 cp -R /path/to/claude-autopilot/scripts/* ./scripts/
 
-# Install tsx runtime and OpenAI SDK if you don't have them
-npm install --save-dev tsx openai dotenv
+# Install runtime dependencies (tsx, openai, dotenv, minimatch)
+npm install --save-dev tsx openai dotenv minimatch
 
 # Create a .autopilot dir and describe your stack for Codex reviews
 mkdir -p .autopilot
@@ -93,6 +93,9 @@ Static checks that may not apply to your stack:
 
 Action: delete or rewrite the checks that don't fit your stack. Keep the structure (phase runners, Finding type) and replace the rules.
 
+### `scripts/validate/protected-paths.ts`
+Glob patterns for files where auto-fix is blocked (auth, billing, migrations, middleware). Defaults to Delegance's conventions — replace with your own sensitive paths. Keep the shape (`PROTECTED_PATTERNS` array + `isProtectedPath()` export).
+
 ### `scripts/validate/phase5-codex.ts`
 Calls Codex 5.3 to review the diff. Uses `.autopilot/stack.md` if present (see install above).
 
@@ -118,17 +121,20 @@ scripts/
   codex-pr-review.ts                     # PR diff review + GitHub comment
   bugbot.ts                              # Cursor bugbot triage + auto-fix
   validate.ts                            # pre-PR validation pipeline entry
+  run-affected-tests.ts                  # test runner stub — replace with affected-tests logic
   validate/
-    phase1-static.ts                     # static checks (Delegance rules; customize)
-    phase2-autofix.ts                    # ESLint --fix, prettier
+    phase1-static.ts                     # static checks (customize rules for your stack)
+    phase2-autofix.ts                    # ESLint --fix, pattern scan
     phase4-tests.ts                      # affected-tests runner
     phase5-codex.ts                      # Codex diff review + auto-fix
     phase6-gate.ts                       # merge gate (bugbot HIGH count)
     exec-utils.ts                        # shell exec helpers
     git-utils.ts                         # merge base, touched files
     reporter.ts                          # console + JSON report output
-    protected-paths.ts                   # paths where auto-fix is blocked
+    protected-paths.ts                   # paths where auto-fix is blocked (customize)
     types.ts                             # Finding, ValidationReport, etc.
+    check-email-sender-domains.ts        # stub — implement your sender domain checks
+    check-unchecked-email-sends.ts       # stub — implement your async-send checks
 .autopilot/
   stack.md.example                       # example stack description for Codex reviews
 ```
@@ -136,7 +142,6 @@ scripts/
 ## What's NOT included
 
 - `scripts/supabase/migrate.ts` (the script the migrate skill calls — Delegance-specific Supabase Management API wrapper)
-- The `check-*.ts` phase 1 detail files (Delegance email/sender checks)
 - The **superpowers** plugin itself — install separately via the Claude Code plugin marketplace (see prerequisites)
 - A test harness for the scripts themselves (you'll want to add one)
 

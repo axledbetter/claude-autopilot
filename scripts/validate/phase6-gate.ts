@@ -1,13 +1,23 @@
 import { Finding, PhaseResult } from './types';
 import { runSafe } from './exec-utils';
 
+function getCurrentRepo(): string | null {
+  const result = runSafe('gh', ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner']);
+  return result ? result.trim() : null;
+}
+
 export async function runPhase6(prNumber?: number): Promise<PhaseResult> {
   const start = Date.now();
   const findings: Finding[] = [];
 
   if (prNumber) {
+    const repo = getCurrentRepo();
+    if (!repo) {
+      return { phase: 'gate', status: 'warn', findings, durationMs: Date.now() - start };
+    }
+
     const output = runSafe('gh', [
-      'api', `repos/Delegance-Brokerage/delegance-app/pulls/${prNumber}/comments`,
+      'api', `repos/${repo}/pulls/${prNumber}/comments`,
       '--jq', '.[] | select(.user.type == "Bot" or .user.login == "cursor[bot]") | @json',
     ], { timeout: 30000 });
 

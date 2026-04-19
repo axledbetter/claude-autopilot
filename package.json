@@ -1,0 +1,12 @@
+{
+  "name": "claude-autopilot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claude Code pipeline: spec → plan → implement → validate → PR → review",
+  "devDependencies": {
+    "dotenv": ">=16",
+    "minimatch": ">=9",
+    "openai": ">=4",
+    "tsx": ">=4"
+  }
+}
