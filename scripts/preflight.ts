@@ -29,6 +29,16 @@ function runSafe(cmd: string, args: string[]): string | null {
   }
 }
 
+function runSafeWithStderr(cmd: string, args: string[]): { stdout: string | null; stderr: string } {
+  try {
+    const stdout = execFileSync(cmd, args, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] }) as string;
+    return { stdout, stderr: '' };
+  } catch (e: unknown) {
+    const err = e as { stderr?: string };
+    return { stdout: null, stderr: err.stderr ?? '' };
+  }
+}
+
 function loadEnvFile(filePath: string): Record<string, string> {
   const vars: Record<string, string> = {};
   try {
@@ -77,11 +87,20 @@ checks.push({
 // 3b. GitHub connectivity + repo write access
 // Skipped if auth check already failed (no point hitting the network)
 if (ghAuth !== null) {
-  const repoJson = runSafe('gh', ['repo', 'view', '--json', 'nameWithOwner,viewerPermission']);
-  let ghConnOk = false;
+  const { stdout: repoJson, stderr: repoErr } = runSafeWithStderr('gh', ['repo', 'view', '--json', 'nameWithOwner,viewerPermission']);
+  let ghConnResult: 'pass' | 'fail' | 'warn' = 'fail';
   let ghConnMessage: string | undefined;
+
   if (!repoJson) {
-    ghConnMessage = 'Cannot reach GitHub API — check network connectivity or VPN. PR creation and bugbot steps will fail.';
+    if (repoErr.includes('no git remotes')) {
+      ghConnResult = 'warn';
+      ghConnMessage = 'No git remote configured — run: git remote add origin https://github.com/you/your-repo. Push and PR steps will fail until this is set.';
+    } else if (repoErr.includes('not a git repository')) {
+      ghConnResult = 'warn';
+      ghConnMessage = 'Not inside a git repository — initialize one first: git init && git remote add origin <url>';
+    } else {
+      ghConnMessage = 'Cannot reach GitHub API — check network connectivity or VPN. PR creation and bugbot steps will fail.';
+    }
   } else {
     try {
       const repo = JSON.parse(repoJson) as { nameWithOwner: string; viewerPermission: string };
@@ -89,7 +108,7 @@ if (ghAuth !== null) {
       if (!canPush) {
         ghConnMessage = `No push access to ${repo.nameWithOwner} (permission: ${repo.viewerPermission ?? 'unknown'}) — git push and gh pr create will fail.`;
       } else {
-        ghConnOk = true;
+        ghConnResult = 'pass';
       }
     } catch {
       ghConnMessage = 'Unexpected response from GitHub API — check gh CLI version or token scopes.';
@@ -97,7 +116,7 @@ if (ghAuth !== null) {
   }
   checks.push({
     name: 'GitHub connectivity + push access',
-    result: ghConnOk ? 'pass' : 'fail',
+    result: ghConnResult,
     message: ghConnMessage,
   });
 }

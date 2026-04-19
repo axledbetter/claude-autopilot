@@ -39,17 +39,20 @@ plan → worktree → implement → migrate → validate → PR → Codex review
 # Clone the repo somewhere convenient
 git clone https://github.com/axledbetter/claude-autopilot /tmp/claude-autopilot
 
-# Copy skills and scripts into your repo root
+# Create destination directories and copy skills + scripts into your repo root
+mkdir -p .claude/skills scripts .autopilot
 cp -R /tmp/claude-autopilot/.claude/skills/autopilot ./.claude/skills/
-cp -R /tmp/claude-autopilot/scripts/* ./scripts/
+cp -R /tmp/claude-autopilot/scripts/. ./scripts/
 
 # Install runtime dependencies (tsx, openai, dotenv, minimatch)
 npm install --save-dev tsx openai dotenv minimatch
 
 # Describe your stack for Codex reviews — this is loaded as context on every review
-mkdir -p .autopilot
 cp /tmp/claude-autopilot/.autopilot/stack.md.example .autopilot/stack.md
 # Edit .autopilot/stack.md to describe your actual stack and security rules
+
+# Run preflight to verify everything is wired up
+npx tsx scripts/preflight.ts
 ```
 
 ## Usage
