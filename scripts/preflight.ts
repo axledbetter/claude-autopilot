@@ -66,13 +66,41 @@ checks.push({
   message: !tsxVersion ? 'tsx not found — run: npm install --save-dev tsx' : undefined,
 });
 
-// 3. gh CLI authenticated
+// 3. gh CLI authenticated (local token check)
 const ghAuth = runSafe('gh', ['auth', 'status']);
 checks.push({
   name: 'gh CLI authenticated',
   result: ghAuth !== null ? 'pass' : 'fail',
   message: ghAuth === null ? 'gh CLI not authenticated — run: gh auth login' : undefined,
 });
+
+// 3b. GitHub connectivity + repo write access
+// Skipped if auth check already failed (no point hitting the network)
+if (ghAuth !== null) {
+  const repoJson = runSafe('gh', ['repo', 'view', '--json', 'nameWithOwner,viewerPermission']);
+  let ghConnOk = false;
+  let ghConnMessage: string | undefined;
+  if (!repoJson) {
+    ghConnMessage = 'Cannot reach GitHub API — check network connectivity or VPN. PR creation and bugbot steps will fail.';
+  } else {
+    try {
+      const repo = JSON.parse(repoJson) as { nameWithOwner: string; viewerPermission: string };
+      const canPush = ['WRITE', 'MAINTAIN', 'ADMIN'].includes(repo.viewerPermission ?? '');
+      if (!canPush) {
+        ghConnMessage = `No push access to ${repo.nameWithOwner} (permission: ${repo.viewerPermission ?? 'unknown'}) — git push and gh pr create will fail.`;
+      } else {
+        ghConnOk = true;
+      }
+    } catch {
+      ghConnMessage = 'Unexpected response from GitHub API — check gh CLI version or token scopes.';
+    }
+  }
+  checks.push({
+    name: 'GitHub connectivity + push access',
+    result: ghConnOk ? 'pass' : 'fail',
+    message: ghConnMessage,
+  });
+}
 
 // 4. Local env file exists
 const envFile = ENV_CANDIDATES.find(f => fs.existsSync(f));
