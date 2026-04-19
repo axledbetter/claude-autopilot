@@ -103,6 +103,71 @@ async function checkMigrationLedger(touchedFiles: string[]): Promise<Finding[]> 
   return findings;
 }
 
+async function checkPackageLockSync(touchedFiles: string[]): Promise<Finding[]> {
+  const findings: Finding[] = [];
+  const fs = require('fs');
+
+  if (!fs.existsSync('package.json')) return findings;
+
+  // Trigger if package.json changed on branch (committed) or in working tree (staged/unstaged)
+  const pkgInTouched = touchedFiles.some(f => f === 'package.json');
+  const pkgStagedDirty = (runSafe('git', ['diff', '--name-only', '--cached', 'package.json']) || '').trim();
+  const pkgUnstagedDirty = (runSafe('git', ['diff', '--name-only', 'package.json']) || '').trim();
+
+  if (!pkgInTouched && !pkgStagedDirty && !pkgUnstagedDirty) return findings;
+
+  if (!fs.existsSync('package-lock.json')) {
+    findings.push(makeFinding({
+      severity: 'critical',
+      category: 'package-lock-sync',
+      file: 'package.json',
+      message: 'package.json was modified but package-lock.json does not exist',
+      suggestion: 'Run: npm install',
+    }));
+    return findings;
+  }
+
+  // Regenerate the lockfile from package.json and check for drift.
+  // --prefer-offline avoids network if packages are cached; falls back to registry if not.
+  // --ignore-scripts skips lifecycle hooks so this is safe to run anywhere.
+  const regenResult = runSafe('npm', [
+    'install',
+    '--package-lock-only',
+    '--ignore-scripts',
+    '--prefer-offline',
+  ]);
+
+  if (regenResult === null) {
+    // npm failed (network unavailable, bad package name, etc.) — report but don't block
+    findings.push(makeFinding({
+      severity: 'warning',
+      category: 'package-lock-sync',
+      file: 'package-lock.json',
+      message: 'Could not verify package-lock.json sync — npm install --package-lock-only failed',
+      suggestion: 'Run manually: npm install --package-lock-only && git add package-lock.json',
+    }));
+    return findings;
+  }
+
+  const lockDiff = (runSafe('git', ['diff', '--stat', 'package-lock.json']) || '').trim();
+
+  if (lockDiff) {
+    // Lockfile was stale — stage the regenerated version so it gets picked up
+    runSafe('git', ['add', 'package-lock.json']);
+    findings.push(makeFinding({
+      severity: 'warning',
+      category: 'package-lock-sync',
+      file: 'package-lock.json',
+      message: 'package-lock.json was out of sync with package.json — regenerated and staged',
+      suggestion: 'Include package-lock.json in your commit',
+      status: 'fixed',
+      fixAttempted: true,
+    }));
+  }
+
+  return findings;
+}
+
 async function checkNpmAudit(): Promise<Finding[]> {
   const findings: Finding[] = [];
 
@@ -264,6 +329,7 @@ export async function runPhase1(touchedFiles: string[]): Promise<PhaseResult> {
   const [
     migrationFindings,
     ledgerFindings,
+    packageLockFindings,
     auditFindings,
     securityFindings,
     emailSenderFindings,
@@ -271,6 +337,7 @@ export async function runPhase1(touchedFiles: string[]): Promise<PhaseResult> {
   ] = await Promise.all([
     checkMigrationIntegrity(touchedFiles),
     checkMigrationLedger(touchedFiles),
+    checkPackageLockSync(touchedFiles),
     checkNpmAudit(),
     checkSecurityPatterns(touchedFiles),
     // Wrap in its own try so a stray AWS SDK issue can't take down phase 1.
@@ -305,6 +372,7 @@ export async function runPhase1(touchedFiles: string[]): Promise<PhaseResult> {
   const findings: Finding[] = [
     ...migrationFindings,
     ...ledgerFindings,
+    ...packageLockFindings,
     ...auditFindings,
     ...securityFindings,
     ...emailSenderFindings,

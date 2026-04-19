@@ -56,6 +56,13 @@ EOF
 
 ## Usage
 
+**Brainstorming comes first.** Use `/brainstorming` (from superpowers) to turn an idea into an approved spec. Once the spec is written and committed, invoke autopilot:
+
+```
+/brainstorming   ← run this first (superpowers) — iterates to an approved spec
+/autopilot       ← run this after the spec is approved
+```
+
 After you've brainstormed a spec and the user approves it (spec at `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`), invoke:
 
 ```
