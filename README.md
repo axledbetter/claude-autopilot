@@ -36,22 +36,20 @@ plan → worktree → implement → migrate → validate → PR → Codex review
 ## Install
 
 ```bash
-# From your repo root:
-cp -R /path/to/claude-autopilot/.claude/skills/autopilot ./.claude/skills/
-cp -R /path/to/claude-autopilot/scripts/* ./scripts/
+# Clone the repo somewhere convenient
+git clone https://github.com/axledbetter/claude-autopilot /tmp/claude-autopilot
+
+# Copy skills and scripts into your repo root
+cp -R /tmp/claude-autopilot/.claude/skills/autopilot ./.claude/skills/
+cp -R /tmp/claude-autopilot/scripts/* ./scripts/
 
 # Install runtime dependencies (tsx, openai, dotenv, minimatch)
 npm install --save-dev tsx openai dotenv minimatch
 
-# Create a .autopilot dir and describe your stack for Codex reviews
+# Describe your stack for Codex reviews — this is loaded as context on every review
 mkdir -p .autopilot
-cat > .autopilot/stack.md <<'EOF'
-A Next.js 15 App Router app with:
-- TypeScript, React 19
-- Postgres via Prisma
-- Vitest for tests
-- Vercel deployment
-EOF
+cp /tmp/claude-autopilot/.autopilot/stack.md.example .autopilot/stack.md
+# Edit .autopilot/stack.md to describe your actual stack and security rules
 ```
 
 ## Usage
@@ -97,7 +95,7 @@ Action: delete or rewrite the checks that don't fit your stack. Keep the structu
 Glob patterns for files where auto-fix is blocked (auth, billing, migrations, middleware). Defaults to Delegance's conventions — replace with your own sensitive paths. Keep the shape (`PROTECTED_PATTERNS` array + `isProtectedPath()` export).
 
 ### `scripts/validate/phase5-codex.ts`
-Calls Codex 5.3 to review the diff. Uses `.autopilot/stack.md` if present (see install above).
+Calls Codex to review each changed module. Automatically loads full context: the most recent spec from `docs/superpowers/specs/`, the implementation plan from `docs/superpowers/plans/`, and `.autopilot/stack.md`. Codex sees what the feature was supposed to build, not just the code — enabling spec-vs-implementation gap detection.
 
 ### `scripts/bugbot.ts`
 Triage rules hardcoded to our severity conventions. Key decision points:
@@ -117,16 +115,26 @@ The skill FILE is instructive and generic enough to adapt: it describes the "val
   autopilot/SKILL.md                     # the orchestrator skill
   migrate/SKILL.md                       # DB migration orchestrator (Supabase-shaped; adapt)
 scripts/
-  codex-review.ts                        # standalone spec/plan review
+  preflight.ts                           # prerequisite check (Node, gh, tsx, env file, superpowers)
+  load-env.ts                            # auto-detects .env.local / .env.dev / .env.development / .env
+  codex-review.ts                        # standalone spec/plan/code review via Codex
   codex-pr-review.ts                     # PR diff review + GitHub comment
-  bugbot.ts                              # Cursor bugbot triage + auto-fix
+  bugbot.ts                              # Cursor bugbot triage + auto-fix orchestrator
+  bugbot/
+    types.ts                             # BugbotOptions, BugbotComment, TriageResult, etc.
+    state.ts                             # persistent state (.claude/bugbot-state.json)
+    fetcher.ts                           # fetch review comments from GitHub (customize bot author)
+    triage.ts                            # Claude-powered triage (customize CONFIDENCE_THRESHOLDS)
+    fixer.ts                             # auto-fix engine (customize PROTECTED_PATHS)
+    commenter.ts                         # post triage replies to GitHub
+    reporter.ts                          # console + GitHub summary comment
   validate.ts                            # pre-PR validation pipeline entry
   run-affected-tests.ts                  # test runner stub — replace with affected-tests logic
   validate/
-    phase1-static.ts                     # static checks (customize rules for your stack)
+    phase1-static.ts                     # static checks (hardcoded-secrets generic; add your own)
     phase2-autofix.ts                    # ESLint --fix, pattern scan
     phase4-tests.ts                      # affected-tests runner
-    phase5-codex.ts                      # Codex diff review + auto-fix
+    phase5-codex.ts                      # Codex review with full spec + plan + stack context
     phase6-gate.ts                       # merge gate (bugbot HIGH count)
     exec-utils.ts                        # shell exec helpers
     git-utils.ts                         # merge base, touched files
@@ -136,7 +144,7 @@ scripts/
     check-email-sender-domains.ts        # stub — implement your sender domain checks
     check-unchecked-email-sends.ts       # stub — implement your async-send checks
 .autopilot/
-  stack.md.example                       # example stack description for Codex reviews
+  stack.md.example                       # stack description template for Codex reviews
 ```
 
 ## What's NOT included

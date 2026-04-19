@@ -93,7 +93,7 @@ export async function runPhase5(
     // Build batch content for Codex review
     const batchContent = files.map(f => {
       try {
-        const content = fs.readFileSync(f, 'utf-8').slice(0, 3000);
+        const content = fs.readFileSync(f, 'utf-8');
         return `## ${f}\n\`\`\`typescript\n${content}\n\`\`\`\n`;
       } catch { return ''; }
     }).filter(Boolean).join('\n');
