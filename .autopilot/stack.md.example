@@ -22,3 +22,11 @@ Things that should flag CRITICAL:
 - Missing rate limit on public POST endpoints
 - Uncaught promise rejections in route handlers
 - Secrets in code or committed .env files
+
+# Stack-specific security rules — Codex will enforce these on every PR review.
+# Add anything that's a known footgun in your codebase.
+# Examples:
+# - Supabase: createServiceRoleClient() called in client-side components
+# - Weaviate: vector queries without .withTenant() (multi-tenant data leak)
+# - Your ORM: raw query() calls that bypass the query builder
+# - Your auth library: middleware skipped via specific flag or pattern

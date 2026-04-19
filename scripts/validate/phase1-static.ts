@@ -227,10 +227,14 @@ async function checkNpmAudit(): Promise<Finding[]> {
 
 /**
  * Security scanning: check touched files for dangerous patterns.
- * - Service role keys in client-side code
- * - Hardcoded secrets/API keys
- * - Missing Weaviate tenant isolation
- * - RLS bypass without justification comment
+ *
+ * GENERIC checks (keep as-is):
+ * - Hardcoded secrets/API keys in source code
+ *
+ * STACK-SPECIFIC checks (customize or remove for your stack):
+ * - `createServiceRoleClient` in client-side code (Supabase RLS bypass)
+ * - Stack-specific tenant isolation (e.g., Weaviate `.withTenant()`)
+ * Add your own checks following the same pattern.
  */
 async function checkSecurityPatterns(touchedFiles: string[]): Promise<Finding[]> {
   const findings: Finding[] = [];
@@ -244,30 +248,13 @@ async function checkSecurityPatterns(touchedFiles: string[]): Promise<Finding[]>
     const content = fs.readFileSync(file, 'utf-8');
     const lines = content.split('\n');
 
-    // Check: service role client in client-side code (app/components, app/portal, etc.)
-    const isClientSide = file.includes('app/components/') ||
-      file.includes('app/portal/') ||
-      file.includes('app/onboarding/') ||
-      (file.endsWith('.tsx') && !file.includes('api/'));
-
-    if (isClientSide && content.includes('createServiceRoleClient')) {
-      findings.push(makeFinding({
-        severity: 'critical',
-        category: 'security-service-role',
-        file,
-        message: 'createServiceRoleClient() used in client-side code — bypasses RLS, exposes service key',
-        suggestion: 'Use createServerSupabase() or createBrowserSupabase() instead',
-      }));
-    }
-
-    // Check: hardcoded secrets (API keys, tokens)
+    // GENERIC: hardcoded secrets (API keys, tokens)
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (line.trimStart().startsWith('//') || line.trimStart().startsWith('*')) continue;
 
       // Match patterns like: key = "sk-..." or token: "eyJ..."
       if (/(?:key|token|secret|password|apikey)\s*[:=]\s*['"][a-zA-Z0-9_\-]{20,}['"]/i.test(line)) {
-        // Exclude .env references and test files
         if (!file.includes('.test.') && !file.includes('__tests__') && !line.includes('process.env')) {
           findings.push(makeFinding({
             severity: 'critical',
@@ -275,49 +262,33 @@ async function checkSecurityPatterns(touchedFiles: string[]): Promise<Finding[]>
             file,
             line: i + 1,
             message: 'Possible hardcoded secret/API key detected',
-            suggestion: 'Move to environment variable in .env.local',
+            suggestion: 'Move to an environment variable',
           }));
         }
       }
     }
 
-    // Check: Weaviate queries without .withTenant()
-    if (content.includes('weaviate') || content.includes('Weaviate')) {
-      if ((content.includes('.query(') || content.includes('.search(') || content.includes('.get(')) &&
-          !content.includes('.withTenant(') && !content.includes('withTenant:')) {
-        findings.push(makeFinding({
-          severity: 'critical',
-          category: 'security-weaviate-tenant',
-          file,
-          message: 'Weaviate query without .withTenant() — returns cross-tenant data',
-          suggestion: 'Add .withTenant(companyId) to every Weaviate query',
-        }));
-      }
-    }
-
-    // Check: createServiceRoleClient without justification comment
-    if (content.includes('createServiceRoleClient') && !isClientSide) {
-      const serviceRoleLines = lines
-        .map((l, i) => ({ line: l, num: i }))
-        .filter(({ line }) => line.includes('createServiceRoleClient'));
-
-      for (const { line, num } of serviceRoleLines) {
-        // Check if previous line has a justification comment
-        const prevLine = num > 0 ? lines[num - 1] : '';
-        if (!prevLine.includes('// service role') && !prevLine.includes('// bypass RLS') &&
-            !prevLine.includes('// admin') && !prevLine.includes('// worker') &&
-            !line.includes('// service role')) {
-          findings.push(makeFinding({
-            severity: 'warning',
-            category: 'security-service-role-justification',
-            file,
-            line: num + 1,
-            message: 'createServiceRoleClient() without justification comment',
-            suggestion: 'Add comment explaining why RLS bypass is needed (e.g., // service role: worker needs cross-tenant access)',
-          }));
-        }
-      }
-    }
+    // --- STACK-SPECIFIC CHECKS ---
+    // These are disabled by default. Uncomment and adapt for your stack.
+    // For LLM-reviewed security rules, use .autopilot/stack.md instead —
+    // add them under "Things that should flag CRITICAL" and the Codex review
+    // (phase 5) will catch them on every PR without any code changes here.
+    //
+    // Example — Supabase: service role client in client-side code
+    // const isClientSide = file.includes('app/components/') || file.endsWith('.tsx') && !file.includes('api/');
+    // if (isClientSide && content.includes('createServiceRoleClient')) {
+    //   findings.push(makeFinding({ severity: 'critical', category: 'security-service-role', file,
+    //     message: 'createServiceRoleClient() in client-side code exposes service key',
+    //     suggestion: 'Use a server-only DB client instead' }));
+    // }
+    //
+    // Example — Weaviate: multi-tenant queries must include .withTenant()
+    // if ((content.includes('weaviate') || content.includes('Weaviate')) &&
+    //     (content.includes('.query(') || content.includes('.get(')) && !content.includes('.withTenant(')) {
+    //   findings.push(makeFinding({ severity: 'critical', category: 'security-tenant', file,
+    //     message: 'Weaviate query without .withTenant() — cross-tenant data leak',
+    //     suggestion: 'Add .withTenant(tenantId) to every Weaviate query' }));
+    // }
   }
 
   return findings;

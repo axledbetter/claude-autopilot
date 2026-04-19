@@ -4,6 +4,9 @@ import { Finding, PhaseResult } from './types';
 import { isProtectedPath } from './protected-paths';
 import { runSafe } from './exec-utils';
 import { stageFiles, commitChanges, storeFileBackup, restoreFileBackup } from './git-utils';
+import { loadEnv } from '../load-env';
+
+loadEnv();
 
 interface CodexFinding {
   severity: 'critical' | 'warning' | 'note';

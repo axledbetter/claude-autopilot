@@ -1,10 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { config } from 'dotenv';
 import OpenAI from 'openai';
+import { loadEnv } from './load-env';
 
-// Load .env.local from project root so OPENAI_API_KEY is available
-config({ path: path.resolve(__dirname, '..', '.env.local') });
+loadEnv();
 
 const CODEX_MODEL = process.env.CODEX_MODEL || 'gpt-5.3-codex';
 const MAX_OUTPUT_TOKENS = 4096;

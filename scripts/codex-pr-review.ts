@@ -11,6 +11,9 @@
 
 import * as fs from 'fs';
 import { run, runSafe } from './validate/exec-utils';
+import { loadEnv } from './load-env';
+
+loadEnv();
 
 async function main() {
   const prNumber = process.argv[2];

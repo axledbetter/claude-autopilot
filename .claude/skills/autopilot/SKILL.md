@@ -28,6 +28,16 @@ Brief status lines like `[autopilot] Step 3: Executing plan...` are fine. Full s
 
 Execute these steps in order. Do NOT pause between steps unless a step fails.
 
+### Step 0: Preflight
+
+```bash
+npx tsx scripts/preflight.ts
+```
+
+If any check **fails** (red ✗): stop and tell the user what to fix before continuing.
+If checks only **warn** (yellow !): proceed — degraded steps will be noted in the final report.
+If all pass: continue immediately, no user interaction needed.
+
 ### Step 1: Write Implementation Plan
 
 ```
@@ -44,6 +54,19 @@ Commit the plan. Do NOT ask the user for execution choice — always use subagen
 Invoke: superpowers:using-git-worktrees
 Branch: feature/<topic-slug>
 ```
+
+After the worktree is created, symlink the local env file into it so scripts
+(validate, Codex review, migrate) can read secrets:
+
+```bash
+# Detect which env file the project uses
+ENV_FILE=$(ls .env.local .env.dev .env.development .env 2>/dev/null | head -1)
+if [ -n "$ENV_FILE" ]; then
+  ln -sf "$(pwd)/$ENV_FILE" ".claude/worktrees/<branch>/$ENV_FILE"
+fi
+```
+
+If no env file is found, note it in the preflight output (step 0 will have caught this).
 
 ### Step 3: Execute Plan
 
