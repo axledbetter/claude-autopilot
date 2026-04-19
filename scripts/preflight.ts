@@ -105,6 +105,28 @@ checks.push({
     : undefined,
 });
 
+// 8. claude CLI available — required for claude -p in bugbot triage and phase5 autofix
+const claudeVersion = runSafe('claude', ['--version']);
+checks.push({
+  name: 'claude CLI',
+  result: claudeVersion ? 'pass' : 'fail',
+  message: !claudeVersion
+    ? 'claude CLI not found — required for bugbot triage and Codex autofix. Install Claude Code: https://claude.ai/claude-code'
+    : undefined,
+});
+
+// 9. git user config — commits will fail without name/email
+const gitName = runSafe('git', ['config', 'user.name']);
+const gitEmail = runSafe('git', ['config', 'user.email']);
+const gitConfigOk = !!(gitName?.trim()) && !!(gitEmail?.trim());
+checks.push({
+  name: 'git user config',
+  result: gitConfigOk ? 'pass' : 'warn',
+  message: !gitConfigOk
+    ? `git user.name / user.email not set — commits will fail. Fix: git config --global user.name "Your Name" && git config --global user.email "you@example.com"`
+    : undefined,
+});
+
 // 7. superpowers plugin installed — check multiple known install paths
 const home = process.env.HOME ?? '';
 const superpowersPaths = [

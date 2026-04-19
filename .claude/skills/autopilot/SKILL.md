@@ -10,7 +10,8 @@ After the user approves a spec during brainstorming, this skill runs the full pi
 ## Prerequisites
 
 - Approved spec file at `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`
-- All required skills installed: writing-plans, subagent-driven-development, validate, migrate, codex-review
+- Superpowers plugin installed (`writing-plans`, `using-git-worktrees`, `subagent-driven-development`)
+- Scripts installed and dependencies present (run step 0 preflight to verify)
 
 ## CRITICAL: Do Not Pause
 
@@ -123,7 +124,7 @@ gh pr create --title "<concise title>" --body "<generated PR body with spec link
 npx tsx scripts/codex-pr-review.ts <pr-number>
 ```
 
-Posts Codex 5.3 review as a GitHub PR comment. If critical findings:
+Posts Codex review as a GitHub PR comment. If critical findings:
 - Fix them on the branch
 - Push
 - Re-run Codex review
