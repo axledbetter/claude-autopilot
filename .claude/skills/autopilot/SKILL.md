@@ -90,7 +90,11 @@ For any `.sql` files created in `data/deltas/` during implementation:
 /migrate
 ```
 
-Run against dev → QA → prod with auto-promote. If migration fails, fix the SQL and retry.
+Run against **dev only** by default. Stop after dev succeeds and continue the pipeline.
+
+Only promote to QA → prod if the user has explicitly enabled it (e.g., `AUTOPILOT_ALLOW_PROD_MIGRATIONS=true` in their env) or asked for it directly. Production migrations are irreversible — never auto-promote without a clear signal.
+
+If migration fails, fix the SQL and retry (max 2 retries). If it still fails, stop and report.
 
 ### Step 5: Validate
 

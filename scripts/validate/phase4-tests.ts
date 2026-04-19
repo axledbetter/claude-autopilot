@@ -5,7 +5,7 @@ function makeFinding(
   overrides: Partial<Finding> & Pick<Finding, 'severity' | 'category' | 'file' | 'message'>
 ): Finding {
   return {
-    id: `phase4-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: `phase4-${crypto.randomUUID()}`,
     phase: 'tests',
     line: undefined,
     suggestion: undefined,

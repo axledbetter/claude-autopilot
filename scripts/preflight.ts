@@ -55,8 +55,11 @@ checks.push({
   message: nodeMajor < 22 ? `Node 22+ required — current: ${nodeVersion}. Install via nvm: nvm install 22` : undefined,
 });
 
-// 2. tsx available
-const tsxVersion = runSafe('npx', ['tsx', '--version']);
+// 2. tsx available — check local binary first, then global
+const localTsx = path.join(process.cwd(), 'node_modules', '.bin', 'tsx');
+const tsxVersion = fs.existsSync(localTsx)
+  ? runSafe(localTsx, ['--version'])
+  : runSafe('tsx', ['--version']);
 checks.push({
   name: 'tsx available',
   result: tsxVersion ? 'pass' : 'fail',
@@ -102,14 +105,19 @@ checks.push({
     : undefined,
 });
 
-// 7. superpowers plugin installed
-const pluginDir = path.join(process.env.HOME ?? '', '.claude', 'plugins', 'cache', 'claude-plugins-official', 'superpowers');
-const superpowersOk = fs.existsSync(pluginDir);
+// 7. superpowers plugin installed — check multiple known install paths
+const home = process.env.HOME ?? '';
+const superpowersPaths = [
+  path.join(home, '.claude', 'plugins', 'cache', 'claude-plugins-official', 'superpowers'),
+  path.join(home, '.claude', 'plugins', 'cache', 'superpowers-marketplace', 'superpowers'),
+  path.join(home, '.claude', 'plugins', 'superpowers'),
+];
+const superpowersOk = superpowersPaths.some(p => fs.existsSync(p));
 checks.push({
   name: 'superpowers plugin',
-  result: superpowersOk ? 'pass' : 'fail',
+  result: superpowersOk ? 'pass' : 'warn',
   message: !superpowersOk
-    ? 'superpowers plugin not found — install via Claude Code: /plugin install superpowers@claude-plugins-official'
+    ? 'superpowers plugin not detected in known cache paths — if installed via marketplace, this may be a false alarm. Install: /plugin install superpowers@claude-plugins-official'
     : undefined,
 });
 

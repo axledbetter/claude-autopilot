@@ -8,7 +8,7 @@ function makeFinding(
   overrides: Partial<Finding> & Pick<Finding, 'severity' | 'category' | 'file' | 'message'>
 ): Finding {
   return {
-    id: `phase1-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: `phase1-${crypto.randomUUID()}`,
     phase: 'static',
     line: undefined,
     suggestion: undefined,
@@ -22,6 +22,13 @@ function makeFinding(
 
 async function checkMigrationIntegrity(touchedFiles: string[]): Promise<Finding[]> {
   const findings: Finding[] = [];
+  const fs = require('fs');
+
+  // Skip entirely if the project hasn't provided a migrate script.
+  // Implement scripts/supabase/migrate.ts (or your equivalent) and this
+  // check will automatically activate.
+  if (!fs.existsSync('scripts/supabase/migrate.ts')) return findings;
+
   const sqlFiles = touchedFiles.filter(
     f => f.startsWith('data/deltas/') && f.endsWith('.sql')
   );
@@ -72,6 +79,9 @@ async function checkMigrationIntegrity(touchedFiles: string[]): Promise<Finding[
 
 async function checkMigrationLedger(touchedFiles: string[]): Promise<Finding[]> {
   const findings: Finding[] = [];
+  const fs = require('fs');
+  if (!fs.existsSync('scripts/supabase/migrate.ts')) return findings;
+
   const sqlFiles = touchedFiles.filter(
     f => f.startsWith('data/deltas/') && f.endsWith('.sql')
   );

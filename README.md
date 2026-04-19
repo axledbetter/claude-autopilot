@@ -145,6 +145,16 @@ scripts/
 - The **superpowers** plugin itself — install separately via the Claude Code plugin marketplace (see prerequisites)
 - A test harness for the scripts themselves (you'll want to add one)
 
+## Script contracts
+
+| Script | Inputs | Key outputs | Exit code |
+|--------|--------|-------------|-----------|
+| `scripts/preflight.ts` | none | console report | 0 = all pass or warn only; 1 = hard failure |
+| `scripts/validate.ts` | CLI flags (see `--help`) | `.claude/validation-report.json` | 0 = PASS; 1 = FAIL (blocking findings) |
+| `scripts/codex-review.ts` | file path / `--text=` / stdin | review markdown on stdout | 0 always (errors logged to stderr) |
+| `scripts/codex-pr-review.ts` | PR number | GitHub PR comment posted | 0 always |
+| `scripts/bugbot.ts` | `--pr`, `--dry-run`, `--rescan` | `.claude/bugbot-state.json`; GitHub comments | 0 always |
+
 ## License
 
 MIT. Use it however helps.
