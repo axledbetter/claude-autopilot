@@ -43,6 +43,33 @@ function batchByModule(files: string[]): Map<string, string[]> {
   return batches;
 }
 
+function findMostRecent(dir: string, ext: string): string | null {
+  try {
+    const files = fs.readdirSync(dir)
+      .filter(f => f.endsWith(ext))
+      .map(f => ({ f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    return files.length > 0 ? path.join(dir, files[0].f) : null;
+  } catch { return null; }
+}
+
+function buildSpecContext(): string {
+  const spec = findMostRecent('docs/superpowers/specs', '.md');
+  const plan = findMostRecent('docs/superpowers/plans', '.md');
+  const parts: string[] = [];
+  if (spec) {
+    try {
+      parts.push(`# Spec: ${path.basename(spec)}\n${fs.readFileSync(spec, 'utf-8').slice(0, 4000)}`);
+    } catch { /* ignore */ }
+  }
+  if (plan) {
+    try {
+      parts.push(`# Plan: ${path.basename(plan)}\n${fs.readFileSync(plan, 'utf-8').slice(0, 2000)}`);
+    } catch { /* ignore */ }
+  }
+  return parts.length > 0 ? parts.join('\n\n---\n\n') + '\n\n---\n\n' : '';
+}
+
 export async function runPhase5(
   touchedFiles: string[],
   options: { commitAutofix: boolean; verbose: boolean }
@@ -59,6 +86,7 @@ export async function runPhase5(
     return { phase: 'codex', status: 'pass', findings: [], durationMs: Date.now() - start };
   }
 
+  const specContext = buildSpecContext();
   const batches = batchByModule(reviewableFiles);
 
   for (const [module, files] of batches) {
@@ -71,7 +99,7 @@ export async function runPhase5(
     }).filter(Boolean).join('\n');
 
     const tmpFile = `/tmp/codex-validate-${module.replace(/\//g, '-')}.md`;
-    fs.writeFileSync(tmpFile, `# Code Review: ${module}\n\n${batchContent}`);
+    fs.writeFileSync(tmpFile, `# Code Review: ${module}\n\n${specContext}${batchContent}`);
 
     // Run Codex review
     let output: string | null = null;
