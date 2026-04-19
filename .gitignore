@@ -1,0 +1,7 @@
+node_modules/
+.env
+.env.local
+.autopilot/stack.md
+.claude/validation-report.json
+.claude/bugbot-state.json
+*.log
