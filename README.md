@@ -24,7 +24,11 @@ plan → worktree → implement → migrate → validate → PR → Codex review
 - Node.js 22+ and npm
 - `gh` CLI authenticated (`gh auth login`)
 - Git worktree-friendly repo
-- Required Claude Code plugin skills: `superpowers` (for `writing-plans`, `subagent-driven-development`, `using-git-worktrees`, `brainstorming`)
+- **Superpowers plugin** — autopilot depends on `brainstorming`, `writing-plans`, `using-git-worktrees`, `subagent-driven-development`. Install via Claude Code:
+  ```
+  /plugin install superpowers@claude-plugins-official
+  ```
+  (or `/plugin marketplace add obra/superpowers-marketplace` first, then `/plugin install superpowers@superpowers-marketplace`). See [github.com/obra/superpowers](https://github.com/obra/superpowers) for Cursor/Codex/OpenCode install.
 - Env vars:
   - `OPENAI_API_KEY` — for Codex review
   - `GITHUB_TOKEN` / `gh auth` — for PR creation and bugbot replies
@@ -91,13 +95,17 @@ Triage rules hardcoded to our severity conventions. Key decision points:
 - `PROTECTED_PATHS` — files/directories where auto-fix is blocked (auth, billing, migrations)
 - Triage prompt assumes Cursor `bugbot` as the reviewer. If you use a different review bot, adapt the fetch logic and prompt.
 
-### `SKILL.md` step 4 — Migrate
-References `/migrate` (a separate skill we haven't included here — it's a thin wrapper around Supabase CLI + custom promotion logic). If you don't use Supabase, delete step 4 or replace with your migration tool.
+### `.claude/skills/migrate/SKILL.md` — DB migration (Supabase)
+Thin orchestrator for Supabase dev → QA → prod migrations. Depends on `scripts/supabase/migrate.ts` (NOT included — Delegance-specific; wraps the Supabase Management API + maintains a migration ledger).
+
+The skill FILE is instructive and generic enough to adapt: it describes the "validate → dev → ask → QA → ask → prod" flow. If you use a different DB or migration tool (Prisma, Drizzle, Atlas, plain psql), keep the shape and replace the underlying script. If you don't have migrations in your pipeline at all, delete the skill + drop step 4 from `autopilot/SKILL.md`.
 
 ## What's included
 
 ```
-.claude/skills/autopilot/SKILL.md        # the orchestrator skill
+.claude/skills/
+  autopilot/SKILL.md                     # the orchestrator skill
+  migrate/SKILL.md                       # DB migration orchestrator (Supabase-shaped; adapt)
 scripts/
   codex-review.ts                        # standalone spec/plan review
   codex-pr-review.ts                     # PR diff review + GitHub comment
@@ -114,13 +122,15 @@ scripts/
     reporter.ts                          # console + JSON report output
     protected-paths.ts                   # paths where auto-fix is blocked
     types.ts                             # Finding, ValidationReport, etc.
+.autopilot/
+  stack.md.example                       # example stack description for Codex reviews
 ```
 
 ## What's NOT included
 
-- The `/migrate` skill (Supabase-coupled)
+- `scripts/supabase/migrate.ts` (the script the migrate skill calls — Delegance-specific Supabase Management API wrapper)
 - The `check-*.ts` phase 1 detail files (Delegance email/sender checks)
-- The `superpowers` plugin skills (install separately via Claude Code plugin marketplace)
+- The **superpowers** plugin itself — install separately via the Claude Code plugin marketplace (see prerequisites)
 - A test harness for the scripts themselves (you'll want to add one)
 
 ## License
