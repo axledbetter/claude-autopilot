@@ -28,13 +28,13 @@ function findGitDir(cwd: string): string | null {
 
 export async function runHook(
   sub: string,
-  options: { cwd?: string; force?: boolean } = {},
+  options: { cwd?: string; force?: boolean; silent?: boolean } = {},
 ): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
   const gitDir = findGitDir(cwd);
 
   if (!gitDir) {
-    console.error('[hook] not inside a git repository');
+    if (!options.silent) console.error('[hook] not inside a git repository');
     return 1;
   }
 

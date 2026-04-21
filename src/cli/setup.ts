@@ -70,7 +70,7 @@ export async function runSetup(options: SetupOptions = {}): Promise<void> {
   console.log(`  ${PASS}  Created autopilot.config.yaml`);
 
   if (!options.skipHook) {
-    const hookCode = await runHook('install', { cwd });
+    const hookCode = await runHook('install', { cwd, silent: true });
     if (hookCode === 0) {
       console.log(`  ${PASS}  Installed pre-push git hook`);
     } else {
