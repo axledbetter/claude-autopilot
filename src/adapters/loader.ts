@@ -8,6 +8,8 @@ export interface LoadAdapterOptions {
   point: IntegrationPoint;
   ref: string;
   options?: Record<string, unknown>;
+  /** Allow loading adapters from arbitrary local paths. Off by default for security. */
+  unsafeAllowLocalAdapters?: boolean;
 }
 
 const BUILTIN_PATHS: Record<IntegrationPoint, Record<string, string>> = {
@@ -33,6 +35,12 @@ export async function loadAdapter<T extends AdapterBase>(options: LoadAdapterOpt
   let modulePath: string;
 
   if (isPathRef(ref)) {
+    if (!options.unsafeAllowLocalAdapters) {
+      throw new AutopilotError(
+        `Path-based adapter refs require unsafeAllowLocalAdapters:true — set this only for trusted local adapters`,
+        { code: 'invalid_config', details: { point, ref } }
+      );
+    }
     modulePath = path.resolve(ref);
   } else {
     const builtin = BUILTIN_PATHS[point]?.[ref];

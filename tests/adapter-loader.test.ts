@@ -22,7 +22,7 @@ test('loadAdapter resolves relative path', async () => {
       estimateTokens: () => 0,
     };
   `);
-  const adapter = await loadAdapter({ point: 'review-engine', ref: fakePath });
+  const adapter = await loadAdapter({ point: 'review-engine', ref: fakePath, unsafeAllowLocalAdapters: true });
   assert.equal(adapter.name, 'fake');
   await fs.rm(tmpDir, { recursive: true, force: true });
 });
@@ -50,7 +50,7 @@ test('loadAdapter rejects mismatched apiVersion major', async () => {
     };
   `);
   await assert.rejects(
-    () => loadAdapter({ point: 'review-engine', ref: fakePath }),
+    () => loadAdapter({ point: 'review-engine', ref: fakePath, unsafeAllowLocalAdapters: true }),
     (err: unknown) => {
       assert.ok(err instanceof AutopilotError);
       assert.equal(err.code, 'invalid_config');
