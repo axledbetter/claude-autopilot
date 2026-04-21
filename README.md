@@ -13,18 +13,14 @@ Requires Node 22+. Also requires `gh` CLI authenticated and `claude` CLI install
 ## Quick Start
 
 ```bash
-# Scaffold config
-npx autopilot init
+# One command — auto-detects project type, writes config, installs hook
+npx autopilot setup
 
-# Run on changed files
+# Then run your first pipeline
 npx autopilot run
-
-# Watch mode (re-runs on every file save)
-npx autopilot watch
-
-# Install pre-push hook
-npx autopilot hook install
 ```
+
+Requires Node 22+, `gh` CLI authenticated, `claude` CLI (Claude Code).
 
 ## Commands
 
@@ -76,6 +72,17 @@ npx autopilot autoregress generate --files src/foo.ts,src/bar.ts
 ```
 
 Requires `OPENAI_API_KEY` for `generate` mode.
+
+### `autopilot setup`
+
+Zero-prompt setup: auto-detects project type, writes config, installs git hook in one command.
+
+```bash
+npx autopilot setup            # Auto-detect project, write config, install hook
+npx autopilot setup --force    # Overwrite existing autopilot.config.yaml
+```
+
+Auto-detection supports: Go, Rails, FastAPI, T3, Next.js+Supabase.
 
 ### `autopilot init`
 
