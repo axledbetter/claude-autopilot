@@ -18,6 +18,11 @@ inputs:
     description: OpenAI API key for the review engine. Pass via secrets.
     required: false
 
+# SECURITY: Use this action only on `pull_request` (same-repo) events.
+# Do NOT use on `pull_request_target` with fork PRs — that would execute
+# untrusted code with secrets available. For fork PR support, omit
+# openai-api-key and run in a separate unprivileged job.
+
 runs:
   using: composite
   steps:

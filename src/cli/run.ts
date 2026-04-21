@@ -125,6 +125,7 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
   // Write SARIF output if requested
   if (options.format === 'sarif' && options.outputPath) {
     const sarif = toSarif(result, { toolVersion: readToolVersion(), cwd });
+    fs.mkdirSync(path.dirname(path.resolve(options.outputPath)), { recursive: true });
     fs.writeFileSync(options.outputPath, JSON.stringify(sarif, null, 2), 'utf8');
     console.log(fmt('dim', `[run] SARIF written to ${options.outputPath}`));
   }
