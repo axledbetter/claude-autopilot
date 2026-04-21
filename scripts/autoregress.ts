@@ -5,6 +5,8 @@ import * as path from 'node:path';
 import { execSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { selectSnapshots } from '../src/snapshots/impact-selector.ts';
+import OpenAI from 'openai';
+import { buildImportMap } from '../src/snapshots/import-scanner.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -126,14 +128,128 @@ function cmdUpdate(args: string[]): number {
   return 0;
 }
 
+const GENERATOR_VERSION = '1.0.0-alpha.6';
+
+const GENERATE_PROMPT = `You are generating a behavioral snapshot test for a TypeScript module.
+
+Module path: {filePath}
+Module contents:
+{fileContents}
+
+Write a snapshot test file. Requirements:
+1. Header comments at top:
+   // @snapshot-for: {filePath}
+   // @generated-at: {generatedAt}
+   // @source-commit: {sourceCommit}
+   // @generator-version: {version}
+2. Import the module's exported functions under test
+3. Import { normalizeSnapshot } from '../../src/snapshots/serializer.ts'
+4. Import fs from 'node:fs', describe/it from 'node:test', assert from 'node:assert/strict'
+5. Baseline loading pattern (use slug {slug}):
+   const SLUG = '{slug}';
+   const baselineRaw = process.env.CAPTURE_BASELINE === '1' ? '{}' : fs.readFileSync(new URL('./baselines/{slug}.json', import.meta.url).pathname, 'utf8');
+   const baseline = JSON.parse(baselineRaw);
+   const captured: Record<string, unknown> = {};
+   process.on('exit', () => {
+     if (process.env.CAPTURE_BASELINE === '1') {
+       const p = new URL('./baselines/{slug}.json', import.meta.url).pathname;
+       fs.writeFileSync(p, JSON.stringify(captured, null, 2), 'utf8');
+     }
+   });
+6. In each test: if (process.env.CAPTURE_BASELINE === '1') { captured['test-name'] = result; return; }
+   Else: assert.equal(normalizeSnapshot(result), normalizeSnapshot(baseline['test-name']));
+7. Write 2-4 it() tests covering representative behaviors
+8. Output ONLY the TypeScript file contents, no markdown fences, no explanation`;
+
+async function cmdGenerate(args: string[]): Promise<number> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) { console.error('[autoregress generate] OPENAI_API_KEY not set'); return 1; }
+
+  const sinceIdx = args.indexOf('--since');
+  const since = sinceIdx >= 0 ? args[sinceIdx + 1] : undefined;
+  const changed = getChangedFiles(since);
+  if (!changed) { console.error('[autoregress generate] could not determine changed files'); return 1; }
+
+  const srcFiles = changed.filter(f => f.startsWith('src/') && f.endsWith('.ts'));
+  if (srcFiles.length === 0) {
+    console.log('[autoregress generate] no src/*.ts files changed — nothing to generate');
+    return 0;
+  }
+
+  console.log(`[autoregress generate] generating snapshots for ${srcFiles.length} file(s)`);
+
+  const client = new OpenAI({ apiKey });
+  let sourceCommit = 'unknown';
+  try { sourceCommit = execSync('git rev-parse --short HEAD', { cwd: ROOT }).toString().trim(); } catch {}
+  const generatedAt = new Date().toISOString();
+
+  for (const srcFile of srcFiles) {
+    const absFile = path.join(ROOT, srcFile);
+    if (!fs.existsSync(absFile)) { console.warn(`  skip (not found): ${srcFile}`); continue; }
+
+    const fileContents = fs.readFileSync(absFile, 'utf8');
+    const slug = srcFile.replace(/[/\\]/g, '-').replace(/\.ts$/, '');
+
+    process.stdout.write(`  ${srcFile} → ${slug}.snap.ts ... `);
+
+    const prompt = GENERATE_PROMPT
+      .replace(/{filePath}/g, srcFile)
+      .replace(/{fileContents}/g, fileContents)
+      .replace(/{slug}/g, slug)
+      .replace(/{version}/g, GENERATOR_VERSION)
+      .replace(/{generatedAt}/g, generatedAt)
+      .replace(/{sourceCommit}/g, sourceCommit);
+
+    let snapContent: string;
+    try {
+      const response = await client.responses.create({
+        model: process.env.CODEX_MODEL ?? 'gpt-5.3-codex',
+        instructions: 'You write TypeScript snapshot tests. Output ONLY the file contents, no markdown fences.',
+        input: prompt,
+        max_output_tokens: 2000,
+      });
+      snapContent = (response.output_text ?? '').replace(/^```typescript\n?/m, '').replace(/```$/m, '').trim();
+    } catch (err) {
+      console.error(`LLM error: ${err instanceof Error ? err.message : String(err)}`);
+      continue;
+    }
+
+    const snapPath = path.join(SNAPSHOTS_DIR, `${slug}.snap.ts`);
+    fs.writeFileSync(snapPath, snapContent + '\n', 'utf8');
+
+    const captureResult = spawnSync('node', ['--test', '--import', 'tsx', snapPath], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: ROOT,
+      env: { ...process.env, CAPTURE_BASELINE: '1' },
+    });
+    const baselinePath = path.join(BASELINES_DIR, `${slug}.json`);
+    console.log(fs.existsSync(baselinePath) ? 'generated + baseline captured' :
+      `generated (capture failed: ${captureResult.stderr?.toString().slice(0, 60)})`);
+  }
+
+  // Rebuild index.json from @snapshot-for headers
+  const newIndex: Record<string, string[]> = {};
+  for (const f of fs.readdirSync(SNAPSHOTS_DIR).filter(x => x.endsWith('.snap.ts'))) {
+    const snapRelPath = path.join('tests', 'snapshots', f);
+    const content = fs.readFileSync(path.join(SNAPSHOTS_DIR, f), 'utf8');
+    const sources = [...content.matchAll(/@snapshot-for:\s*(.+)/g)].map(m => m[1]!.trim());
+    if (sources.length) newIndex[snapRelPath] = sources;
+  }
+  fs.writeFileSync(INDEX_PATH, JSON.stringify(newIndex, null, 2) + '\n', 'utf8');
+
+  // Rebuild import-map.json
+  const newImportMap = buildImportMap(path.join(ROOT, 'src'));
+  fs.writeFileSync(IMPORT_MAP_PATH, JSON.stringify(newImportMap, null, 2) + '\n', 'utf8');
+
+  console.log('\n[autoregress generate] index.json + import-map.json rebuilt');
+  return 0;
+}
+
 const [,, subcmd, ...rest] = process.argv;
 switch (subcmd) {
   case 'run': process.exit(cmdRun(rest)); break;
   case 'update': process.exit(cmdUpdate(rest)); break;
-  case 'generate':
-    console.error('[autoregress] generate not yet implemented in this task');
-    process.exit(1);
-    break;
+  case 'generate': process.exit(await cmdGenerate(rest)); break;
   default:
     console.error(`[autoregress] unknown subcommand: ${subcmd ?? '(none)'}`);
     process.exit(1);
