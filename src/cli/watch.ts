@@ -13,10 +13,11 @@ const C = {
 };
 const fmt = (c: keyof typeof C, t: string) => `${C[c]}${t}${C.reset}`;
 
+// Anchored to path segment boundaries — avoids matching "mynode_modules" or similar
 export const IGNORED_PATTERNS: readonly RegExp[] = [
-  /node_modules/,
-  /\.git\//,
-  /\.autopilot-cache/,
+  /(^|[/\\])node_modules([/\\]|$)/,
+  /(^|[/\\])\.git([/\\]|$)/,
+  /(^|[/\\])\.autopilot-cache([/\\]|$)/,
   /\.(log|tmp|swp|swo|DS_Store)$/,
   /~$/,
 ];
@@ -94,9 +95,14 @@ export async function runWatch(options: WatchOptions = {}): Promise<void> {
   console.log(fmt('dim', `  debounce: ${debounceMs}ms  |  Ctrl+C to exit\n`));
 
   let running = false;
+  const nextPending = new Set<string>();
 
   const runBatch = async (batch: string[]) => {
-    if (running) return;
+    if (running) {
+      // Queue these files for the next run after the current one completes
+      for (const f of batch) nextPending.add(f);
+      return;
+    }
     running = true;
 
     const rel = batch.map(f => path.isAbsolute(f) ? path.relative(cwd, f) : f);
@@ -131,6 +137,12 @@ export async function runWatch(options: WatchOptions = {}): Promise<void> {
     }
 
     running = false;
+    // Flush anything that accumulated while we were running
+    if (nextPending.size > 0) {
+      const queued = [...nextPending];
+      nextPending.clear();
+      runBatch(queued);
+    }
   };
 
   const debouncer = makeDebouncer(batch => { runBatch(batch); }, debounceMs);
@@ -142,6 +154,8 @@ export async function runWatch(options: WatchOptions = {}): Promise<void> {
     debouncer.schedule(full);
   };
 
+  // fs.watch recursive is supported on macOS/Linux kernel ≥5.1; Windows uses ReadDirectoryChangesW.
+  // Alpha limitation: not battle-tested in Docker/container contexts — upgrade to chokidar for beta.
   const watcher = fs.watch(cwd, { recursive: true }, onEvent);
 
   process.on('SIGINT', () => {
