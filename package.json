@@ -32,6 +32,7 @@
     "bin/",
     "src/",
     "presets/",
+    "skills/",
     "scripts/test-runner.mjs",
     "scripts/autoregress.ts",
     "tests/snapshots/",
