@@ -33,14 +33,18 @@ export interface RunCommandOptions {
   dryRun?: boolean;    // skip review, print what would run
 }
 
-export async function runCommand(options: RunCommandOptions = {}): Promise<void> {
+/**
+ * Returns an exit code (0 = pass/warn, 1 = fail/error).
+ * Never calls process.exit directly — caller decides when to exit.
+ */
+export async function runCommand(options: RunCommandOptions = {}): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
   const configPath = options.configPath ?? path.join(cwd, 'autopilot.config.yaml');
 
   if (!fs.existsSync(configPath)) {
     console.error(fmt('red', `[run] autopilot.config.yaml not found at ${configPath}`));
     console.error(fmt('dim', '      Run: npx autopilot init'));
-    process.exit(1);
+    return 1;
   }
 
   // Load + merge config
@@ -55,7 +59,7 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<void>
     }
   } catch (err) {
     console.error(fmt('red', `[run] Config error: ${err instanceof Error ? err.message : String(err)}`));
-    process.exit(1);
+    return 1;
   }
 
   // Resolve touched files
@@ -63,7 +67,7 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<void>
   if (touchedFiles.length === 0) {
     console.log(fmt('yellow', '[run] No changed files detected — nothing to review.'));
     console.log(fmt('dim', '      Pass --base <ref> to compare against a different branch/commit.'));
-    process.exit(0);
+    return 0;
   }
 
   console.log(`\n${fmt('bold', '[autopilot run]')} ${fmt('dim', configPath)}`);
@@ -71,7 +75,7 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<void>
 
   if (options.dryRun) {
     console.log(fmt('yellow', '\n[run] Dry run — skipping pipeline execution.\n'));
-    process.exit(0);
+    return 0;
   }
 
   // Load review engine (optional — skip if no OPENAI_API_KEY or not configured)
@@ -137,12 +141,12 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<void>
   console.log('');
   if (result.status === 'pass') {
     console.log(fmt('green', '[run] ✓ All phases passed\n'));
-    process.exit(0);
+    return 0;
   } else if (result.status === 'warn') {
     console.log(fmt('yellow', '[run] ! Passed with warnings\n'));
-    process.exit(0);
+    return 0;
   } else {
     console.log(fmt('red', '[run] ✗ Pipeline failed — see findings above\n'));
-    process.exit(1);
+    return 1;
   }
 }

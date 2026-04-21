@@ -13,16 +13,44 @@ import { runInit } from './init.ts';
 import { runCommand } from './run.ts';
 
 const args = process.argv.slice(2);
-const subcommand = args[0] ?? 'run';
 
-// Parse flags
+const SUBCOMMANDS = ['init', 'run', 'preflight', 'help', '--help', '-h'] as const;
+const VALUE_FLAGS = ['base', 'config', 'files'];
+
+// Detect first non-flag arg as subcommand, default to 'run'
+const subcommand = (args[0] && !args[0].startsWith('--')) ? args[0] : 'run';
+
+/** Returns value for --name <value>. Exits if value is missing (next token is another flag or absent). */
 function flag(name: string): string | undefined {
   const idx = args.indexOf(`--${name}`);
   if (idx < 0) return undefined;
-  return args[idx + 1] ?? '';
+  const val = args[idx + 1];
+  if (val === undefined || val.startsWith('--')) {
+    console.error(`\x1b[31m[autopilot] --${name} requires a value\x1b[0m`);
+    process.exit(1);
+  }
+  return val;
 }
+
 function boolFlag(name: string): boolean {
   return args.includes(`--${name}`);
+}
+
+function printUsage(): void {
+  console.log(`
+Usage: autopilot <command> [options]
+
+Commands:
+  run          Run the pipeline on git-changed files (default)
+  init         Scaffold autopilot.config.yaml from a preset
+  preflight    Check prerequisites
+
+Options (run):
+  --base <ref>       Git base ref for diff (default: HEAD~1)
+  --config <path>    Path to config file (default: ./autopilot.config.yaml)
+  --files <a,b,c>    Explicit comma-separated file list (skips git detection)
+  --dry-run          Show what would run without executing
+`);
 }
 
 switch (subcommand) {
@@ -31,23 +59,33 @@ switch (subcommand) {
     break;
 
   case 'preflight':
-    // Re-export to the existing preflight script
     await import('./preflight.ts');
     break;
 
-  case 'run':
-  default: {
+  case 'help':
+  case '--help':
+  case '-h':
+    printUsage();
+    break;
+
+  case 'run': {
     const base = flag('base');
     const config = flag('config');
     const filesArg = flag('files');
     const dryRun = boolFlag('dry-run');
 
-    await runCommand({
+    const code = await runCommand({
       base,
       configPath: config,
       files: filesArg ? filesArg.split(',').map(f => f.trim()) : undefined,
       dryRun,
     });
+    process.exit(code);
     break;
   }
+
+  default:
+    console.error(`\x1b[31m[autopilot] Unknown subcommand: "${subcommand}"\x1b[0m`);
+    printUsage();
+    process.exit(1);
 }

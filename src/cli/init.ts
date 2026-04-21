@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as fsAsync from 'node:fs/promises';
 import * as path from 'node:path';
 import * as readline from 'node:readline/promises';
+import { fileURLToPath } from 'node:url';
 import { stdin as input, stdout as output } from 'node:process';
 
 const PRESET_DESCRIPTIONS: Record<string, string> = {
@@ -70,8 +71,8 @@ export async function runInit(cwd: string = process.cwd()): Promise<void> {
 }
 
 function presetSearchPaths(name: string): string[] {
-  // __dirname not available in pure ESM — resolve relative to URL
-  const pkgRoot = path.resolve(new URL(import.meta.url).pathname, '..', '..', '..');
+  // fileURLToPath handles encoded chars and Windows drive letters safely
+  const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   return [
     path.join(pkgRoot, 'presets', name, 'autopilot.config.yaml'),
     path.join(process.cwd(), 'presets', name, 'autopilot.config.yaml'),
