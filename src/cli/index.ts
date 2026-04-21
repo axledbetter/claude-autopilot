@@ -118,6 +118,15 @@ switch (subcommand) {
     break;
   }
 
+  case 'hook': {
+    const { runHook } = await import('./hook.ts');
+    const hookSub = args[1] ?? 'status';
+    const force = boolFlag('force');
+    const code = await runHook(hookSub, { force });
+    process.exit(code);
+    break;
+  }
+
   default:
     console.error(`\x1b[31m[autopilot] Unknown subcommand: "${subcommand}"\x1b[0m`);
     printUsage();
