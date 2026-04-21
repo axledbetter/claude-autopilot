@@ -10,6 +10,14 @@ import { resolveGitTouchedFiles } from '../core/git/touched-files.ts';
 import type { RunInput } from '../core/pipeline/run.ts';
 import type { ReviewEngine } from '../adapters/review-engine/types.ts';
 import type { AutopilotConfig } from '../core/config/types.ts';
+import { fileURLToPath } from 'node:url';
+import { toSarif } from '../formatters/sarif.ts';
+import { emitAnnotations } from '../formatters/github-annotations.ts';
+
+function readToolVersion(): string {
+  const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
+  return (JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { version: string }).version;
+}
 
 const C = {
   reset: '\x1b[0m',
@@ -31,6 +39,8 @@ export interface RunCommandOptions {
   base?: string;       // git base ref (default HEAD~1)
   files?: string[];    // explicit file list (skips git detection)
   dryRun?: boolean;    // skip review, print what would run
+  format?: 'text' | 'sarif';
+  outputPath?: string;
 }
 
 /**
@@ -108,6 +118,18 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
 
   console.log('');
   const result = await runAutopilot(input);
+
+  // Emit GitHub Actions annotations when running in CI
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    emitAnnotations(result.allFindings);
+  }
+
+  // Write SARIF output if requested
+  if (options.format === 'sarif' && options.outputPath) {
+    const sarif = toSarif(result, { toolVersion: readToolVersion(), cwd });
+    fs.writeFileSync(options.outputPath, JSON.stringify(sarif, null, 2), 'utf8');
+    console.log(fmt('dim', `[run] SARIF written to ${options.outputPath}`));
+  }
 
   // Print phase summaries
   for (const phase of result.phases) {
