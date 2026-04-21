@@ -1,6 +1,6 @@
 {
   "name": "@delegance/claude-autopilot",
-  "version": "1.0.0-alpha.5",
+  "version": "1.0.0-alpha.6",
   "type": "module",
   "description": "Claude Code automation pipeline: spec → plan → implement → validate → PR",
   "keywords": ["claude", "autopilot", "ai", "pipeline", "code-review", "cli"],
@@ -20,12 +20,15 @@
     "src/",
     "presets/",
     "scripts/test-runner.mjs",
+    "scripts/autoregress.ts",
+    "tests/snapshots/",
     "CHANGELOG.md"
   ],
   "scripts": {
     "test": "node scripts/test-runner.mjs",
     "typecheck": "tsc --noEmit",
-    "build": "tsc"
+    "build": "tsc",
+    "autoregress": "tsx scripts/autoregress.ts"
   },
   "devDependencies": {
     "@types/js-yaml": "^4",

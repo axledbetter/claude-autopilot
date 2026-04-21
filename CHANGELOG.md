@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0-alpha.6
+
+### Added
+
+- **Auto-regression testing** (`scripts/autoregress.ts generate|run|update`) — autoresearch-inspired snapshot tests for changed source modules
+- **Impact-aware selection** — only fires snapshots whose source modules (or one-hop importers) were touched; high-impact paths (`src/core/pipeline/**`, `src/adapters/**`, `src/core/findings/**`, `src/core/config/**`) and >10-file changes trigger full run
+- **Snapshot serializer** (`src/snapshots/serializer.ts`) — deterministic JSON normalization: sorted keys, `<timestamp>`, `<uuid>`, path stripping
+- **Import scanner** (`src/snapshots/import-scanner.ts`) — static `import`/`export` graph → reverse dependency map
+- **Impact selector** (`src/snapshots/impact-selector.ts`) — merge-base diff + one-hop expansion + overrides
+- **Baseline capture** — `CAPTURE_BASELINE=1` env flag; `autoregress update` rewrites baselines after intentional changes
+- **Staleness detection** — warns and skips snapshots whose `@snapshot-for` source file no longer exists
+- 10 new unit tests (AR1-AR10) for serializer, import scanner, and impact selector
+
 ## 1.0.0-alpha.5 (2026-04-21)
 
 ### New Features
