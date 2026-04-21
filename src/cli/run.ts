@@ -119,10 +119,8 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
   console.log('');
   const result = await runAutopilot(input);
 
-  // Emit GitHub Actions annotations when running in CI
-  if (process.env.GITHUB_ACTIONS === 'true') {
-    emitAnnotations(result.allFindings);
-  }
+  // emitAnnotations is a no-op unless GITHUB_ACTIONS=true
+  emitAnnotations(result.allFindings);
 
   // Write SARIF output if requested
   if (options.format === 'sarif' && options.outputPath) {

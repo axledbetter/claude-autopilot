@@ -42,6 +42,7 @@ export function normalizeSarifUri(file: string, cwd: string): string {
   let rel = path.isAbsolute(file) ? path.relative(cwd, file) : file;
   rel = rel.replace(/\\/g, '/');
   if (rel.startsWith('./')) rel = rel.slice(2);
+  if (rel.startsWith('../')) rel = file.replace(/\\/g, '/');
   return rel;
 }
 

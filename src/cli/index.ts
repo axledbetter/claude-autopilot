@@ -17,7 +17,7 @@ import { runWatch } from './watch.ts';
 const args = process.argv.slice(2);
 
 const SUBCOMMANDS = ['init', 'run', 'preflight', 'help', '--help', '-h'] as const;
-const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output'];
+const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce'];
 
 // Detect first non-flag arg as subcommand, default to 'run'
 const subcommand = (args[0] && !args[0].startsWith('--')) ? args[0] : 'run';

@@ -32,8 +32,8 @@ runs:
 
     - name: Run autopilot pipeline
       run: |
-        npx --yes --package @delegance/claude-autopilot@${{ inputs.version }} \
-          autopilot run \
+        npx -y @delegance/claude-autopilot@${{ inputs.version }} \
+          run \
           --config "${{ inputs.config }}" \
           --format sarif \
           --output "${{ inputs.sarif-output }}"
