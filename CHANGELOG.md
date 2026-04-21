@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.0] — 2026-04-21
+
+### Added
+- `autopilot setup` — zero-prompt setup: auto-detects project type (Go, Rails, FastAPI, T3, Next.js+Supabase), infers test command, writes config, installs git hook in one command
+- `autopilot setup --force` — overwrite existing config
+
 ## [1.0.2] — 2026-04-21
 
 ### Fixed
