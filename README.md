@@ -8,115 +8,126 @@ Automated code review pipeline for Claude Code. Runs static rules, an optional L
 npm install @delegance/claude-autopilot
 ```
 
-Requires Node 22+. Also requires `gh` CLI authenticated and `claude` CLI installed (Claude Code).
+**Prerequisites:** Node 22+, [`gh` CLI](https://cli.github.com/) authenticated, [`claude` CLI](https://claude.ai/claude-code) (Claude Code).
 
 ## Quick Start
 
 ```bash
-# One command — auto-detects project type, writes config, installs hook
+# One command — auto-detects project type, writes config, installs hook, runs doctor
 npx autopilot setup
 
-# Then run your first pipeline
+# Run your first pipeline
 npx autopilot run
 ```
 
-Requires Node 22+, `gh` CLI authenticated, `claude` CLI (Claude Code).
+`setup` detects your stack (Go, Rails, FastAPI, T3, Next.js+Supabase), infers your test command, writes `autopilot.config.yaml`, installs the pre-push hook, then runs `doctor` to show anything still missing.
 
 ## Commands
 
+### `autopilot setup`
+
+Zero-prompt setup. Auto-detects project type and configures everything.
+
+```bash
+npx autopilot setup            # detect, write config, install hook
+npx autopilot setup --force    # overwrite existing autopilot.config.yaml
+```
+
+### `autopilot doctor`
+
+Checks prerequisites. Runs automatically after `setup` — also useful any time `run` behaves unexpectedly.
+
+```bash
+npx autopilot doctor
+```
+
+Verifies: Node 22+, tsx, `gh` CLI auth, `claude` CLI, `OPENAI_API_KEY`, git user config, superpowers plugin. Exits 1 if blockers found. `autopilot preflight` is an alias.
+
 ### `autopilot run`
 
-Runs the pipeline on git-changed files vs the base ref.
+Runs the pipeline on git-changed files.
 
 ```bash
 npx autopilot run                        # diff against HEAD~1
 npx autopilot run --base main            # diff against main
 npx autopilot run --files src/foo.ts     # explicit file list
 npx autopilot run --format sarif --output results.sarif
-npx autopilot run --dry-run              # show what would run, no execution
+npx autopilot run --dry-run
 ```
 
 ### `autopilot watch`
 
-Debounced re-run on every file save.
+Re-runs on every file save.
 
 ```bash
 npx autopilot watch
 npx autopilot watch --debounce 500
 ```
 
-### `autopilot hook`
-
-Manages a `pre-push` git hook that runs snapshot regression tests before every push.
-
-```bash
-npx autopilot hook install          # write .git/hooks/pre-push
-npx autopilot hook install --force  # overwrite existing
-npx autopilot hook uninstall        # remove
-npx autopilot hook status           # show installed hook content
-```
-
-Works in git worktrees (handles `.git` as a file pointer).
-
 ### `autopilot autoregress`
 
-Impact-aware snapshot regression testing. Only fires tests whose source modules (or one-hop importers) were touched by the current branch.
+Impact-aware snapshot regression tests. Only fires snapshots whose source modules were touched by the current branch.
 
 ```bash
-npx autopilot autoregress run              # impact-selected snapshots (default)
-npx autopilot autoregress run --all        # all snapshots
+npx autopilot autoregress run              # impact-selected (default)
+npx autopilot autoregress run --all
 npx autopilot autoregress diff             # show JSON diffs vs baselines
-npx autopilot autoregress update           # overwrite baselines with current output
+npx autopilot autoregress update           # overwrite baselines
 npx autopilot autoregress generate         # LLM-generate snapshot tests for changed files
 npx autopilot autoregress generate --files src/foo.ts,src/bar.ts
 ```
 
-Requires `OPENAI_API_KEY` for `generate` mode.
+`generate` requires `OPENAI_API_KEY`.
 
-### `autopilot setup`
+### `autopilot hook`
 
-Zero-prompt setup: auto-detects project type, writes config, installs git hook in one command.
+Manages the `pre-push` git hook.
 
 ```bash
-npx autopilot setup            # Auto-detect project, write config, install hook
-npx autopilot setup --force    # Overwrite existing autopilot.config.yaml
+npx autopilot hook install          # write .git/hooks/pre-push
+npx autopilot hook install --force  # overwrite existing
+npx autopilot hook uninstall
+npx autopilot hook status
 ```
 
-Auto-detection supports: Go, Rails, FastAPI, T3, Next.js+Supabase.
+Works in git worktrees.
 
 ### `autopilot init`
 
-Scaffolds `autopilot.config.yaml` from a preset.
+Interactive preset picker — for when you want to choose a preset manually instead of using `setup`.
 
 ```bash
 npx autopilot init
 ```
 
-Available presets: `nextjs-supabase`, `t3`, `python-fastapi`, `rails-postgres`, `go`.
+Presets: `nextjs-supabase`, `t3`, `python-fastapi`, `rails-postgres`, `go`.
 
-### `autopilot doctor`
+## Config (`autopilot.config.yaml`)
 
-Checks prerequisites and shows exact fix commands for each failure.
-
-```bash
-npx autopilot doctor    # Check prerequisites and show exact fix commands
+```yaml
+configVersion: 1
+reviewEngine:
+  adapter: codex
+testCommand: npm test
+protectedPaths:
+  - src/core/**
+  - data/deltas/**
+staticRules:
+  - hardcoded-secrets
+  - npm-audit
 ```
 
-Verifies: Node 22+, tsx, gh CLI auth, claude CLI, OPENAI_API_KEY, git user config, superpowers plugin. Exits 1 if any blockers are found. Also runs automatically at the end of `autopilot setup`.
-
-`autopilot preflight` is kept as an alias for `doctor`.
+Full schema and preset defaults: `presets/<name>/autopilot.config.yaml`.
 
 ## GitHub Actions
 
-Add to your workflow:
-
 ```yaml
-- uses: axledbetter/claude-autopilot@v1
+- uses: axledbetter/claude-autopilot/.github/actions/ci@main
   with:
     openai-api-key: ${{ secrets.OPENAI_API_KEY }}
 ```
 
-Runs the pipeline, uploads SARIF to GitHub Code Scanning, and annotates the PR diff inline.
+Runs the pipeline, uploads SARIF to GitHub Code Scanning, annotates the PR diff inline.
 
 ## SARIF Output
 
@@ -126,31 +137,26 @@ npx autopilot run --format sarif --output autopilot.sarif
 
 Compatible with `github/codeql-action/upload-sarif@v3`.
 
-## Config (`autopilot.config.yaml`)
-
-```yaml
-preset: nextjs-supabase          # inherit a base config
-reviewEngine:
-  adapter: codex
-  options:
-    model: gpt-5.3-codex
-testCommand: npm test
-protect:
-  - src/core/**
-  - data/deltas/**
-```
-
 ## Snapshot Regression Testing
 
-After each feature lands, generate behavioral baselines:
+After each feature lands:
 
 ```bash
-npx autopilot autoregress generate
+npx autopilot autoregress generate   # generate baselines for changed files
 ```
 
-Future PRs automatically fail if covered behavior diverges. The impact selector uses `git merge-base` diff + one-hop import graph expansion so only relevant snapshots run — keeping CI token-efficient.
+Future PRs automatically fail if covered behavior diverges. The impact selector uses `git merge-base` diff + one-hop import graph expansion — only relevant snapshots run, keeping CI fast.
 
 High-impact paths (`src/core/pipeline/**`, `src/adapters/**`, `src/core/findings/**`, `src/core/config/**`) always trigger a full run.
+
+## Public API
+
+```typescript
+import type { Finding, RunResult, AutopilotConfig } from '@delegance/claude-autopilot';
+import { normalizeSnapshot } from '@delegance/claude-autopilot';
+```
+
+Types are available for TypeScript consumers. Runtime import requires a tsx-aware bundler (the package ships TypeScript source).
 
 ## Architecture
 
@@ -158,16 +164,10 @@ Four pluggable adapter points:
 
 | Point | Built-in | Purpose |
 |---|---|---|
-| `review-engine` | `codex` | LLM code review |
+| `review-engine` | `codex` | LLM code review (OpenAI) |
 | `vcs-host` | `github` | PR comments + SARIF upload |
 | `migration-runner` | `supabase` | DB migration execution |
 | `review-bot-parser` | `cursor` | Parse review bot comments |
-
-## Requirements
-
-- Node ≥ 22
-- `OPENAI_API_KEY` (optional — review engine and `autoregress generate` only)
-- `gh` CLI authenticated (optional — PR creation / vcs-host adapter)
 
 ## License
 
