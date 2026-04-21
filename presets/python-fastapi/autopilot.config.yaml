@@ -1,0 +1,20 @@
+configVersion: 1
+reviewEngine: { adapter: codex }
+vcsHost: { adapter: github }
+reviewBot: { adapter: cursor }
+protectedPaths:
+  - "alembic/versions/**"
+  - "app/core/security.py"
+  - "app/core/config.py"
+staticRules:
+  - hardcoded-secrets
+  - fastapi-missing-auth
+testCommand: pytest -q
+thresholds:
+  bugbotAutoFix: 85
+  bugbotProposePatch: 60
+  maxValidateRetries: 3
+reviewStrategy: auto
+chunking:
+  smallTierMaxTokens: 8000
+  perFileMaxTokens: 32000

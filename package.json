@@ -1,11 +1,11 @@
 {
   "name": "@delegance/claude-autopilot",
-  "version": "1.0.0-alpha.1",
+  "version": "1.0.0-alpha.2",
   "private": true,
   "type": "module",
   "description": "Claude Code pipeline: spec to PR with review",
   "scripts": {
-    "test": "node --test --import tsx tests/**/*.test.ts",
+    "test": "find tests -name '*.test.ts' | xargs node --test --import tsx",
     "typecheck": "tsc --noEmit",
     "build": "tsc"
   },
