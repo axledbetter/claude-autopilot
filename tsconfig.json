@@ -11,10 +11,12 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "noUncheckedIndexedAccess": true,
+    "allowImportingTsExtensions": true,
     "rootDir": ".",
     "outDir": "./dist",
     "declaration": true,
     "declarationMap": true,
+    "emitDeclarationOnly": true,
     "sourceMap": true
   },
   "include": ["src/**/*.ts", "tests/**/*.ts", "presets/**/*.ts"],
