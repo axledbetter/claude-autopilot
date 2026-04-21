@@ -1,5 +1,27 @@
 import { runSafe } from '../shell.ts';
 
+const IGNORE_PREFIXES = [
+  'node_modules/',
+  'dist/',
+  'build/',
+  '.next/',
+  '.nuxt/',
+  'out/',
+  'coverage/',
+  '.turbo/',
+  '.cache/',
+  'vendor/',
+  '__pycache__/',
+  '.venv/',
+  'venv/',
+  'target/',        // Rust/Java
+  '.gradle/',
+];
+
+function isIgnored(file: string): boolean {
+  return IGNORE_PREFIXES.some(p => file.startsWith(p));
+}
+
 export interface TouchedFilesOptions {
   cwd?: string;
   base?: string; // e.g. 'HEAD~1', 'main', a SHA — defaults to HEAD~1
@@ -30,7 +52,7 @@ export function resolveGitTouchedFiles(options: TouchedFilesOptions = {}): strin
 }
 
 function parseFileList(output: string): string[] {
-  return [...new Set(output.split('\n').map(l => l.trim()).filter(Boolean))];
+  return [...new Set(output.split('\n').map(l => l.trim()).filter(Boolean).filter(f => !isIgnored(f)))];
 }
 
 function parseStatusOutput(output: string): string[] {
@@ -47,5 +69,5 @@ function parseStatusOutput(output: string): string[] {
       files.add(parts.trim());
     }
   }
-  return [...files];
+  return [...files].filter(f => !isIgnored(f));
 }

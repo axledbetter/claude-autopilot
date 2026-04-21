@@ -17,6 +17,16 @@ import { runDoctor } from './preflight.ts';
 
 const args = process.argv.slice(2);
 
+// Version flag — resolve from package.json at runtime
+if (args[0] === '--version' || args[0] === '-v') {
+  const { createRequire } = await import('node:module');
+  const { fileURLToPath } = await import('node:url');
+  const require = createRequire(fileURLToPath(import.meta.url));
+  const pkg = require('../../package.json') as { version: string };
+  console.log(pkg.version);
+  process.exit(0);
+}
+
 const SUBCOMMANDS = ['init', 'run', 'watch', 'hook', 'autoregress', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce'];
 
