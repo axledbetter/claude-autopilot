@@ -2,6 +2,7 @@
 // scripts/autoregress.ts
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { execSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { selectSnapshots } from '../src/snapshots/impact-selector.ts';
@@ -17,6 +18,22 @@ const BASELINES_DIR = path.join(SNAPSHOTS_DIR, 'baselines');
 
 function loadJson<T>(p: string, fallback: T): T {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')) as T; } catch { return fallback; }
+}
+
+export function diffBaselines(baselineJson: string, currentJson: string): string[] {
+  if (baselineJson === currentJson) return [];
+  const baselineLines = baselineJson.split('\n');
+  const currentLines = currentJson.split('\n');
+  const lines: string[] = [];
+  const maxLen = Math.max(baselineLines.length, currentLines.length);
+  for (let i = 0; i < maxLen; i++) {
+    const bLine = baselineLines[i];
+    const cLine = currentLines[i];
+    if (bLine === cLine) continue;
+    if (bLine !== undefined) lines.push(`- ${bLine}`);
+    if (cLine !== undefined) lines.push(`+ ${cLine}`);
+  }
+  return lines;
 }
 
 function getChangedFiles(since?: string): string[] | null {
@@ -155,12 +172,15 @@ Write a snapshot test file. Requirements:
 5. Baseline loading pattern (use slug {slug}):
    const SLUG = '{slug}';
    import { fileURLToPath } from 'node:url';
+   import * as path from 'node:path';
    const baselineRaw = process.env.CAPTURE_BASELINE === '1' ? '{}' : fs.readFileSync(fileURLToPath(new URL('./baselines/{slug}.json', import.meta.url)), 'utf8');
    const baseline = JSON.parse(baselineRaw);
    const captured: Record<string, unknown> = {};
    process.on('exit', () => {
      if (process.env.CAPTURE_BASELINE === '1') {
-       const p = fileURLToPath(new URL('./baselines/{slug}.json', import.meta.url));
+       const p = process.env.AUTOREGRESS_TEMP_BASELINE_DIR
+         ? path.join(process.env.AUTOREGRESS_TEMP_BASELINE_DIR, '{slug}.json')
+         : fileURLToPath(new URL('./baselines/{slug}.json', import.meta.url));
        fs.writeFileSync(p, JSON.stringify(captured, null, 2), 'utf8');
      }
    });
@@ -257,12 +277,93 @@ async function cmdGenerate(args: string[]): Promise<number> {
   return 0;
 }
 
-const [,, subcmd, ...rest] = process.argv;
-switch (subcmd) {
-  case 'run': process.exit(cmdRun(rest)); break;
-  case 'update': process.exit(cmdUpdate(rest)); break;
-  case 'generate': process.exit(await cmdGenerate(rest)); break;
-  default:
-    console.error(`[autoregress] unknown subcommand: ${subcmd ?? '(none)'}`);
-    process.exit(1);
+function cmdDiff(args: string[]): number {
+  const runAll = args.includes('--all');
+  const snapIdx = args.indexOf('--snapshot');
+  const slug = snapIdx >= 0 ? args[snapIdx + 1] : undefined;
+  const sinceIdx = args.indexOf('--since');
+  const since = sinceIdx >= 0 ? args[sinceIdx + 1] : undefined;
+
+  const index = loadJson<Record<string, string[]>>(INDEX_PATH, {});
+  const importMap = loadJson<Record<string, string[]>>(IMPORT_MAP_PATH, {});
+  const snapFiles = slug
+    ? [path.join('tests', 'snapshots', `${slug}.snap.ts`)]
+    : allSnapFiles();
+
+  let selected: string[];
+  if (runAll || slug || snapFiles.length === 0) {
+    selected = snapFiles;
+  } else {
+    const changed = getChangedFiles(since);
+    selected = changed ? selectSnapshots(changed, snapFiles, index, importMap).selected : snapFiles;
+  }
+
+  if (selected.length === 0) {
+    console.log('[autoregress diff] no snapshots to diff');
+    return 0;
+  }
+
+  const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
+  const red = useColor ? '\x1b[31m' : '';
+  const green = useColor ? '\x1b[32m' : '';
+  const reset = useColor ? '\x1b[0m' : '';
+
+  let changedCount = 0;
+  for (const snap of selected) {
+    const slug_ = path.basename(snap, '.snap.ts');
+    const baselinePath = path.join(BASELINES_DIR, `${slug_}.json`);
+
+    if (!fs.existsSync(baselinePath)) {
+      console.log(`  ${snap} — ${red}no baseline${reset}`);
+      continue;
+    }
+
+    const tmpBaselinesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-diff-'));
+    const tmpBaselinePath = path.join(tmpBaselinesDir, `${slug_}.json`);
+    fs.copyFileSync(baselinePath, tmpBaselinePath);
+
+    const absSnap = path.join(ROOT, snap);
+    spawnSync('node', ['--test', '--import', 'tsx', absSnap], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: ROOT,
+      env: { ...process.env, CAPTURE_BASELINE: '1', AUTOREGRESS_TEMP_BASELINE_DIR: tmpBaselinesDir },
+    });
+
+    const baselineJson = fs.readFileSync(baselinePath, 'utf8');
+    const currentJson = fs.existsSync(tmpBaselinePath) ? fs.readFileSync(tmpBaselinePath, 'utf8') : null;
+    fs.rmSync(tmpBaselinesDir, { recursive: true, force: true });
+
+    if (!currentJson) {
+      console.log(`  ${snap} — ${red}capture failed${reset}`);
+      continue;
+    }
+
+    const diffLines = diffBaselines(baselineJson, currentJson);
+    if (diffLines.length === 0) {
+      console.log(`  ${snap} — ${green}✓ no changes${reset}`);
+    } else {
+      changedCount++;
+      console.log(`  ${snap}`);
+      for (const line of diffLines) {
+        if (line.startsWith('-')) console.log(`    ${red}${line}${reset}`);
+        else if (line.startsWith('+')) console.log(`    ${green}${line}${reset}`);
+        else console.log(`    ${line}`);
+      }
+    }
+  }
+
+  return changedCount > 0 ? 1 : 0;
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const [,, subcmd, ...rest] = process.argv;
+  switch (subcmd) {
+    case 'run': process.exit(cmdRun(rest)); break;
+    case 'update': process.exit(cmdUpdate(rest)); break;
+    case 'generate': process.exit(await cmdGenerate(rest)); break;
+    case 'diff': process.exit(cmdDiff(rest)); break;
+    default:
+      console.error(`[autoregress] unknown subcommand: ${subcmd ?? '(none)'}`);
+      process.exit(1);
+  }
 }
