@@ -10,6 +10,17 @@ npm install @delegance/claude-autopilot
 
 **Prerequisites:** Node 22+, [`gh` CLI](https://cli.github.com/) authenticated, [`claude` CLI](https://claude.ai/claude-code) (Claude Code).
 
+## Claude Code Skill
+
+The package ships a ready-made Claude Code skill. After installing, copy it into your project:
+
+```bash
+mkdir -p .claude/skills
+cp node_modules/@delegance/claude-autopilot/skills/autopilot.md .claude/skills/
+```
+
+Claude will then know when and how to invoke `autopilot run`, interpret findings, and wire it into your dev pipeline automatically.
+
 ## Quick Start
 
 ```bash
