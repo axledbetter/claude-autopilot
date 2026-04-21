@@ -44,7 +44,7 @@ export const githubAdapter: VcsHost = {
   },
 
   async replyToComment(pr: number | string, commentId: string | number, body: string): Promise<void> {
-    runThrowing('gh', ['api', `repos/{owner}/{repo}/pulls/${pr}/comments/${commentId}/replies`, '--method', 'POST', '-f', `body=${body}`], { errorCode: 'transient_network' });
+    runThrowing('gh', ['api', `repos/{owner}/{repo}/pulls/${pr}/comments/${commentId}/replies`, '--method', 'POST', '--field', `body=${body}`], { errorCode: 'transient_network' });
   },
 
   async createPr(opts: CreatePrOptions): Promise<CreatePrResult> {

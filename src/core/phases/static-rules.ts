@@ -1,5 +1,5 @@
 import type { Finding, FixAttempt, FixStatus } from '../findings/types.ts';
-import { dedupFindings } from '../findings/dedup.ts';
+import { dedupFindings, findingContentKey } from '../findings/dedup.ts';
 
 export interface StaticRule {
   name: string;
@@ -21,20 +21,15 @@ export interface StaticRulesPhaseResult {
   durationMs: number;
 }
 
-function contentKey(f: Finding): string {
-  return `${f.file}|${f.line ?? ''}|${f.severity}|${f.message.slice(0, 40)}`;
-}
-
 export async function runStaticRulesPhase(input: StaticRulesPhaseInput): Promise<StaticRulesPhaseResult> {
   const start = Date.now();
 
-  let findings = dedupFindings(await runAllChecks(input.rules, input.touchedFiles));
+  const preFixFindings = dedupFindings(await runAllChecks(input.rules, input.touchedFiles));
 
   const fixAttempts: FixAttempt[] = [];
   let anyFixApplied = false;
-  const fixedContentKeys = new Set<string>();
 
-  for (const finding of findings) {
+  for (const finding of preFixFindings) {
     const rule = findRuleForFinding(input.rules, finding);
     if (!rule?.autofix) continue;
 
@@ -49,20 +44,23 @@ export async function runStaticRulesPhase(input: StaticRulesPhaseInput): Promise
     }
 
     const status = await rule.autofix(finding);
-    if (status === 'fixed') {
-      anyFixApplied = true;
-      fixedContentKeys.add(contentKey(finding));
-    }
+    if (status === 'fixed') anyFixApplied = true;
     fixAttempts.push({ findingId: finding.id, attemptedAt: new Date().toISOString(), status });
   }
 
-  if (anyFixApplied) {
-    findings = dedupFindings(await runAllChecks(input.rules, input.touchedFiles));
-  }
+  // Re-check is the source of truth: a finding is "fixed" if it was present before
+  // but absent after the autofix. This is correct even if autofix lied about its status.
+  const findings = anyFixApplied
+    ? dedupFindings(await runAllChecks(input.rules, input.touchedFiles))
+    : preFixFindings;
 
-  const isFixed = (f: Finding): boolean => fixedContentKeys.has(contentKey(f));
-  const unfixedCritical = findings.some(f => f.severity === 'critical' && !isFixed(f));
-  const unfixedWarning = findings.some(f => f.severity === 'warning' && !isFixed(f));
+  const preFixKeys = new Set(preFixFindings.map(findingContentKey));
+  const postFixKeys = new Set(findings.map(findingContentKey));
+  const fixedKeys = new Set([...preFixKeys].filter(k => !postFixKeys.has(k)));
+
+  const isFixed = (f: Finding): boolean => fixedKeys.has(findingContentKey(f));
+  const unfixedCritical = preFixFindings.some(f => f.severity === 'critical' && !isFixed(f));
+  const unfixedWarning = preFixFindings.some(f => f.severity === 'warning' && !isFixed(f));
 
   let status: StaticRulesPhaseResult['status'];
   if (unfixedCritical) status = 'fail';

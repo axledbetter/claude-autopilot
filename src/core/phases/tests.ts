@@ -1,4 +1,4 @@
-import { runSafe } from '../shell.ts';
+import { execSync } from 'node:child_process';
 import type { Finding } from '../findings/types.ts';
 
 export interface TestsPhaseInput {
@@ -22,14 +22,17 @@ export async function runTestsPhase(input: TestsPhaseInput): Promise<TestsPhaseR
     return { phase: 'tests', status: 'skip', findings: [], durationMs: Date.now() - start };
   }
 
-  const [cmd, ...args] = input.testCommand.split(' ');
-  if (!cmd) {
-    return { phase: 'tests', status: 'skip', findings: [], durationMs: Date.now() - start };
-  }
-
-  const output = runSafe(cmd, args, { cwd: input.cwd, timeout: 120000 });
-
-  if (output === null) {
+  let output: string | undefined;
+  try {
+    // shell:true so testCommand can contain quoted args, pipes, etc.
+    // testCommand is developer-supplied config, not user input.
+    output = execSync(input.testCommand, {
+      encoding: 'utf8',
+      cwd: input.cwd,
+      timeout: 120000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch {
     const finding: Finding = {
       id: 'tests-phase-fail',
       source: 'static-rules',
