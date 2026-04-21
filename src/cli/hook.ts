@@ -10,7 +10,15 @@ function findGitDir(cwd: string): string | null {
   let dir = path.resolve(cwd);
   for (let i = 0; i < 10; i++) {
     const candidate = path.join(dir, '.git');
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) return candidate;
+    if (fs.existsSync(candidate)) {
+      const stat = fs.statSync(candidate);
+      if (stat.isDirectory()) return candidate;
+      if (stat.isFile()) {
+        const content = fs.readFileSync(candidate, 'utf8');
+        const match = content.match(/^gitdir:\s*(.+)/m);
+        if (match) return path.resolve(dir, match[1]!.trim());
+      }
+    }
     const parent = path.dirname(dir);
     if (parent === dir) return null;
     dir = parent;

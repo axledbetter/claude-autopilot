@@ -334,14 +334,19 @@ function cmdDiff(args: string[]): number {
     fs.copyFileSync(baselinePath, tmpBaselinePath);
 
     const absSnap = path.join(ROOT, snap);
-    spawnSync('node', ['--test', '--import', 'tsx', absSnap], {
+    const captureResult = spawnSync('node', ['--test', '--import', 'tsx', absSnap], {
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd: ROOT,
       env: { ...process.env, CAPTURE_BASELINE: '1', AUTOREGRESS_TEMP_BASELINE_DIR: tmpBaselinesDir },
     });
 
     const baselineJson = fs.readFileSync(baselinePath, 'utf8');
-    const currentJson = fs.existsSync(tmpBaselinePath) ? fs.readFileSync(tmpBaselinePath, 'utf8') : null;
+    const captureOk = fs.existsSync(tmpBaselinePath);
+    const currentJson = captureOk ? fs.readFileSync(tmpBaselinePath, 'utf8') : null;
+    if (!captureOk && captureResult.status !== 0) {
+      const stderr = captureResult.stderr?.toString().trim();
+      if (stderr) console.error(`    ${stderr.slice(0, 120)}`);
+    }
     fs.rmSync(tmpBaselinesDir, { recursive: true, force: true });
 
     if (!currentJson) {
@@ -366,7 +371,7 @@ function cmdDiff(args: string[]): number {
   return changedCount > 0 ? 1 : 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (fileURLToPath(import.meta.url) === path.resolve(process.argv[1] ?? '')) {
   const [,, subcmd, ...rest] = process.argv;
   switch (subcmd) {
     case 'run': process.exit(cmdRun(rest)); break;
