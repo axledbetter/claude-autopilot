@@ -1,5 +1,50 @@
 # Changelog
 
+## [1.2.8] — 2026-04-21
+
+### Added
+- 8 new tests covering npm placeholder detection, pyproject.toml FastAPI detection, `resolveGitTouchedFiles` ignore list, deduplication, and status fallback — **136 total**
+
+## [1.2.7] — 2026-04-21
+
+### Fixed
+- `autopilot run` now loads `.env.local` / `.env` at startup so `OPENAI_API_KEY` (and other env vars) are available without exporting them in the shell first
+
+## [1.2.6] — 2026-04-21
+
+### Added
+- `skills/autopilot.md` included in npm package — install once, then `cp node_modules/@delegance/claude-autopilot/skills/autopilot.md .claude/skills/` to give Claude Code full context on when and how to invoke the CLI
+
+## [1.2.5] — 2026-04-21
+
+### Added
+- `--version` / `-v` flag — prints package version and exits
+- Built-in ignore list for git diff output: `node_modules/`, `dist/`, `build/`, `.next/`, `.nuxt/`, `out/`, `coverage/`, `.turbo/`, `.cache/`, `vendor/`, `__pycache__/`, `.venv/`, `venv/`, `target/`, `.gradle/` — prevents build artifact floods from polluting the changed-files list
+
+## [1.2.4] — 2026-04-21
+
+### Changed
+- `autopilot init` is now deprecated — prints a notice and delegates to `autopilot setup`
+
+### Fixed
+- Removed superpowers plugin check from `doctor` — it was warning all external developers about a Delegance-internal tool they cannot install
+
+## [1.2.3] — 2026-04-21
+
+### Fixed
+- README rewrite: `setup` and `doctor` commands now prominent; config schema accurate; public API section added
+
+## [1.2.2] — 2026-04-21
+
+### Fixed
+- Hook install called from `setup` no longer double-prints stderr; added `silent` option to `runHook()` to suppress output when invoked programmatically
+
+## [1.2.1] — 2026-04-21
+
+### Fixed
+- `bin/autopilot.js` tsx resolution now checks the consumer's `node_modules/.bin/tsx` before falling back to PATH — fixes "tsx not found" on fresh installs
+- npm default test placeholder (`echo "Error: no test specified" && exit 1`) is now detected and replaced with `npm test` instead of being used as the test command
+
 ## [1.2.0] — 2026-04-21
 
 ### Added
