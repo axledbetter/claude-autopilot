@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0-alpha.8
+
+### Added
+
+- **`autopilot autoregress`** — `autoregress run|diff|update|generate` now a first-class `autopilot` subcommand (no more raw `npx tsx scripts/autoregress.ts`)
+- **GitHub Actions CI** — `.github/workflows/ci.yml` runs typecheck + tests on every PR; auto-publishes to npm on `v*` tags
+- **README rewrite** — full feature documentation covering all alphas (all commands, config, GitHub Actions, snapshot regression, architecture)
+
 ## 1.0.0-alpha.7
 
 ### Added

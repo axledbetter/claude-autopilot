@@ -1,28 +1,6 @@
-# claude-autopilot
+# @delegance/claude-autopilot
 
-End-to-end Claude Code pipeline: approved spec → plan → worktree → implementation → migrations → validation → PR → review engine → review-bot triage.
-
-**Status: v1.0.0-alpha.1** — core architecture in place, ported adapters (codex, github, supabase, cursor), 1 preset (nextjs-supabase), 32 passing tests. API may change through alpha.
-
-Full design spec: `docs/superpowers/specs/2026-04-20-claude-autopilot-v1-design.md`
-Implementation plans: `docs/superpowers/plans/`
-
-## Changes in v1.0 (alpha.1)
-
-- Four pluggable integration points (ReviewEngine, VcsHost, MigrationRunner, ReviewBotParser) with shared `AdapterBase`
-- YAML config (`autopilot.config.yaml`) replaces `.autopilot/stack.md`
-- Unified `Finding` type across validate + review-bot, with separate `TriageRecord[]` / `FixAttempt[]` history
-- Merged static-rules phase with global re-check after autofix
-- `AutopilotError` taxonomy with per-code retry policy
-- `apiVersion` + `getCapabilities()` on every adapter
-- Real tests phase — runs `testCommand` from config, emits critical finding on failure
-- NDJSON event log with secret redaction
-
-## Prerequisites
-
-- Node 22+
-- `gh` CLI authenticated
-- `OPENAI_API_KEY` in `.env.local`
+Automated code review pipeline for Claude Code. Runs static rules, an optional LLM review engine, and impact-aware snapshot regression tests — outputs SARIF for GitHub Code Scanning, inline PR annotations, and a pre-push hook for local enforcement.
 
 ## Install
 
@@ -30,29 +8,152 @@ Implementation plans: `docs/superpowers/plans/`
 npm install --save-dev @delegance/claude-autopilot@alpha
 ```
 
-## Usage (alpha.1)
+Requires Node 22+.
 
-CLI surface is limited to `preflight` in alpha.1. `run`, `init`, `validate`, `codex-pr-review`, `bugbot` land in alpha.4.
-
-```bash
-npx autopilot          # runs preflight
-```
-
-## Preset quick-start
+## Quick Start
 
 ```bash
-cp presets/nextjs-supabase/autopilot.config.yaml .
-# Edit adapters / protectedPaths / testCommand as needed
-npx tsx src/cli/preflight.ts
+# Scaffold config
+npx autopilot init
+
+# Run on changed files
+npx autopilot run
+
+# Watch mode (re-runs on every file save)
+npx autopilot watch
+
+# Install pre-push hook
+npx autopilot hook install
 ```
 
-## Roadmap
+## Commands
 
-- **alpha.2:** chunking, cost, cache, remaining adapters, 5 presets, 20 scenario tests
-- **alpha.3:** idempotency wiring, concurrency, adapter trust, 60 conformance + 13 safety tests
-- **alpha.4:** full CLI (init, install-github-action, run --resume, etc.) + programmatic API
-- **beta → 1.0.0:** dogfood + npm publish
+### `autopilot run`
+
+Runs the pipeline on git-changed files vs the base ref.
+
+```bash
+npx autopilot run                        # diff against HEAD~1
+npx autopilot run --base main            # diff against main
+npx autopilot run --files src/foo.ts     # explicit file list
+npx autopilot run --format sarif --output results.sarif
+npx autopilot run --dry-run              # show what would run, no execution
+```
+
+### `autopilot watch`
+
+Debounced re-run on every file save.
+
+```bash
+npx autopilot watch
+npx autopilot watch --debounce 500
+```
+
+### `autopilot hook`
+
+Manages a `pre-push` git hook that runs snapshot regression tests before every push.
+
+```bash
+npx autopilot hook install          # write .git/hooks/pre-push
+npx autopilot hook install --force  # overwrite existing
+npx autopilot hook uninstall        # remove
+npx autopilot hook status           # show installed hook content
+```
+
+Works in git worktrees (handles `.git` as a file pointer).
+
+### `autopilot autoregress`
+
+Impact-aware snapshot regression testing. Only fires tests whose source modules (or one-hop importers) were touched by the current branch.
+
+```bash
+npx autopilot autoregress run              # impact-selected snapshots (default)
+npx autopilot autoregress run --all        # all snapshots
+npx autopilot autoregress diff             # show JSON diffs vs baselines
+npx autopilot autoregress update           # overwrite baselines with current output
+npx autopilot autoregress generate         # LLM-generate snapshot tests for changed files
+npx autopilot autoregress generate --files src/foo.ts,src/bar.ts
+```
+
+Requires `OPENAI_API_KEY` for `generate` mode.
+
+### `autopilot init`
+
+Scaffolds `autopilot.config.yaml` from a preset.
+
+```bash
+npx autopilot init
+```
+
+Available presets: `nextjs-supabase`, `t3`, `python-fastapi`, `rails-postgres`, `go`.
+
+### `autopilot preflight`
+
+Checks prerequisites (Node version, `gh` CLI auth, `OPENAI_API_KEY`).
+
+## GitHub Actions
+
+Add to your workflow:
+
+```yaml
+- uses: axledbetter/claude-autopilot@v1
+  with:
+    openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+```
+
+Runs the pipeline, uploads SARIF to GitHub Code Scanning, and annotates the PR diff inline.
+
+## SARIF Output
+
+```bash
+npx autopilot run --format sarif --output autopilot.sarif
+```
+
+Compatible with `github/codeql-action/upload-sarif@v3`.
+
+## Config (`autopilot.config.yaml`)
+
+```yaml
+preset: nextjs-supabase          # inherit a base config
+reviewEngine:
+  adapter: codex
+  options:
+    model: gpt-5.3-codex
+testCommand: npm test
+protect:
+  - src/core/**
+  - data/deltas/**
+```
+
+## Snapshot Regression Testing
+
+After each feature lands, generate behavioral baselines:
+
+```bash
+npx autopilot autoregress generate
+```
+
+Future PRs automatically fail if covered behavior diverges. The impact selector uses `git merge-base` diff + one-hop import graph expansion so only relevant snapshots run — keeping CI token-efficient.
+
+High-impact paths (`src/core/pipeline/**`, `src/adapters/**`, `src/core/findings/**`, `src/core/config/**`) always trigger a full run.
+
+## Architecture
+
+Four pluggable adapter points:
+
+| Point | Built-in | Purpose |
+|---|---|---|
+| `review-engine` | `codex` | LLM code review |
+| `vcs-host` | `github` | PR comments + SARIF upload |
+| `migration-runner` | `supabase` | DB migration execution |
+| `review-bot-parser` | `cursor` | Parse review bot comments |
+
+## Requirements
+
+- Node ≥ 22
+- `OPENAI_API_KEY` (optional — review engine and `autoregress generate` only)
+- `gh` CLI authenticated (optional — PR creation / vcs-host adapter)
 
 ## License
 
-MIT.
+MIT
