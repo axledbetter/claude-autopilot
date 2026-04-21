@@ -1,9 +1,9 @@
 export const DEFAULT_REDACTION_PATTERNS: readonly string[] = Object.freeze([
-  'sk-[a-zA-Z0-9]{20,}',
-  'eyJ[a-zA-Z0-9_-]{30,}',
-  'ghp_[a-zA-Z0-9]{30,}',
-  'xoxb-[a-zA-Z0-9-]{20,}',
-  'AKIA[A-Z0-9]{16}',
+  '\\bsk-[a-zA-Z0-9_-]{20,}',
+  '\\beyJ[a-zA-Z0-9_-]{30,}',
+  '\\bghp_[a-zA-Z0-9]{30,}',
+  '\\bxoxb-[a-zA-Z0-9-]{20,}',
+  '\\bAKIA[A-Z0-9]{16}\\b',
 ]);
 
 export function applyRedaction(text: string, patterns: readonly string[]): string {

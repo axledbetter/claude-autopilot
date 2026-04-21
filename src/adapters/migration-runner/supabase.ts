@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { runSafe, runThrowing } from '../../core/shell.ts';
+import { runSafe } from '../../core/shell.ts';
 import type { Capabilities } from '../base.ts';
 import type { MigrationRunner, Migration, MigrationEnv, DryRunResult, ApplyResult, LedgerEntry } from './types.ts';
 

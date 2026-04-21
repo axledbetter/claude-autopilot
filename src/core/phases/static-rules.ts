@@ -21,6 +21,10 @@ export interface StaticRulesPhaseResult {
   durationMs: number;
 }
 
+function contentKey(f: Finding): string {
+  return `${f.file}|${f.line ?? ''}|${f.severity}|${f.message.slice(0, 40)}`;
+}
+
 export async function runStaticRulesPhase(input: StaticRulesPhaseInput): Promise<StaticRulesPhaseResult> {
   const start = Date.now();
 
@@ -28,6 +32,7 @@ export async function runStaticRulesPhase(input: StaticRulesPhaseInput): Promise
 
   const fixAttempts: FixAttempt[] = [];
   let anyFixApplied = false;
+  const fixedContentKeys = new Set<string>();
 
   for (const finding of findings) {
     const rule = findRuleForFinding(input.rules, finding);
@@ -44,7 +49,10 @@ export async function runStaticRulesPhase(input: StaticRulesPhaseInput): Promise
     }
 
     const status = await rule.autofix(finding);
-    if (status === 'fixed') anyFixApplied = true;
+    if (status === 'fixed') {
+      anyFixApplied = true;
+      fixedContentKeys.add(contentKey(finding));
+    }
     fixAttempts.push({ findingId: finding.id, attemptedAt: new Date().toISOString(), status });
   }
 
@@ -52,8 +60,7 @@ export async function runStaticRulesPhase(input: StaticRulesPhaseInput): Promise
     findings = dedupFindings(await runAllChecks(input.rules, input.touchedFiles));
   }
 
-  const isFixed = (f: Finding): boolean =>
-    fixAttempts.some(fa => fa.findingId === f.id && fa.status === 'fixed');
+  const isFixed = (f: Finding): boolean => fixedContentKeys.has(contentKey(f));
   const unfixedCritical = findings.some(f => f.severity === 'critical' && !isFixed(f));
   const unfixedWarning = findings.some(f => f.severity === 'warning' && !isFixed(f));
 
