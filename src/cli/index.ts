@@ -17,7 +17,7 @@ import { runWatch } from './watch.ts';
 const args = process.argv.slice(2);
 
 const SUBCOMMANDS = ['init', 'run', 'preflight', 'help', '--help', '-h'] as const;
-const VALUE_FLAGS = ['base', 'config', 'files'];
+const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce'];
 
 // Detect first non-flag arg as subcommand, default to 'run'
 const subcommand = (args[0] && !args[0].startsWith('--')) ? args[0] : 'run';
@@ -53,6 +53,8 @@ Options (run):
   --config <path>      Path to config file (default: ./autopilot.config.yaml)
   --files <a,b,c>      Explicit comma-separated file list (skips git detection)
   --dry-run            Show what would run without executing
+  --format <text|sarif>  Output format (default: text)
+  --output <path>        Output file path (required with --format sarif)
 
 Options (watch):
   --config <path>      Path to config file (default: ./autopilot.config.yaml)
@@ -92,12 +94,25 @@ switch (subcommand) {
     const config = flag('config');
     const filesArg = flag('files');
     const dryRun = boolFlag('dry-run');
+    const formatArg = flag('format');
+    const outputPath = flag('output');
+
+    if (formatArg && formatArg !== 'text' && formatArg !== 'sarif') {
+      console.error(`\x1b[31m[autopilot] --format must be "text" or "sarif"\x1b[0m`);
+      process.exit(1);
+    }
+    if (formatArg === 'sarif' && !outputPath) {
+      console.error(`\x1b[31m[autopilot] --format sarif requires --output <path>\x1b[0m`);
+      process.exit(1);
+    }
 
     const code = await runCommand({
       base,
       configPath: config,
       files: filesArg ? filesArg.split(',').map(f => f.trim()) : undefined,
       dryRun,
+      format: formatArg as 'text' | 'sarif' | undefined,
+      outputPath,
     });
     process.exit(code);
     break;
