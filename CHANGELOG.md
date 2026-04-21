@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.0-rc.1] — 2026-04-21
+
+### Added
+- `autopilot init` now shows full next-steps: hook install, autoregress generate, CI snippet, first run
+- Public API surface: `Finding`, `RunResult`, `AutopilotConfig`, `normalizeSnapshot` exported from package root via `exports` field in package.json
+
+### Changed
+- Version promoted from 1.0.0-alpha.8 → 1.0.0-rc.1
+
 ## 1.0.0-alpha.8
 
 ### Added

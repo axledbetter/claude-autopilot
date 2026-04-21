@@ -66,8 +66,15 @@ export async function runInit(cwd: string = process.cwd()): Promise<void> {
   console.log(`\n\x1b[32m✓\x1b[0m  Created autopilot.config.yaml from preset \x1b[1m${presetName}\x1b[0m`);
   console.log('\nNext steps:');
   console.log('  1. Review autopilot.config.yaml and adjust testCommand / protectedPaths');
-  console.log('  2. Set OPENAI_API_KEY in your .env file for Codex review');
-  console.log('  3. Run: npx autopilot run\n');
+  console.log('  2. Set OPENAI_API_KEY in your environment (for Codex review)');
+  console.log('  3. Run your first pipeline to verify the setup:');
+  console.log('       npx autopilot run');
+  console.log('  4. Generate snapshot baselines after your first feature lands:');
+  console.log('       npx autopilot autoregress generate');
+  console.log('  5. Install the pre-push git hook (enforces snapshots on push):');
+  console.log('       npx autopilot hook install');
+  console.log('  6. (Optional) Add CI with GitHub Actions:');
+  console.log('       uses: axledbetter/claude-autopilot/.github/actions/ci@main\n');
 }
 
 function presetSearchPaths(name: string): string[] {
