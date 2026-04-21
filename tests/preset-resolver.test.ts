@@ -14,7 +14,7 @@ test('resolvePreset throws for unknown preset', async () => {
   );
 });
 
-test('resolvePreset loads nextjs-supabase', { skip: 'un-skip after PA15 creates preset' }, async () => {
+test('resolvePreset loads nextjs-supabase', async () => {
   const preset = await resolvePreset('nextjs-supabase');
   assert.equal(preset.config.configVersion, 1);
   assert.ok(preset.stack.length > 0);
