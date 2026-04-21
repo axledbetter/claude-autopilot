@@ -16,7 +16,7 @@ import { runWatch } from './watch.ts';
 
 const args = process.argv.slice(2);
 
-const SUBCOMMANDS = ['init', 'run', 'preflight', 'help', '--help', '-h'] as const;
+const SUBCOMMANDS = ['init', 'run', 'preflight', 'autoregress', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce'];
 
 // Detect first non-flag arg as subcommand, default to 'run'
@@ -47,6 +47,7 @@ Commands:
   watch        Watch for file changes and re-run pipeline on each save
   init         Scaffold autopilot.config.yaml from a preset
   preflight    Check prerequisites
+  autoregress  Run snapshot regression tests (run|diff|update|generate)
 
 Options (run):
   --base <ref>         Git base ref for diff (default: HEAD~1)
@@ -59,6 +60,12 @@ Options (run):
 Options (watch):
   --config <path>      Path to config file (default: ./autopilot.config.yaml)
   --debounce <ms>      Debounce delay in ms (default: 300)
+
+Options (autoregress):
+  --all                    Run/diff all snapshots
+  --since <ref>            Git ref for changed-files detection
+  --snapshot <slug>        Target a single snapshot
+  --files <a,b,c>          Explicit file list for generate (skips git detection)
 `);
 }
 
@@ -123,6 +130,13 @@ switch (subcommand) {
     const hookSub = args[1] ?? 'status';
     const force = boolFlag('force');
     const code = await runHook(hookSub, { force });
+    process.exit(code);
+    break;
+  }
+
+  case 'autoregress': {
+    const { runAutoregress } = await import('./autoregress-bridge.ts');
+    const code = await runAutoregress(args.slice(1));
     process.exit(code);
     break;
   }
