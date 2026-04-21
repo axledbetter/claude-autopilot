@@ -85,4 +85,36 @@ describe('detectProject', () => {
     assert.equal(r.confidence, 'low');
     fs.rmSync(dir, { recursive: true });
   });
+
+  it('ignores npm default test placeholder and falls back to npm test', () => {
+    const dir = makeTmp();
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+      scripts: { test: 'echo "Error: no test specified" && exit 1' },
+      dependencies: { 'next': '^15', '@supabase/supabase-js': '^2' },
+    }));
+    const r = detectProject(dir);
+    assert.equal(r.testCommand, 'npm test');
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  it('detects fastapi from pyproject.toml', () => {
+    const dir = makeTmp();
+    fs.writeFileSync(path.join(dir, 'pyproject.toml'), '[tool.poetry.dependencies]\nfastapi = "*"\n');
+    const r = detectProject(dir);
+    assert.equal(r.preset, 'python-fastapi');
+    assert.equal(r.testCommand, 'pytest');
+    assert.equal(r.confidence, 'high');
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  it('uses custom test script from package.json when not placeholder', () => {
+    const dir = makeTmp();
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+      scripts: { test: 'vitest run --reporter=verbose' },
+      dependencies: { 'next': '^15' },
+    }));
+    const r = detectProject(dir);
+    assert.equal(r.testCommand, 'vitest run --reporter=verbose');
+    fs.rmSync(dir, { recursive: true });
+  });
 });
