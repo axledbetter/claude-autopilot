@@ -1,12 +1,27 @@
 {
   "name": "@delegance/claude-autopilot",
-  "version": "1.0.0-alpha.3",
-  "private": true,
+  "version": "1.0.0-alpha.4",
   "type": "module",
-  "description": "Claude Code pipeline: spec to PR with review",
+  "description": "Claude Code automation pipeline: spec → plan → implement → validate → PR",
+  "keywords": ["claude", "autopilot", "ai", "pipeline", "code-review", "cli"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/axledbetter/claude-autopilot.git"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "bin": {
     "autopilot": "bin/autopilot.js"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "presets/",
+    "scripts/test-runner.mjs",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "test": "node scripts/test-runner.mjs",
     "typecheck": "tsc --noEmit",
