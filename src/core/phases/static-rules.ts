@@ -48,17 +48,16 @@ export async function runStaticRulesPhase(input: StaticRulesPhaseInput): Promise
     fixAttempts.push({ findingId: finding.id, attemptedAt: new Date().toISOString(), status });
   }
 
-  // Re-check is the source of truth: a finding is "fixed" if it was present before
-  // but absent after the autofix. This is correct even if autofix lied about its status.
-  const findings = anyFixApplied
+  // Re-check is the source of truth for what persists after autofix.
+  // findings always returns preFixFindings so callers have a complete record;
+  // fixAttempts + re-check set-difference tells them what was resolved.
+  const postFixFindings = anyFixApplied
     ? dedupFindings(await runAllChecks(input.rules, input.touchedFiles))
     : preFixFindings;
 
-  const preFixKeys = new Set(preFixFindings.map(findingContentKey));
-  const postFixKeys = new Set(findings.map(findingContentKey));
-  const fixedKeys = new Set([...preFixKeys].filter(k => !postFixKeys.has(k)));
+  const postFixKeys = new Set(postFixFindings.map(findingContentKey));
+  const isFixed = (f: Finding): boolean => !postFixKeys.has(findingContentKey(f));
 
-  const isFixed = (f: Finding): boolean => fixedKeys.has(findingContentKey(f));
   const unfixedCritical = preFixFindings.some(f => f.severity === 'critical' && !isFixed(f));
   const unfixedWarning = preFixFindings.some(f => f.severity === 'warning' && !isFixed(f));
 
@@ -67,7 +66,7 @@ export async function runStaticRulesPhase(input: StaticRulesPhaseInput): Promise
   else if (unfixedWarning) status = 'warn';
   else status = 'pass';
 
-  return { phase: 'static-rules', status, findings, fixAttempts, durationMs: Date.now() - start };
+  return { phase: 'static-rules', status, findings: preFixFindings, fixAttempts, durationMs: Date.now() - start };
 }
 
 async function runAllChecks(rules: StaticRule[], files: string[]): Promise<Finding[]> {

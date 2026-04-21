@@ -37,6 +37,9 @@ export function mergeConfigs(preset: AutopilotConfig, user: AutopilotConfig): Au
   return {
     ...preset,
     ...user,
+    // Arrays are concatenated (preset values first) so user additions don't discard preset invariants
+    protectedPaths: [...(preset.protectedPaths ?? []), ...(user.protectedPaths ?? [])],
+    staticRules: [...(preset.staticRules ?? []), ...(user.staticRules ?? [])],
     thresholds: { ...preset.thresholds, ...user.thresholds },
     chunking: { ...preset.chunking, ...user.chunking },
   };

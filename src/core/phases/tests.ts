@@ -24,12 +24,12 @@ export async function runTestsPhase(input: TestsPhaseInput): Promise<TestsPhaseR
 
   let output: string | undefined;
   try {
-    // shell:true so testCommand can contain quoted args, pipes, etc.
-    // testCommand is developer-supplied config, not user input.
+    // shell:true is intentional — testCommand is developer-supplied config, supports quoted args + pipes.
     output = execSync(input.testCommand, {
       encoding: 'utf8',
       cwd: input.cwd,
       timeout: 120000,
+      shell: process.env.SHELL ?? "/bin/sh",
       stdio: ['ignore', 'pipe', 'pipe'],
     });
   } catch {
