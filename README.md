@@ -94,9 +94,17 @@ npx autopilot init
 
 Available presets: `nextjs-supabase`, `t3`, `python-fastapi`, `rails-postgres`, `go`.
 
-### `autopilot preflight`
+### `autopilot doctor`
 
-Checks prerequisites (Node version, `gh` CLI auth, `OPENAI_API_KEY`).
+Checks prerequisites and shows exact fix commands for each failure.
+
+```bash
+npx autopilot doctor    # Check prerequisites and show exact fix commands
+```
+
+Verifies: Node 22+, tsx, gh CLI auth, claude CLI, OPENAI_API_KEY, git user config, superpowers plugin. Exits 1 if any blockers are found. Also runs automatically at the end of `autopilot setup`.
+
+`autopilot preflight` is kept as an alias for `doctor`.
 
 ## GitHub Actions
 

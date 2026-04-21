@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0] — 2026-04-21
+
+### Added
+- `autopilot doctor` — prerequisite checker: verifies Node 22+, tsx, gh CLI auth, claude CLI, OPENAI_API_KEY, git config, superpowers plugin; shows exact fix command for each failure; exits 1 if any blockers
+- `autopilot setup` now runs `doctor` automatically at the end so users immediately see what still needs attention
+- `autopilot preflight` kept as alias for `doctor`
+
 ## [1.1.0] — 2026-04-21
 
 ### Added
