@@ -62,7 +62,7 @@ export async function runReviewPhase(input: ReviewPhaseInput): Promise<ReviewPha
   if (budgetExceeded) {
     allFindings.push({
       id: 'budget-exceeded',
-      source: 'static-rules',
+      source: 'pipeline',
       severity: 'warning',
       category: 'budget',
       file: '<pipeline>',

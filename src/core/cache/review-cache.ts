@@ -1,4 +1,5 @@
 import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { ReviewOutput } from '../../adapters/review-engine/types.ts';
@@ -16,7 +17,10 @@ export interface ReviewCacheOptions {
 }
 
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000; // 24h
-const DEFAULT_CACHE_DIR = path.join(process.cwd(), '.autopilot-cache', 'reviews');
+// Prefer env override, then ~/.autopilot-cache to survive across cwd changes and container restarts
+const DEFAULT_CACHE_DIR = process.env.AUTOPILOT_CACHE_DIR
+  ? path.join(process.env.AUTOPILOT_CACHE_DIR, 'reviews')
+  : path.join(os.homedir(), '.autopilot-cache', 'reviews');
 
 export class ReviewCache {
   private readonly cacheDir: string;

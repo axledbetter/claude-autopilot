@@ -11,16 +11,19 @@ export const fastapiMissingAuthRule: StaticRule = {
   severity: 'critical',
   async check(touchedFiles: string[]): Promise<Finding[]> {
     const findings: Finding[] = [];
-    const pyFiles = touchedFiles.filter(f => f.endsWith('.py') && f.includes('router'));
+    const pyFiles = touchedFiles.filter(f => f.endsWith('.py'));
     for (const file of pyFiles) {
       try {
         const content = await fs.readFile(file, 'utf8');
         const lines = content.split('\n');
+        // Check whether any router-level dependency covers the whole file
+        const fileHasRouterAuth = HAS_AUTH_DEP.test(content.slice(0, 2000));
+        if (fileHasRouterAuth) continue;
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i]!;
           if (!MUTATION_DECORATOR.test(line)) continue;
-          // Check the next 20 lines for the auth dependency
-          const block = lines.slice(i, i + 20).join('\n');
+          // Scan up to 40 lines after the decorator for per-endpoint auth
+          const block = lines.slice(i, i + 40).join('\n');
           if (!HAS_AUTH_DEP.test(block)) {
             findings.push({
               id: `fastapi-missing-auth:${file}:${i + 1}`,

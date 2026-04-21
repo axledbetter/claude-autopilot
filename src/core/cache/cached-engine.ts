@@ -20,7 +20,8 @@ export function withCache(engine: ReviewEngine, options: ReviewCacheOptions = {}
       return engine.estimateTokens(content);
     },
     async review(input: ReviewInput): Promise<ReviewOutput> {
-      const key = ReviewCache.keyFor(engine.name, model, input.content);
+      const keyPayload = `${input.content}\x00${input.kind}\x00${input.context?.stack ?? ''}`;
+      const key = ReviewCache.keyFor(engine.name, model, keyPayload);
       const cached = await cache.get(key);
       if (cached) return { ...cached, usage: cached.usage ? { ...cached.usage, costUSD: 0 } : undefined };
       const output = await engine.review(input);
