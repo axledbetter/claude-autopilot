@@ -1,9 +1,16 @@
 {
   "name": "@delegance/claude-autopilot",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
-  "description": "Claude Code automation pipeline: spec → plan → implement → validate → PR",
-  "keywords": ["claude", "autopilot", "ai", "pipeline", "code-review", "cli"],
+  "description": "Claude Code automation pipeline: spec \u2192 plan \u2192 implement \u2192 validate \u2192 PR",
+  "keywords": [
+    "claude",
+    "autopilot",
+    "ai",
+    "pipeline",
+    "code-review",
+    "cli"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -36,15 +43,17 @@
     "build": "tsc",
     "autoregress": "tsx scripts/autoregress.ts"
   },
-  "devDependencies": {
-    "@types/js-yaml": "^4",
-    "@types/node": "^22",
+  "dependencies": {
     "ajv": "^8",
     "dotenv": ">=16",
     "js-yaml": "^4",
     "minimatch": ">=9",
     "openai": ">=4",
-    "tsx": ">=4",
+    "tsx": ">=4"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4",
+    "@types/node": "^22",
     "typescript": "^5"
   }
 }

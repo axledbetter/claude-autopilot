@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.1] — 2026-04-21
+
+### Fixed
+- Move `tsx`, `js-yaml`, `ajv`, `dotenv`, `minimatch`, `openai` from `devDependencies` to `dependencies` — CLI was broken for end-users who installed via npm since devDeps aren't installed by consumers
+
 ## [1.0.0] — 2026-04-21
 
 ### Changed
