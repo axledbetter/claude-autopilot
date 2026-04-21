@@ -1,6 +1,25 @@
 #!/usr/bin/env node
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+
+// Load .env.local / .env so OPENAI_API_KEY etc. are available without shell export
+const ENV_FILES = ['.env.local', '.env.dev', '.env.development', '.env'];
+for (const f of ENV_FILES) {
+  const p = path.join(process.cwd(), f);
+  if (!fs.existsSync(p)) continue;
+  for (const line of fs.readFileSync(p, 'utf8').split('\n')) {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const eq = t.indexOf('=');
+    if (eq < 0) continue;
+    const key = t.slice(0, eq).trim();
+    if (!process.env[key]) {
+      process.env[key] = t.slice(eq + 1).trim().replace(/^['"]|['"]$/g, '');
+    }
+  }
+  break;
+}
+
 import { loadConfig } from '../core/config/loader.ts';
 import { resolvePreset } from '../core/config/preset-resolver.ts';
 import { mergeConfigs } from '../core/config/preset-resolver.ts';
