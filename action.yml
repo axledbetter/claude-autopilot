@@ -1,0 +1,48 @@
+name: Claude Autopilot
+description: >
+  Run the autopilot pipeline on changed files, upload findings to GitHub Code
+  Scanning (SARIF), and annotate the PR diff inline.
+author: axledbetter
+
+inputs:
+  config:
+    description: Path to autopilot.config.yaml
+    default: autopilot.config.yaml
+  version:
+    description: Package version to install (e.g. 1.0.0-alpha.5, latest, alpha)
+    default: alpha
+  sarif-output:
+    description: Path to write SARIF results file
+    default: autopilot-results.sarif
+  openai-api-key:
+    description: OpenAI API key for the review engine. Pass via secrets.
+    required: false
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js 22
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: npm
+
+    - name: Run autopilot pipeline
+      run: |
+        npx --yes --package @delegance/claude-autopilot@${{ inputs.version }} \
+          autopilot run \
+          --config "${{ inputs.config }}" \
+          --format sarif \
+          --output "${{ inputs.sarif-output }}"
+      shell: bash
+      env:
+        OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+
+    - name: Upload SARIF to GitHub Code Scanning
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: ${{ inputs.sarif-output }}
