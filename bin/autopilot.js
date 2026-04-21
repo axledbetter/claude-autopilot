@@ -1,15 +1,20 @@
 #!/usr/bin/env node
-// Thin launcher that uses tsx to run the TypeScript CLI entry point.
-// This is what `npx autopilot` resolves to — it hands off to tsx so TypeScript
-// source can execute without a separate build step during alpha.
-import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const tsxBin = path.resolve(__dirname, '..', 'node_modules', '.bin', 'tsx');
 const entrypoint = path.resolve(__dirname, '..', 'src', 'cli', 'index.ts');
 
-const result = spawnSync(tsxBin, [entrypoint, ...process.argv.slice(2)], { stdio: 'inherit' });
+// Locate tsx: own node_modules (dev) → consumer's node_modules/.bin → PATH
+function findTsx() {
+  const own = path.resolve(__dirname, '..', 'node_modules', '.bin', 'tsx');
+  if (fs.existsSync(own)) return own;
+  const consumer = path.resolve(__dirname, '..', '..', '..', '.bin', 'tsx');
+  if (fs.existsSync(consumer)) return consumer;
+  return 'tsx';
+}
+
+const result = spawnSync(findTsx(), [entrypoint, ...process.argv.slice(2)], { stdio: 'inherit' });
 process.exit(result.status ?? 1);

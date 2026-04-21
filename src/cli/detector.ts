@@ -24,10 +24,14 @@ function fileContains(filePath: string, needle: string): boolean {
   }
 }
 
+const DEFAULT_TEST_PLACEHOLDER = /^echo .error: no test specified/i;
+
 function nodeTestCommand(cwd: string): string {
   const pkg = readJson(path.join(cwd, 'package.json'));
   const scripts = pkg?.['scripts'] as Record<string, string> | undefined;
-  return scripts?.['test'] ?? 'npm test';
+  const cmd = scripts?.['test'];
+  if (!cmd || DEFAULT_TEST_PLACEHOLDER.test(cmd)) return 'npm test';
+  return cmd;
 }
 
 export function detectProject(cwd: string): DetectionResult {
