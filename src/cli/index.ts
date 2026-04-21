@@ -8,16 +8,17 @@
  *   autopilot run --base main   diff against a specific branch
  *   autopilot run --dry-run     show what would run, no execution
  *   autopilot watch             re-run pipeline on every file save (debounced)
- *   autopilot preflight         check prerequisites
+ *   autopilot doctor            check prerequisites (alias: preflight)
  */
 import { runInit } from './init.ts';
 import { runCommand } from './run.ts';
 import { runWatch } from './watch.ts';
 import { runSetup } from './setup.ts';
+import { runDoctor } from './preflight.ts';
 
 const args = process.argv.slice(2);
 
-const SUBCOMMANDS = ['init', 'run', 'watch', 'hook', 'autoregress', 'preflight', 'setup', 'help', '--help', '-h'] as const;
+const SUBCOMMANDS = ['init', 'run', 'watch', 'hook', 'autoregress', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce'];
 
 // Detect first non-flag arg as subcommand, default to 'run'
@@ -47,7 +48,7 @@ Commands:
   run          Run the pipeline on git-changed files (default)
   watch        Watch for file changes and re-run pipeline on each save
   init         Scaffold autopilot.config.yaml from a preset
-  preflight    Check prerequisites
+  doctor       Check prerequisites and show exact fix commands (alias: preflight)
   autoregress  Run snapshot regression tests (run|diff|update|generate)
 
 Options (run):
@@ -75,9 +76,12 @@ switch (subcommand) {
     await runInit(process.cwd());
     break;
 
-  case 'preflight':
-    await import('./preflight.ts');
+  case 'doctor':
+  case 'preflight': {
+    const result = await runDoctor();
+    process.exit(result.blockers > 0 ? 1 : 0);
     break;
+  }
 
   case 'help':
   case '--help':

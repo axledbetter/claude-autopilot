@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { detectProject } from './detector.ts';
 import { runHook } from './hook.ts';
+import { runDoctor } from './preflight.ts';
 
 const PASS = '\x1b[32m✓\x1b[0m';
 const WARN = '\x1b[33m!\x1b[0m';
@@ -76,6 +77,9 @@ export async function runSetup(options: SetupOptions = {}): Promise<void> {
       console.log(`  ${WARN}  Hook install failed (not fatal — run: npx autopilot hook install)`);
     }
   }
+
+  console.log('\n[setup] Checking prerequisites...');
+  await runDoctor();
 
   console.log('\n[setup] Done. Run: npx autopilot run\n');
 }
