@@ -120,21 +120,6 @@ export async function runDoctor(): Promise<DoctorResult> {
       : undefined,
   });
 
-  // 9. superpowers plugin
-  const home = process.env.HOME ?? '';
-  const superpowersPaths = [
-    path.join(home, '.claude', 'plugins', 'cache', 'claude-plugins-official', 'superpowers'),
-    path.join(home, '.claude', 'plugins', 'cache', 'superpowers-marketplace', 'superpowers'),
-    path.join(home, '.claude', 'plugins', 'superpowers'),
-  ];
-  const superpowersOk = superpowersPaths.some(p => fs.existsSync(p));
-  checks.push({
-    name: 'superpowers plugin',
-    result: superpowersOk ? 'pass' : 'warn',
-    message: !superpowersOk
-      ? 'superpowers plugin not detected — install: /plugin install superpowers@claude-plugins-official'
-      : undefined,
-  });
 
   // Print results
   console.log('\n\x1b[1m[doctor] Autopilot prerequisite check\x1b[0m\n');

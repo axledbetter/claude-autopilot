@@ -10,7 +10,6 @@
  *   autopilot watch             re-run pipeline on every file save (debounced)
  *   autopilot doctor            check prerequisites (alias: preflight)
  */
-import { runInit } from './init.ts';
 import { runCommand } from './run.ts';
 import { runWatch } from './watch.ts';
 import { runSetup } from './setup.ts';
@@ -72,9 +71,12 @@ Options (autoregress):
 }
 
 switch (subcommand) {
-  case 'init':
-    await runInit(process.cwd());
+  case 'init': {
+    console.log('\x1b[33m[init] autopilot init is deprecated — use: npx autopilot setup\x1b[0m\n');
+    const force = args.includes('--force');
+    await runSetup({ force });
     break;
+  }
 
   case 'doctor':
   case 'preflight': {
