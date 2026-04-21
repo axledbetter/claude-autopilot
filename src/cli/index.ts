@@ -13,10 +13,11 @@
 import { runInit } from './init.ts';
 import { runCommand } from './run.ts';
 import { runWatch } from './watch.ts';
+import { runSetup } from './setup.ts';
 
 const args = process.argv.slice(2);
 
-const SUBCOMMANDS = ['init', 'run', 'watch', 'hook', 'autoregress', 'preflight', 'help', '--help', '-h'] as const;
+const SUBCOMMANDS = ['init', 'run', 'watch', 'hook', 'autoregress', 'preflight', 'setup', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce'];
 
 // Detect first non-flag arg as subcommand, default to 'run'
@@ -138,6 +139,12 @@ switch (subcommand) {
     const { runAutoregress } = await import('./autoregress-bridge.ts');
     const code = runAutoregress(args.slice(1));
     process.exit(code);
+    break;
+  }
+
+  case 'setup': {
+    const force = args.includes('--force');
+    await runSetup({ force });
     break;
   }
 
