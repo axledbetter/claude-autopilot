@@ -1,0 +1,10 @@
+configVersion: 1
+preset: nextjs-supabase
+reviewEngine:
+  adapter: codex
+vcsHost:
+  adapter: github
+thresholds:
+  bugbotAutoFix: 85
+chunking:
+  smallTierMaxTokens: 8000
