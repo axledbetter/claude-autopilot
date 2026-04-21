@@ -13,7 +13,11 @@ export interface LoadAdapterOptions {
 }
 
 const BUILTIN_PATHS: Record<IntegrationPoint, Record<string, string>> = {
-  'review-engine': { codex: './review-engine/codex.ts' },
+  'review-engine': {
+    codex: './review-engine/codex.ts',
+    claude: './review-engine/claude.ts',
+    auto: './review-engine/auto.ts',
+  },
   'vcs-host': { github: './vcs-host/github.ts' },
   'migration-runner': { supabase: './migration-runner/supabase.ts' },
   'review-bot-parser': { cursor: './review-bot-parser/cursor.ts' },

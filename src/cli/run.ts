@@ -107,13 +107,13 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     return 0;
   }
 
-  // Load review engine (optional — skip if no OPENAI_API_KEY or not configured)
+  // Load review engine (optional — skip gracefully if no API key configured)
   let reviewEngine: ReviewEngine | undefined;
   if (config.reviewEngine) {
     const ref = typeof config.reviewEngine === 'string' ? config.reviewEngine : config.reviewEngine.adapter;
-    const hasKey = !!(process.env.OPENAI_API_KEY);
-    if (!hasKey && ref === 'codex') {
-      console.log(fmt('yellow', '\n  [run] OPENAI_API_KEY not set — Codex review step will be skipped'));
+    const hasAnyKey = !!(process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY);
+    if (!hasAnyKey && (ref === 'auto' || ref === 'claude' || ref === 'codex')) {
+      console.log(fmt('yellow', '\n  [run] No LLM API key found — set ANTHROPIC_API_KEY or OPENAI_API_KEY to enable review'));
     } else {
       try {
         reviewEngine = await loadAdapter<ReviewEngine>({

@@ -2,7 +2,7 @@
   "name": "@delegance/claude-autopilot",
   "version": "1.2.8",
   "type": "module",
-  "description": "Claude Code automation pipeline: spec \u2192 plan \u2192 implement \u2192 validate \u2192 PR",
+  "description": "Claude Code automation pipeline: spec → plan → implement → validate → PR",
   "keywords": [
     "claude",
     "autopilot",
@@ -45,6 +45,7 @@
     "autoregress": "tsx scripts/autoregress.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.90.0",
     "ajv": "^8",
     "dotenv": ">=16",
     "js-yaml": "^4",
