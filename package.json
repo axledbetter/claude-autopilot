@@ -1,6 +1,6 @@
 {
   "name": "@delegance/claude-autopilot",
-  "version": "1.2.6",
+  "version": "1.2.7",
   "type": "module",
   "description": "Claude Code automation pipeline: spec \u2192 plan \u2192 implement \u2192 validate \u2192 PR",
   "keywords": [
