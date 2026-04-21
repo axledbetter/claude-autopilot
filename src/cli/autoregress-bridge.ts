@@ -14,12 +14,17 @@ export function buildAutoregressArgs(args: string[]): string[] {
   return [mode, ...rest];
 }
 
-export async function runAutoregress(args: string[]): Promise<number> {
+export function runAutoregress(args: string[]): number {
   const resolvedArgs = buildAutoregressArgs(args);
   const result = spawnSync(
-    'node',
+    process.execPath,
     ['--import', 'tsx', SCRIPT, ...resolvedArgs],
     { stdio: 'inherit', cwd: process.cwd() },
   );
+  if (result.error) {
+    console.error(`[autoregress] failed to launch: ${result.error.message}`);
+    console.error(`  script: ${SCRIPT}`);
+    return 1;
+  }
   return result.status ?? 1;
 }

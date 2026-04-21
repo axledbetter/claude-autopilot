@@ -48,12 +48,29 @@ jobs:
 
       - run: npm ci
 
+      - name: Validate tag matches package version
+        run: |
+          TAG_VERSION="${{ github.ref_name }}"
+          TAG_VERSION="${TAG_VERSION#v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag ${{ github.ref_name }} does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+
       - name: Publish
         run: |
           VERSION="${{ github.ref_name }}"
           if [[ "$VERSION" == *"alpha"* ]]; then TAG="alpha"
           elif [[ "$VERSION" == *"beta"* ]]; then TAG="beta"
           else TAG="latest"; fi
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          PKG_NAME=$(node -p "require('./package.json').name")
+          EXISTING=$(npm view "${PKG_NAME}@${PKG_VERSION}" version 2>/dev/null || echo "")
+          if [ "$EXISTING" = "$PKG_VERSION" ]; then
+            echo "Version $PKG_VERSION already published — skipping"
+            exit 0
+          fi
           npm publish --access public --tag $TAG
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
