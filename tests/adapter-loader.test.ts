@@ -6,8 +6,7 @@ import * as os from 'node:os';
 import { loadAdapter } from '../src/adapters/loader.ts';
 import { AutopilotError } from '../src/core/errors.ts';
 
-// Test 1 skipped until PA13 ships the codex adapter
-test.skip('loadAdapter resolves built-in codex', async () => {
+test('loadAdapter resolves built-in codex', async () => {
   const adapter = await loadAdapter({ point: 'review-engine', ref: 'codex' });
   assert.equal(adapter.name, 'codex');
 });
