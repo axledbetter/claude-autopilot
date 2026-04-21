@@ -1,9 +1,13 @@
 node_modules/
+dist/
+.claude/runs/
+.claude/logs/
+.claude/.lock
+*.log
 .env
 .env.local
 .autopilot/stack.md
 .claude/validation-report.json
 .claude/bugbot-state.json
-*.log
 
 .worktrees/
