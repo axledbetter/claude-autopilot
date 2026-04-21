@@ -49,7 +49,7 @@ const tsxVersion = fs.existsSync(localTsx)
 checks.push({
   name: 'tsx available',
   result: tsxVersion ? 'pass' : 'fail',
-  message: !tsxVersion ? 'tsx not found — run: npm install --save-dev tsx' : undefined,
+  message: !tsxVersion ? 'tsx not found — run: npm install @delegance/claude-autopilot (includes tsx)' : undefined,
 });
 
 // 3. gh CLI authenticated

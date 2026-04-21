@@ -5,10 +5,10 @@ Automated code review pipeline for Claude Code. Runs static rules, an optional L
 ## Install
 
 ```bash
-npm install --save-dev @delegance/claude-autopilot@alpha
+npm install @delegance/claude-autopilot
 ```
 
-Requires Node 22+.
+Requires Node 22+. Also requires `gh` CLI authenticated and `claude` CLI installed (Claude Code).
 
 ## Quick Start
 
