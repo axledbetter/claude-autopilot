@@ -1,9 +1,12 @@
 {
   "name": "@delegance/claude-autopilot",
-  "version": "1.0.0-alpha.2",
+  "version": "1.0.0-alpha.3",
   "private": true,
   "type": "module",
   "description": "Claude Code pipeline: spec to PR with review",
+  "bin": {
+    "autopilot": "bin/autopilot.js"
+  },
   "scripts": {
     "test": "node scripts/test-runner.mjs",
     "typecheck": "tsc --noEmit",

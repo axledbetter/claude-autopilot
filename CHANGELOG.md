@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.0-alpha.3 (2026-04-21)
+
+### New Features
+
+- **`autopilot run`** (`src/cli/run.ts`) — runs the full pipeline from the terminal: loads config, resolves preset, auto-detects changed files via git diff, calls `runAutopilot()`, prints phase summary with inline finding details
+- **`autopilot init`** (`src/cli/init.ts`) — interactive preset scaffold: lists 5 presets, writes `autopilot.config.yaml`, prints next steps
+- **`autopilot preflight`** — re-routes to existing preflight checker
+- **Git touched-files resolver** (`src/core/git/touched-files.ts`) — `resolveGitTouchedFiles()` diffs HEAD~1..HEAD, falls back to `git status` for single-commit repos; configurable `--base` ref
+- **CLI entrypoint** (`src/cli/index.ts`) — dispatches to init/run/preflight subcommands; supports `--base`, `--config`, `--files`, `--dry-run` flags
+- **`bin.autopilot`** restored in `package.json` pointing at the new entrypoint
+- 10 new CLI tests (5 touched-files, 5 run-command) → 62 total
+
 ## 1.0.0-alpha.2 (2026-04-20)
 
 ### New Features
