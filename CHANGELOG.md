@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.0-alpha.4 (2026-04-21)
+
+### New Features
+
+- **`autopilot watch`** (`src/cli/watch.ts`) — watches cwd recursively, debounces file changes (default 300ms), re-runs `runAutopilot()` on each batch, prints phase summary per run; Ctrl+C exits cleanly
+- **`--debounce <ms>`** flag on `watch` subcommand
+- **`makeDebouncer`** and **`isIgnored`** exported as pure functions (testable without real watcher)
+- **`files` field** in package.json — excludes tests, restricts publish to `bin/`, `src/`, `presets/`, `scripts/test-runner.mjs`, `CHANGELOG.md`
+- **`private: true` removed** — package is now publishable to npm
+- **`engines.node: >=22.0.0`**, `keywords`, `license`, `repository` added to package.json
+- 12 new watch tests (7 isIgnored + 5 debouncer) → 74 total
+
 ## 1.0.0-alpha.3 (2026-04-21)
 
 ### New Features

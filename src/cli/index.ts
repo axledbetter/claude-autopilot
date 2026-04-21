@@ -7,10 +7,12 @@
  *   autopilot run               run the pipeline on git-changed files
  *   autopilot run --base main   diff against a specific branch
  *   autopilot run --dry-run     show what would run, no execution
+ *   autopilot watch             re-run pipeline on every file save (debounced)
  *   autopilot preflight         check prerequisites
  */
 import { runInit } from './init.ts';
 import { runCommand } from './run.ts';
+import { runWatch } from './watch.ts';
 
 const args = process.argv.slice(2);
 
@@ -42,14 +44,19 @@ Usage: autopilot <command> [options]
 
 Commands:
   run          Run the pipeline on git-changed files (default)
+  watch        Watch for file changes and re-run pipeline on each save
   init         Scaffold autopilot.config.yaml from a preset
   preflight    Check prerequisites
 
 Options (run):
-  --base <ref>       Git base ref for diff (default: HEAD~1)
-  --config <path>    Path to config file (default: ./autopilot.config.yaml)
-  --files <a,b,c>    Explicit comma-separated file list (skips git detection)
-  --dry-run          Show what would run without executing
+  --base <ref>         Git base ref for diff (default: HEAD~1)
+  --config <path>      Path to config file (default: ./autopilot.config.yaml)
+  --files <a,b,c>      Explicit comma-separated file list (skips git detection)
+  --dry-run            Show what would run without executing
+
+Options (watch):
+  --config <path>      Path to config file (default: ./autopilot.config.yaml)
+  --debounce <ms>      Debounce delay in ms (default: 300)
 `);
 }
 
@@ -67,6 +74,18 @@ switch (subcommand) {
   case '-h':
     printUsage();
     break;
+
+  case 'watch': {
+    const config = flag('config');
+    const debounceArg = flag('debounce');
+    const debounceMs = debounceArg ? parseInt(debounceArg, 10) : undefined;
+    if (debounceArg && (isNaN(debounceMs!) || debounceMs! < 0)) {
+      console.error(`\x1b[31m[autopilot] --debounce must be a non-negative integer\x1b[0m`);
+      process.exit(1);
+    }
+    await runWatch({ configPath: config, debounceMs });
+    break;
+  }
 
   case 'run': {
     const base = flag('base');
