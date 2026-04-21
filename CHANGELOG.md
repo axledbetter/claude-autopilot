@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.2] — 2026-04-21
+
+### Fixed
+- README: install command updated (`--save-dev` removed, `@alpha` tag removed); hard prerequisites documented
+- preflight: tsx missing message no longer suggests `--save-dev` (tsx is now a runtime dependency)
+
 ## [1.0.1] — 2026-04-21
 
 ### Fixed
