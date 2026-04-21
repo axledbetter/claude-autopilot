@@ -120,12 +120,19 @@ function cmdUpdate(args: string[]): number {
     ? [path.join('tests', 'snapshots', `${slug}.snap.ts`)]
     : allSnapFiles();
   console.log(`[autoregress update] rewriting ${snapFiles.length} baseline(s)`);
+  let failed = 0;
   for (const snap of snapFiles) {
+    const absSnap = path.join(ROOT, snap);
+    if (!fs.existsSync(absSnap)) {
+      console.error(`  [error] snapshot file not found: ${snap}`);
+      failed++;
+      continue;
+    }
     process.stdout.write(`  ${snap} ... `);
     runSnapshot(snap, true);
     console.log('updated');
   }
-  return 0;
+  return failed > 0 ? 1 : 0;
 }
 
 const GENERATOR_VERSION = '1.0.0-alpha.6';
@@ -147,12 +154,13 @@ Write a snapshot test file. Requirements:
 4. Import fs from 'node:fs', describe/it from 'node:test', assert from 'node:assert/strict'
 5. Baseline loading pattern (use slug {slug}):
    const SLUG = '{slug}';
-   const baselineRaw = process.env.CAPTURE_BASELINE === '1' ? '{}' : fs.readFileSync(new URL('./baselines/{slug}.json', import.meta.url).pathname, 'utf8');
+   import { fileURLToPath } from 'node:url';
+   const baselineRaw = process.env.CAPTURE_BASELINE === '1' ? '{}' : fs.readFileSync(fileURLToPath(new URL('./baselines/{slug}.json', import.meta.url)), 'utf8');
    const baseline = JSON.parse(baselineRaw);
    const captured: Record<string, unknown> = {};
    process.on('exit', () => {
      if (process.env.CAPTURE_BASELINE === '1') {
-       const p = new URL('./baselines/{slug}.json', import.meta.url).pathname;
+       const p = fileURLToPath(new URL('./baselines/{slug}.json', import.meta.url));
        fs.writeFileSync(p, JSON.stringify(captured, null, 2), 'utf8');
      }
    });
@@ -237,8 +245,12 @@ async function cmdGenerate(args: string[]): Promise<number> {
   }
   fs.writeFileSync(INDEX_PATH, JSON.stringify(newIndex, null, 2) + '\n', 'utf8');
 
-  // Rebuild import-map.json
-  const newImportMap = buildImportMap(path.join(ROOT, 'src'));
+  // Rebuild import-map.json — prefix keys/values with 'src/' to match repo-relative git diff paths
+  const rawImportMap = buildImportMap(path.join(ROOT, 'src'));
+  const newImportMap: Record<string, string[]> = {};
+  for (const [dep, importers] of Object.entries(rawImportMap)) {
+    newImportMap[`src/${dep}`] = importers.map(i => `src/${i}`);
+  }
   fs.writeFileSync(IMPORT_MAP_PATH, JSON.stringify(newImportMap, null, 2) + '\n', 'utf8');
 
   console.log('\n[autoregress generate] index.json + import-map.json rebuilt');
