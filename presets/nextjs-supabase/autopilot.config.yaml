@@ -1,0 +1,29 @@
+configVersion: 1
+reviewEngine: { adapter: codex }
+vcsHost: { adapter: github }
+migrationRunner: { adapter: supabase }
+reviewBot: { adapter: cursor }
+protectedPaths:
+  - "**/auth/**"
+  - "data/deltas/*.sql"
+  - "**/payment/**"
+  - "**/stripe/**"
+  - "**/encryption/**"
+  - "lib/supabase/**"
+  - "app/api/**/route.ts"
+  - "middleware.ts"
+  - "utils/supabase/middleware.ts"
+staticRules:
+  - hardcoded-secrets
+  - npm-audit
+  - package-lock-sync
+  - supabase-rls-bypass
+thresholds:
+  bugbotAutoFix: 85
+  bugbotProposePatch: 60
+  maxValidateRetries: 3
+reviewStrategy: auto
+chunking:
+  smallTierMaxTokens: 8000
+  partialReviewTokens: 60000
+  perFileMaxTokens: 32000

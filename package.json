@@ -1,12 +1,23 @@
 {
-  "name": "claude-autopilot",
-  "version": "0.1.0",
+  "name": "@delegance/claude-autopilot",
+  "version": "1.0.0-alpha.1",
   "private": true,
-  "description": "Claude Code pipeline: spec → plan → implement → validate → PR → review",
+  "type": "module",
+  "description": "Claude Code pipeline: spec to PR with review",
+  "scripts": {
+    "test": "node --test --import tsx tests/**/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
   "devDependencies": {
+    "@types/js-yaml": "^4",
+    "@types/node": "^22",
+    "ajv": "^8",
     "dotenv": ">=16",
+    "js-yaml": "^4",
     "minimatch": ">=9",
     "openai": ">=4",
-    "tsx": ">=4"
+    "tsx": ">=4",
+    "typescript": "^5"
   }
 }

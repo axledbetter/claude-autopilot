@@ -1,0 +1,63 @@
+export const AUTOPILOT_CONFIG_SCHEMA = {
+  $schema: 'http://json-schema.org/draft-07/schema#',
+  type: 'object',
+  required: ['configVersion'],
+  additionalProperties: false,
+  properties: {
+    configVersion: { const: 1 },
+    preset: { type: 'string' },
+    reviewEngine: { $ref: '#/definitions/adapterRef' },
+    vcsHost: { $ref: '#/definitions/adapterRef' },
+    migrationRunner: { $ref: '#/definitions/adapterRef' },
+    reviewBot: { $ref: '#/definitions/adapterRef' },
+    adapterAllowlist: { type: 'array', items: { type: 'string' } },
+    protectedPaths: { type: 'array', items: { type: 'string' } },
+    staticRules: {
+      type: 'array',
+      items: {
+        oneOf: [
+          { type: 'string' },
+          { type: 'object', required: ['adapter'], properties: { adapter: { type: 'string' }, options: { type: 'object' } } },
+        ],
+      },
+    },
+    staticRulesParallel: { type: 'boolean' },
+    stack: { type: 'string' },
+    testCommand: { type: ['string', 'null'] },
+    thresholds: {
+      type: 'object',
+      properties: {
+        bugbotAutoFix: { type: 'number' },
+        bugbotProposePatch: { type: 'number' },
+        maxValidateRetries: { type: 'number' },
+        maxCodexRetries: { type: 'number' },
+        maxBugbotRounds: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+    reviewStrategy: { enum: ['auto', 'single-pass', 'file-level'] },
+    chunking: {
+      type: 'object',
+      properties: {
+        smallTierMaxTokens: { type: 'number' },
+        partialReviewTokens: { type: 'number' },
+        perFileMaxTokens: { type: 'number' },
+        parallelism: { type: 'number' },
+        rateLimitBackoff: { enum: ['exp', 'linear', 'none'] },
+      },
+      additionalProperties: false,
+    },
+    cost: { type: 'object' },
+    cache: { type: 'object' },
+    persistence: { type: 'object' },
+    concurrency: { type: 'object' },
+  },
+  definitions: {
+    adapterRef: {
+      oneOf: [
+        { type: 'string' },
+        { type: 'object', required: ['adapter'], properties: { adapter: { type: 'string' }, options: { type: 'object' } } },
+      ],
+    },
+  },
+} as const;
