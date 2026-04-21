@@ -11,3 +11,4 @@ dist/
 .claude/bugbot-state.json
 
 .worktrees/
+.npmrc
