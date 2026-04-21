@@ -1,6 +1,6 @@
 // src/core/findings/types.ts
 
-export type FindingSource = 'static-rules' | 'review-engine' | `review-bot:${string}`;
+export type FindingSource = 'static-rules' | 'review-engine' | 'pipeline' | `review-bot:${string}`;
 export type Severity = 'critical' | 'warning' | 'note';
 
 export interface Finding {

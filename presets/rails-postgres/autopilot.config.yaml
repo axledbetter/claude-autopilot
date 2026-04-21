@@ -1,0 +1,21 @@
+configVersion: 1
+reviewEngine: { adapter: codex }
+vcsHost: { adapter: github }
+reviewBot: { adapter: cursor }
+protectedPaths:
+  - "db/migrate/**"
+  - "config/credentials.yml.enc"
+  - "config/master.key"
+  - "app/models/user.rb"
+staticRules:
+  - hardcoded-secrets
+  - rails-sql-injection
+testCommand: bundle exec rspec --format progress
+thresholds:
+  bugbotAutoFix: 85
+  bugbotProposePatch: 60
+  maxValidateRetries: 3
+reviewStrategy: auto
+chunking:
+  smallTierMaxTokens: 8000
+  perFileMaxTokens: 32000

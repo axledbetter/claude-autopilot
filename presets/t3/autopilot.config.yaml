@@ -1,0 +1,22 @@
+configVersion: 1
+reviewEngine: { adapter: codex }
+vcsHost: { adapter: github }
+reviewBot: { adapter: cursor }
+protectedPaths:
+  - "src/server/auth/**"
+  - "prisma/migrations/**"
+  - "src/env.js"
+  - "src/server/db.ts"
+staticRules:
+  - hardcoded-secrets
+  - npm-audit
+  - package-lock-sync
+  - t3-server-only
+thresholds:
+  bugbotAutoFix: 85
+  bugbotProposePatch: 60
+  maxValidateRetries: 3
+reviewStrategy: auto
+chunking:
+  smallTierMaxTokens: 8000
+  perFileMaxTokens: 32000
