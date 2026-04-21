@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.0] — 2026-04-21
+
+### Changed
+- Promoted from 1.0.0-rc.1 — no new changes, stable release
+
 ## [1.0.0-rc.1] — 2026-04-21
 
 ### Added

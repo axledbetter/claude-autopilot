@@ -1,6 +1,6 @@
 {
   "name": "@delegance/claude-autopilot",
-  "version": "1.0.0-rc.1",
+  "version": "1.0.0",
   "type": "module",
   "description": "Claude Code automation pipeline: spec → plan → implement → validate → PR",
   "keywords": ["claude", "autopilot", "ai", "pipeline", "code-review", "cli"],
