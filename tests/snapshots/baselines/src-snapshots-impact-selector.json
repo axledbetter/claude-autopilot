@@ -1,0 +1,32 @@
+{
+  "volume override triggers full run": {
+    "selected": [
+      "a.snap",
+      "b.snap",
+      "c.snap"
+    ],
+    "fullRun": true,
+    "reason": "volume override (>10 files changed)"
+  },
+  "high-impact path match triggers full run": {
+    "selected": [
+      "x.snap",
+      "y.snap"
+    ],
+    "fullRun": true,
+    "reason": "high-impact path matched: src/core/pipeline/runner.ts"
+  },
+  "selects snapshots via direct and importer mapping": {
+    "selected": [
+      "snap-a.snap",
+      "snap-b.snap"
+    ],
+    "fullRun": false,
+    "reason": "2 snapshot(s) selected"
+  },
+  "returns no matches reason when nothing selected": {
+    "selected": [],
+    "fullRun": false,
+    "reason": "no snapshots matched changed files"
+  }
+}

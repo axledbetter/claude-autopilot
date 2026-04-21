@@ -1,0 +1,39 @@
+{
+  "normalizes timestamps uuids and cwd-prefixed paths": {
+    "id": "<uuid>",
+    "path": "src/index.ts",
+    "ts": "<timestamp>",
+    "untouched": "/other/place/file.ts"
+  },
+  "recursively normalizes arrays and nested objects": {
+    "items": [
+      "<timestamp>",
+      {
+        "file": "a/b.txt",
+        "uid": "<uuid>"
+      },
+      [
+        "plain",
+        "c/d.ts"
+      ]
+    ]
+  },
+  "sorts object keys deterministically at all levels": {
+    "a": {
+      "b": 2,
+      "c": 3,
+      "d": 4
+    },
+    "m": [
+      {
+        "x": 1,
+        "y": 2
+      },
+      {
+        "a": 1,
+        "b": 2
+      }
+    ],
+    "z": 1
+  }
+}

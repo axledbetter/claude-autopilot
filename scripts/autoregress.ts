@@ -195,13 +195,24 @@ async function cmdGenerate(args: string[]): Promise<number> {
 
   const sinceIdx = args.indexOf('--since');
   const since = sinceIdx >= 0 ? args[sinceIdx + 1] : undefined;
-  const changed = getChangedFiles(since);
-  if (!changed) { console.error('[autoregress generate] could not determine changed files'); return 1; }
+  const filesIdx = args.indexOf('--files');
+  const filesArg = filesIdx >= 0 ? args[filesIdx + 1] : undefined;
 
-  const srcFiles = changed.filter(f => f.startsWith('src/') && f.endsWith('.ts'));
-  if (srcFiles.length === 0) {
-    console.log('[autoregress generate] no src/*.ts files changed — nothing to generate');
-    return 0;
+  let srcFiles: string[];
+  if (filesArg) {
+    srcFiles = filesArg.split(',').map(f => f.trim()).filter(f => f.startsWith('src/') && f.endsWith('.ts'));
+    if (srcFiles.length === 0) {
+      console.error('[autoregress generate] --files must contain at least one src/*.ts path');
+      return 1;
+    }
+  } else {
+    const changed = getChangedFiles(since);
+    if (!changed) { console.error('[autoregress generate] could not determine changed files'); return 1; }
+    srcFiles = changed.filter(f => f.startsWith('src/') && f.endsWith('.ts'));
+    if (srcFiles.length === 0) {
+      console.log('[autoregress generate] no src/*.ts files changed — nothing to generate');
+      return 0;
+    }
   }
 
   console.log(`[autoregress generate] generating snapshots for ${srcFiles.length} file(s)`);

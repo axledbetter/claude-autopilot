@@ -1,0 +1,21 @@
+{
+  "captures relative import and export-from edges": {
+    "feature/util.ts": [
+      "feature/index.ts"
+    ]
+  },
+  "ignores non-relative imports and deduplicates importers per target": {
+    "lib/shared.ts": [
+      "a.ts",
+      "b.ts"
+    ]
+  },
+  "excludes imports that resolve outside srcDir": {
+    "pkg/inside.ts": [
+      "pkg/consumer.ts"
+    ],
+    "outside.ts": [
+      "pkg/consumer.ts"
+    ]
+  }
+}

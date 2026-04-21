@@ -1,0 +1,210 @@
+{
+  "normalizeSarifUri handles relative absolute and parent escaping paths": {
+    "rel": "src/index.ts",
+    "absInside": "lib/file.ts",
+    "absOutside": "/other/place/file.ts",
+    "dotted": "scripts/run.ts",
+    "windows": "folder/nested/file.ts"
+  },
+  "toSarif emits schema tool metadata rules and mapped severities": {
+    "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+    "version": "2.1.0",
+    "runs": [
+      {
+        "tool": {
+          "driver": {
+            "name": "claude-autopilot",
+            "version": "9.9.9",
+            "informationUri": "https://github.com/axledbetter/claude-autopilot",
+            "rules": [
+              {
+                "id": "no-secrets",
+                "name": "no-secrets",
+                "shortDescription": {
+                  "text": "no-secrets"
+                }
+              },
+              {
+                "id": "style-warning",
+                "name": "style-warning",
+                "shortDescription": {
+                  "text": "style-warning"
+                }
+              },
+              {
+                "id": "info-note",
+                "name": "info-note",
+                "shortDescription": {
+                  "text": "info-note"
+                }
+              }
+            ]
+          }
+        },
+        "results": [
+          {
+            "ruleId": "no-secrets",
+            "level": "error",
+            "message": {
+              "text": "Hardcoded secret detected"
+            },
+            "locations": [
+              {
+                "physicalLocation": {
+                  "artifactLocation": {
+                    "uri": "src/a.ts",
+                    "uriBaseId": "%SRCROOT%"
+                  },
+                  "region": {
+                    "startLine": 10
+                  }
+                }
+              }
+            ],
+            "fixes": [
+              {
+                "description": {
+                  "text": "Use environment variables"
+                }
+              }
+            ]
+          },
+          {
+            "ruleId": "style-warning",
+            "level": "warning",
+            "message": {
+              "text": "Potentially confusing naming"
+            },
+            "locations": [
+              {
+                "physicalLocation": {
+                  "artifactLocation": {
+                    "uri": "src/b.ts",
+                    "uriBaseId": "%SRCROOT%"
+                  },
+                  "region": {
+                    "startLine": 3
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "ruleId": "info-note",
+            "level": "note",
+            "message": {
+              "text": "Informational hint"
+            },
+            "locations": [
+              {
+                "physicalLocation": {
+                  "artifactLocation": {
+                    "uri": "src/c.ts",
+                    "uriBaseId": "%SRCROOT%"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "ruleId": "no-secrets",
+            "level": "error",
+            "message": {
+              "text": "Another secret"
+            },
+            "locations": [
+              {
+                "physicalLocation": {
+                  "artifactLocation": {
+                    "uri": "src/d.ts",
+                    "uriBaseId": "%SRCROOT%"
+                  },
+                  "region": {
+                    "startLine": 20
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "toSarif includes optional fix and region only when provided": {
+    "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+    "version": "2.1.0",
+    "runs": [
+      {
+        "tool": {
+          "driver": {
+            "name": "claude-autopilot",
+            "version": "1.2.3",
+            "informationUri": "https://github.com/axledbetter/claude-autopilot",
+            "rules": [
+              {
+                "id": "cat-a",
+                "name": "cat-a",
+                "shortDescription": {
+                  "text": "cat-a"
+                }
+              },
+              {
+                "id": "cat-b",
+                "name": "cat-b",
+                "shortDescription": {
+                  "text": "cat-b"
+                }
+              }
+            ]
+          }
+        },
+        "results": [
+          {
+            "ruleId": "cat-a",
+            "level": "warning",
+            "message": {
+              "text": "Has line and suggestion"
+            },
+            "locations": [
+              {
+                "physicalLocation": {
+                  "artifactLocation": {
+                    "uri": "src/with.ts",
+                    "uriBaseId": "%SRCROOT%"
+                  },
+                  "region": {
+                    "startLine": 42
+                  }
+                }
+              }
+            ],
+            "fixes": [
+              {
+                "description": {
+                  "text": "Apply quick fix"
+                }
+              }
+            ]
+          },
+          {
+            "ruleId": "cat-b",
+            "level": "warning",
+            "message": {
+              "text": "No line no suggestion"
+            },
+            "locations": [
+              {
+                "physicalLocation": {
+                  "artifactLocation": {
+                    "uri": "src/without.ts",
+                    "uriBaseId": "%SRCROOT%"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

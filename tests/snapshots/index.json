@@ -1,1 +1,14 @@
-{}
+{
+  "tests/snapshots/src-formatters-sarif.snap.ts": [
+    "src/formatters/sarif.ts"
+  ],
+  "tests/snapshots/src-snapshots-impact-selector.snap.ts": [
+    "src/snapshots/impact-selector.ts"
+  ],
+  "tests/snapshots/src-snapshots-import-scanner.snap.ts": [
+    "src/snapshots/import-scanner.ts"
+  ],
+  "tests/snapshots/src-snapshots-serializer.snap.ts": [
+    "src/snapshots/serializer.ts"
+  ]
+}

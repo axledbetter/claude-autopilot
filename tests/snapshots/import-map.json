@@ -1,1 +1,138 @@
-{}
+{
+  "src/core/errors.ts": [
+    "src/adapters/loader.ts",
+    "src/adapters/review-engine/codex.ts",
+    "src/adapters/vcs-host/github.ts",
+    "src/core/config/loader.ts",
+    "src/core/config/preset-resolver.ts",
+    "src/core/runtime/lock.ts",
+    "src/core/runtime/state.ts",
+    "src/core/shell.ts"
+  ],
+  "src/adapters/base.ts": [
+    "src/adapters/loader.ts",
+    "src/adapters/migration-runner/supabase.ts",
+    "src/adapters/migration-runner/types.ts",
+    "src/adapters/review-bot-parser/declarative-base.ts",
+    "src/adapters/review-bot-parser/types.ts",
+    "src/adapters/review-engine/codex.ts",
+    "src/adapters/review-engine/types.ts",
+    "src/adapters/vcs-host/github.ts",
+    "src/adapters/vcs-host/types.ts",
+    "src/core/cache/cached-engine.ts"
+  ],
+  "src/core/shell.ts": [
+    "src/adapters/migration-runner/supabase.ts",
+    "src/adapters/vcs-host/github.ts",
+    "src/cli/preflight.ts",
+    "src/core/git/touched-files.ts"
+  ],
+  "src/adapters/migration-runner/types.ts": [
+    "src/adapters/migration-runner/supabase.ts"
+  ],
+  "src/adapters/review-bot-parser/declarative-base.ts": [
+    "src/adapters/review-bot-parser/cursor.ts"
+  ],
+  "src/core/findings/types.ts": [
+    "src/adapters/review-bot-parser/declarative-base.ts",
+    "src/adapters/review-bot-parser/types.ts",
+    "src/adapters/review-engine/codex.ts",
+    "src/adapters/review-engine/types.ts",
+    "src/core/findings/dedup.ts",
+    "src/core/phases/static-rules.ts",
+    "src/core/phases/tests.ts",
+    "src/core/pipeline/review-phase.ts",
+    "src/core/pipeline/run.ts",
+    "src/formatters/github-annotations.ts",
+    "src/formatters/sarif.ts"
+  ],
+  "src/adapters/vcs-host/types.ts": [
+    "src/adapters/review-bot-parser/declarative-base.ts",
+    "src/adapters/review-bot-parser/types.ts",
+    "src/adapters/vcs-host/github.ts"
+  ],
+  "src/adapters/review-bot-parser/types.ts": [
+    "src/adapters/review-bot-parser/declarative-base.ts"
+  ],
+  "src/adapters/review-engine/types.ts": [
+    "src/adapters/review-engine/codex.ts",
+    "src/cli/run.ts",
+    "src/cli/watch.ts",
+    "src/core/cache/cached-engine.ts",
+    "src/core/cache/review-cache.ts",
+    "src/core/chunking/index.ts",
+    "src/core/pipeline/review-phase.ts",
+    "src/core/pipeline/run.ts"
+  ],
+  "src/cli/init.ts": [
+    "src/cli/index.ts"
+  ],
+  "src/cli/run.ts": [
+    "src/cli/index.ts"
+  ],
+  "src/cli/watch.ts": [
+    "src/cli/index.ts"
+  ],
+  "src/core/config/loader.ts": [
+    "src/cli/run.ts",
+    "src/cli/watch.ts",
+    "src/core/config/preset-resolver.ts"
+  ],
+  "src/core/config/preset-resolver.ts": [
+    "src/cli/run.ts",
+    "src/cli/watch.ts"
+  ],
+  "src/adapters/loader.ts": [
+    "src/cli/run.ts",
+    "src/cli/watch.ts"
+  ],
+  "src/core/pipeline/run.ts": [
+    "src/cli/run.ts",
+    "src/cli/watch.ts",
+    "src/formatters/sarif.ts"
+  ],
+  "src/core/git/touched-files.ts": [
+    "src/cli/run.ts"
+  ],
+  "src/core/config/types.ts": [
+    "src/cli/run.ts",
+    "src/cli/watch.ts",
+    "src/core/chunking/index.ts",
+    "src/core/config/loader.ts",
+    "src/core/config/preset-resolver.ts",
+    "src/core/pipeline/review-phase.ts",
+    "src/core/pipeline/run.ts"
+  ],
+  "src/formatters/sarif.ts": [
+    "src/cli/run.ts",
+    "src/formatters/index.ts"
+  ],
+  "src/formatters/github-annotations.ts": [
+    "src/cli/run.ts",
+    "src/formatters/index.ts"
+  ],
+  "src/core/cache/review-cache.ts": [
+    "src/core/cache/cached-engine.ts"
+  ],
+  "src/core/config/schema.ts": [
+    "src/core/config/loader.ts"
+  ],
+  "src/core/logging/redaction.ts": [
+    "src/core/logging/ndjson-writer.ts"
+  ],
+  "src/core/findings/dedup.ts": [
+    "src/core/phases/static-rules.ts"
+  ],
+  "src/core/chunking/index.ts": [
+    "src/core/pipeline/review-phase.ts"
+  ],
+  "src/core/phases/static-rules.ts": [
+    "src/core/pipeline/run.ts"
+  ],
+  "src/core/phases/tests.ts": [
+    "src/core/pipeline/run.ts"
+  ],
+  "src/core/pipeline/review-phase.ts": [
+    "src/core/pipeline/run.ts"
+  ]
+}
