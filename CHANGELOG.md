@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.6.0] — 2026-04-22
+
+### Added
+- **Provider usage scanner** (`src/core/detect/provider-usage.ts`) — walks project source files, counts per-provider API key and SDK references (capped at 1 per file to avoid skew), returns `ProviderCounts`
+- **`dominantProvider()`** — returns the provider with the highest file-reference count
+- **Smart `auto` tiebreaker** — when multiple API keys are present, `auto` scans the codebase and prefers the provider already used there; falls back to env-key priority order if counts are all zero
+- `ReviewInput.context.cwd` — threads working directory through to the review engine so `auto` knows where to scan; `review-phase.ts` now passes `cwd` in context
+- 12 new tests for `detectProviderUsage` and `dominantProvider` — **181 total**
+
 ## [1.5.0] — 2026-04-22
 
 ### Added

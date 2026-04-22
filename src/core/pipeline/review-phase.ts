@@ -49,7 +49,7 @@ export async function runReviewPhase(input: ReviewPhaseInput): Promise<ReviewPha
     const output = await input.engine.review({
       content: chunk.content,
       kind: chunk.kind,
-      context: { stack: input.config.stack },
+      context: { stack: input.config.stack, cwd: input.cwd },
     });
     allFindings.push(...output.findings);
     if (output.usage) {
