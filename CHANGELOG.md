@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.5.0] — 2026-04-22
+
+### Added
+- **Gemini adapter** (`gemini`) — Google Gemini 2.5 Pro via `@google/generative-ai`; accepts `GEMINI_API_KEY` or `GOOGLE_API_KEY`; 1M token context window
+- **OpenAI-compatible adapter** (`openai-compatible`) — works with any OpenAI-API-compatible endpoint (Groq, Ollama, Together AI, etc.); requires `options.model`; auto-selects API key via `options.apiKeyEnv` → `OPENAI_API_KEY` → `'ollama'`
+- **Updated auto adapter** — full priority chain: `ANTHROPIC_API_KEY` → `GEMINI_API_KEY`/`GOOGLE_API_KEY` → `OPENAI_API_KEY` → `GROQ_API_KEY` (wraps openai-compatible with Groq config)
+- `run.ts` no-key warning now lists all four key options
+
+### Changed
+- 169 tests total (up from 136)
+
+## [1.4.0] — 2026-04-21
+
+### Added
+- **Static rules registry** (`src/core/static-rules/registry.ts`) — lazy-loads built-in rules by name; fixes critical bug where config `staticRules` was always silently ignored
+- **7 built-in rules**: `hardcoded-secrets`, `npm-audit`, `package-lock-sync`, `console-log`, `todo-fixme`, `large-file`, `missing-tests`
+- **Claude adapter** (`claude`) — Anthropic Claude Opus 4.7 via `@anthropic-ai/sdk`; configurable model via `context.model`
+- **Auto adapter** (`auto`) — detects best available key at runtime; checked in priority order
+- `doctor` now checks `ANTHROPIC_API_KEY` in addition to `OPENAI_API_KEY`
+- 136 tests total
+
+### Fixed
+- **Critical**: `staticRules` in `RunInput` was never populated — config-listed rules were silently ignored. `loadRulesFromConfig()` now wired into `run.ts`
+
 ## [1.2.8] — 2026-04-21
 
 ### Added

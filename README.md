@@ -118,7 +118,7 @@ Presets: `nextjs-supabase`, `t3`, `python-fastapi`, `rails-postgres`, `go`.
 ```yaml
 configVersion: 1
 reviewEngine:
-  adapter: codex
+  adapter: auto        # auto-detects best available key at runtime
 testCommand: npm test
 protectedPaths:
   - src/core/**
@@ -129,6 +129,37 @@ staticRules:
 ```
 
 Full schema and preset defaults: `presets/<name>/autopilot.config.yaml`.
+
+### Review Engine Adapters
+
+| Adapter | Key required | Notes |
+|---|---|---|
+| `auto` | any below | Auto-selects best available (recommended) |
+| `claude` | `ANTHROPIC_API_KEY` | Opus 4.7 default |
+| `gemini` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | Gemini 2.5 Pro, 1M context |
+| `codex` | `OPENAI_API_KEY` | GPT-5 Codex |
+| `openai-compatible` | configurable | Groq, Ollama, Together AI, etc. |
+
+`auto` priority: Anthropic → Gemini → OpenAI → Groq.
+
+**Groq example:**
+```yaml
+reviewEngine:
+  adapter: openai-compatible
+  options:
+    model: llama-3.3-70b-versatile
+    baseUrl: https://api.groq.com/openai/v1
+    apiKeyEnv: GROQ_API_KEY
+```
+
+**Ollama (local, no key):**
+```yaml
+reviewEngine:
+  adapter: openai-compatible
+  options:
+    model: llama3.2
+    baseUrl: http://localhost:11434/v1
+```
 
 ## GitHub Actions
 
@@ -175,7 +206,7 @@ Four pluggable adapter points:
 
 | Point | Built-in | Purpose |
 |---|---|---|
-| `review-engine` | `codex` | LLM code review (OpenAI) |
+| `review-engine` | `auto`, `claude`, `gemini`, `codex`, `openai-compatible` | LLM code review |
 | `vcs-host` | `github` | PR comments + SARIF upload |
 | `migration-runner` | `supabase` | DB migration execution |
 | `review-bot-parser` | `cursor` | Parse review bot comments |
