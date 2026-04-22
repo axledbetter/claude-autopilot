@@ -4,12 +4,12 @@ import { AutopilotError } from '../../core/errors.ts';
 import type { Capabilities } from '../base.ts';
 import type { ReviewEngine, ReviewInput, ReviewOutput } from './types.ts';
 
-const DEFAULT_MODEL = 'claude-sonnet-4-6';
+const DEFAULT_MODEL = 'claude-opus-4-7';
 const MAX_OUTPUT_TOKENS = 4096;
 
-// Cost per million tokens (USD) — sonnet-4-6 pricing
-const COST_PER_M_INPUT = 3.0;
-const COST_PER_M_OUTPUT = 15.0;
+// Cost per million tokens (USD) — opus-4-7 pricing
+const COST_PER_M_INPUT = 15.0;
+const COST_PER_M_OUTPUT = 75.0;
 
 const SYSTEM_PROMPT_TEMPLATE = `You are a senior software architect reviewing code changes for quality, security, and correctness.
 
