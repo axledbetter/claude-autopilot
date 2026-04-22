@@ -30,11 +30,23 @@ export async function loadConfig(path: string): Promise<AutopilotConfig> {
   }
 
   if (!validate(parsed)) {
-    const errors = (validate.errors ?? []).map(e => `${e.instancePath || '<root>'}: ${e.message}`);
-    throw new AutopilotError('Config schema validation failed', {
-      code: 'invalid_config',
-      details: { path, errors },
+    const errors = (validate.errors ?? []).map(e => {
+      const loc = e.instancePath ? e.instancePath.replace(/^\//, '').replace(/\//g, '.') : '<root>';
+      // enum errors: list allowed values
+      if (e.keyword === 'enum' && Array.isArray(e.params?.allowedValues)) {
+        return `${loc}: must be one of ${(e.params.allowedValues as unknown[]).map(v => JSON.stringify(v)).join(', ')}`;
+      }
+      // additionalProperties: name the unexpected key
+      if (e.keyword === 'additionalProperties' && e.params?.additionalProperty) {
+        return `${loc}: unexpected key "${e.params.additionalProperty as string}"`;
+      }
+      return `${loc}: ${e.message ?? 'invalid'}`;
     });
+    const summary = errors.slice(0, 5).join('\n  ');
+    throw new AutopilotError(
+      `autopilot.config.yaml is invalid:\n  ${summary}${errors.length > 5 ? `\n  …and ${errors.length - 5} more` : ''}`,
+      { code: 'invalid_config', details: { path, errors } },
+    );
   }
 
   return parsed as AutopilotConfig;

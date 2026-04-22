@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.5.0] — 2026-04-22
+
+### Added
+- **Config schema validation** — `ignore:` and `reviewStrategy: diff|auto-diff` now accepted; unknown keys reported as `unexpected key "<name>"`; enum errors list allowed values; error message includes up to 5 violations with field paths
+- **`autopilot fix`** — reads `.autopilot-cache/findings.json`, asks the configured LLM to rewrite the ±20 lines around each finding, applies patches in place; `--severity critical|warning|all` (default: critical); `--dry-run` previews without writing; exits 1 if any fix fails
+- **`autopilot costs`** — prints all-time run count + spend, 7-day summary, and a last-10-runs table (date, files, tokens in/out, cost, duration)
+- `src/cli/fix.ts` — `runFix()`; sends numbered context window to LLM with fix instructions; strips markdown fences from response; handles `CANNOT_FIX` sentinel gracefully
+- `src/cli/costs.ts` — `runCosts()` reading `.autopilot-cache/costs.jsonl`
+- 9 new tests — **266 total**
+
 ## [2.4.0] — 2026-04-22
 
 ### Added

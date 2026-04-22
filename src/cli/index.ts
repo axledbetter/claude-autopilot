@@ -15,6 +15,7 @@ import { runWatch } from './watch.ts';
 import { runSetup } from './setup.ts';
 import { runDoctor } from './preflight.ts';
 import { runCi } from './ci.ts';
+import { runFix } from './fix.ts';
 
 const args = process.argv.slice(2);
 
@@ -28,7 +29,7 @@ if (args[0] === '--version' || args[0] === '-v') {
   process.exit(0);
 }
 
-const SUBCOMMANDS = ['init', 'run', 'ci', 'watch', 'hook', 'autoregress', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
+const SUBCOMMANDS = ['init', 'run', 'ci', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce'];
 
 // Detect first non-flag arg as subcommand, default to 'run'
@@ -72,6 +73,14 @@ Options (run):
   --post-comments      Post/update a summary comment on the open PR
   --format <text|sarif>  Output format (default: text)
   --output <path>        Output file path (required with --format sarif)
+
+  fix          Auto-fix cached findings using the configured LLM
+  costs        Show per-run cost summary from .autopilot-cache/costs.jsonl
+
+Options (fix):
+  --severity <critical|warning|all>  Which findings to fix (default: critical)
+  --dry-run                          Preview fixes without writing files
+  --config <path>                    Path to config file
 
 Options (watch):
   --config <path>      Path to config file (default: ./autopilot.config.yaml)
@@ -186,6 +195,30 @@ switch (subcommand) {
   case 'autoregress': {
     const { runAutoregress } = await import('./autoregress-bridge.ts');
     const code = runAutoregress(args.slice(1));
+    process.exit(code);
+    break;
+  }
+
+  case 'fix': {
+    const config = flag('config');
+    const severityArg = flag('severity');
+    if (severityArg && !['critical', 'warning', 'all'].includes(severityArg)) {
+      console.error(`\x1b[31m[autopilot] --severity must be "critical", "warning", or "all"\x1b[0m`);
+      process.exit(1);
+    }
+    const dryRun = boolFlag('dry-run');
+    const code = await runFix({
+      configPath: config,
+      severity: severityArg as 'critical' | 'warning' | 'all' | undefined,
+      dryRun,
+    });
+    process.exit(code);
+    break;
+  }
+
+  case 'costs': {
+    const { runCosts } = await import('./costs.ts');
+    const code = await runCosts();
     process.exit(code);
     break;
   }

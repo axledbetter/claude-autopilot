@@ -35,7 +35,24 @@ export const AUTOPILOT_CONFIG_SCHEMA = {
       },
       additionalProperties: false,
     },
-    reviewStrategy: { enum: ['auto', 'single-pass', 'file-level'] },
+    ignore: {
+      type: 'array',
+      items: {
+        oneOf: [
+          { type: 'string' },
+          {
+            type: 'object',
+            required: ['path'],
+            properties: {
+              rule: { type: 'string' },
+              path: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        ],
+      },
+    },
+    reviewStrategy: { enum: ['auto', 'single-pass', 'file-level', 'diff', 'auto-diff'] },
     chunking: {
       type: 'object',
       properties: {
