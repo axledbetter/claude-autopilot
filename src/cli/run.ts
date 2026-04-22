@@ -86,25 +86,24 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
   const cwd = options.cwd ?? process.cwd();
   const configPath = options.configPath ?? path.join(cwd, 'guardrail.config.yaml');
 
-  if (!fs.existsSync(configPath)) {
-    console.error(fmt('red', `[run] guardrail.config.yaml not found at ${configPath}`));
-    console.error(fmt('dim', '      Run: npx guardrail init'));
-    return 1;
-  }
-
-  // Load + merge config
+  // Load + merge config (graceful zero-config fallback)
   let config: GuardrailConfig;
-  try {
-    const userConfig = await loadConfig(configPath);
-    if (userConfig.preset) {
-      const preset = await resolvePreset(userConfig.preset);
-      config = mergeConfigs(preset.config, userConfig);
-    } else {
-      config = userConfig;
+  if (!fs.existsSync(configPath)) {
+    console.log(fmt('dim', `[run] No guardrail.config.yaml found — using defaults. Run \`npx guardrail setup\` to configure.`));
+    config = { configVersion: 1, reviewEngine: { adapter: 'auto' }, testCommand: null };
+  } else {
+    try {
+      const userConfig = await loadConfig(configPath);
+      if (userConfig.preset) {
+        const preset = await resolvePreset(userConfig.preset);
+        config = mergeConfigs(preset.config, userConfig);
+      } else {
+        config = userConfig;
+      }
+    } catch (err) {
+      console.error(fmt('red', `[run] Config error: ${err instanceof Error ? err.message : String(err)}`));
+      return 1;
     }
-  } catch (err) {
-    console.error(fmt('red', `[run] Config error: ${err instanceof Error ? err.message : String(err)}`));
-    return 1;
   }
 
   // Fill in missing config fields from auto-detection (track what was auto-detected for logging)

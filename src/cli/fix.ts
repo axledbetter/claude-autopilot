@@ -88,14 +88,9 @@ export async function runFix(options: FixCommandOptions = {}): Promise<number> {
   const configPath = options.configPath ?? path.join(cwd, 'guardrail.config.yaml');
   const severityFilter = options.severity ?? 'critical';
 
-  if (!fs.existsSync(configPath)) {
-    console.error(fmt('red', `[fix] guardrail.config.yaml not found at ${configPath}`));
-    return 1;
-  }
-
   const findings = loadCachedFindings(cwd);
   if (findings.length === 0) {
-    console.log(fmt('yellow', '[fix] No cached findings — run `guardrail run` first.'));
+    console.log(fmt('yellow', '[fix] No cached findings — run `guardrail scan <path>` or `guardrail run` first.'));
     return 0;
   }
 
@@ -114,16 +109,17 @@ export async function runFix(options: FixCommandOptions = {}): Promise<number> {
   const modeNote = options.dryRun ? ' (dry run)' : options.yes ? '' : ' (interactive — use --yes to skip prompts)';
   console.log(`\n${fmt('bold', '[guardrail fix]')} ${fixable.length} finding${fixable.length !== 1 ? 's' : ''} to attempt${modeNote}\n`);
 
-  // Load review engine
+  // Load review engine (config optional — defaults to auto adapter)
   let engine: ReviewEngine;
   try {
-    const config = await loadConfig(configPath);
-    const ref = typeof config.reviewEngine === 'string' ? config.reviewEngine
-      : (config.reviewEngine?.adapter ?? 'auto');
+    const config = fs.existsSync(configPath) ? await loadConfig(configPath) : null;
+    const ref = config
+      ? (typeof config.reviewEngine === 'string' ? config.reviewEngine : (config.reviewEngine?.adapter ?? 'auto'))
+      : 'auto';
     engine = await loadAdapter<ReviewEngine>({
       point: 'review-engine',
       ref,
-      options: typeof config.reviewEngine === 'object' ? config.reviewEngine.options : undefined,
+      options: config && typeof config.reviewEngine === 'object' ? config.reviewEngine.options : undefined,
     });
   } catch (err) {
     console.error(fmt('red', `[fix] Could not load review engine: ${err instanceof Error ? err.message : String(err)}`));

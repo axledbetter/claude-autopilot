@@ -6,6 +6,7 @@ import type { ReviewEngine } from '../adapters/review-engine/types.ts';
 import { runReviewPhase } from '../core/pipeline/review-phase.ts';
 import { detectStack } from '../core/detect/stack.ts';
 import { loadIgnoreRules, parseConfigIgnore, applyIgnoreRules } from '../core/ignore/index.ts';
+import { saveCachedFindings } from '../core/persist/findings-cache.ts';
 import type { GuardrailConfig } from '../core/config/types.ts';
 
 const C = {
@@ -198,8 +199,16 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
     }
   }
 
+  // Persist findings so `guardrail fix` can read them
+  saveCachedFindings(cwd, findings);
+
   if (result.costUSD !== undefined) {
     console.log(fmt('dim', `  $${result.costUSD.toFixed(4)} · ${result.durationMs}ms`));
+  }
+
+  const fixable = findings.filter(f => f.severity === 'critical' || f.severity === 'warning');
+  if (fixable.length > 0) {
+    console.log(fmt('dim', `  → run \`guardrail fix\` to auto-fix ${fixable.length} finding${fixable.length !== 1 ? 's' : ''}`));
   }
 
   return findings.some(f => f.severity === 'critical') ? 1 : 0;

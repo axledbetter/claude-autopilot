@@ -6,11 +6,12 @@ import * as path from 'node:path';
 import { runCommand } from '../../src/cli/run.ts';
 
 describe('runCommand', () => {
-  it('R1: returns 1 if guardrail.config.yaml not found', async () => {
+  it('R1: returns 0 (no changed files) when guardrail.config.yaml not found — zero-config mode', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ap-run-'));
     try {
-      const code = await runCommand({ cwd: dir });
-      assert.equal(code, 1);
+      // No config file — should use defaults and return 0 (no changed files, not an error)
+      const code = await runCommand({ cwd: dir, files: [] });
+      assert.equal(code, 0);
     } finally {
       await fs.rm(dir, { recursive: true });
     }
