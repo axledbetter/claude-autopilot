@@ -1,6 +1,6 @@
 {
   "name": "@delegance/claude-autopilot",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "type": "module",
   "description": "Claude Code automation pipeline: spec → plan → implement → validate → PR",
   "keywords": [
@@ -46,6 +46,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
+    "@google/generative-ai": "^0.24.1",
     "ajv": "^8",
     "dotenv": ">=16",
     "js-yaml": "^4",

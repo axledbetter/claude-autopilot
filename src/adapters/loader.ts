@@ -16,6 +16,8 @@ const BUILTIN_PATHS: Record<IntegrationPoint, Record<string, string>> = {
   'review-engine': {
     codex: './review-engine/codex.ts',
     claude: './review-engine/claude.ts',
+    gemini: './review-engine/gemini.ts',
+    'openai-compatible': './review-engine/openai-compatible.ts',
     auto: './review-engine/auto.ts',
   },
   'vcs-host': { github: './vcs-host/github.ts' },

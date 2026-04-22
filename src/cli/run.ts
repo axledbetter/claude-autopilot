@@ -112,9 +112,10 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
   let reviewEngine: ReviewEngine | undefined;
   if (config.reviewEngine) {
     const ref = typeof config.reviewEngine === 'string' ? config.reviewEngine : config.reviewEngine.adapter;
-    const hasAnyKey = !!(process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY);
-    if (!hasAnyKey && (ref === 'auto' || ref === 'claude' || ref === 'codex')) {
-      console.log(fmt('yellow', '\n  [run] No LLM API key found — set ANTHROPIC_API_KEY or OPENAI_API_KEY to enable review'));
+    const hasAnyKey = !!(process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY ||
+      process.env.GOOGLE_API_KEY || process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY);
+    if (!hasAnyKey && ['auto', 'claude', 'gemini', 'codex', 'openai-compatible'].includes(ref)) {
+      console.log(fmt('yellow', '\n  [run] No LLM API key found — set ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, or GROQ_API_KEY to enable review'));
     } else {
       try {
         reviewEngine = await loadAdapter<ReviewEngine>({
