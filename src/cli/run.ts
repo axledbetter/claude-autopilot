@@ -96,17 +96,24 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     return 1;
   }
 
-  // Fill in missing config fields from auto-detection
+  // Fill in missing config fields from auto-detection (track what was auto-detected for logging)
+  const autoDetected: string[] = [];
+
   if (!config.stack) {
     const detected = detectStack(cwd);
-    if (detected) config = { ...config, stack: detected };
+    if (detected) { config = { ...config, stack: detected }; autoDetected.push(`stack: ${detected}`); }
   }
   if (!config.protectedPaths || config.protectedPaths.length === 0) {
     const detected = detectProtectedPaths(cwd);
-    if (detected.length > 0) config = { ...config, protectedPaths: detected };
+    if (detected.length > 0) {
+      config = { ...config, protectedPaths: detected };
+      autoDetected.push(`protected: ${detected.slice(0, 3).join(', ')}${detected.length > 3 ? ` +${detected.length - 3} more` : ''}`);
+    }
   }
   if (config.testCommand === undefined) {
-    config = { ...config, testCommand: detectProject(cwd).testCommand };
+    const detected = detectProject(cwd).testCommand;
+    config = { ...config, testCommand: detected };
+    autoDetected.push(`test: ${detected}`);
   }
   const gitCtx = detectGitContext(cwd);
 
@@ -120,6 +127,12 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
 
   console.log(`\n${fmt('bold', '[autopilot run]')} ${fmt('dim', configPath)}`);
   console.log(`${fmt('dim', `  ${touchedFiles.length} changed file(s):`)} ${touchedFiles.slice(0, 5).join(', ')}${touchedFiles.length > 5 ? ` … +${touchedFiles.length - 5} more` : ''}`);
+  if (gitCtx.summary) {
+    console.log(fmt('dim', `  ${gitCtx.summary}`));
+  }
+  if (autoDetected.length > 0) {
+    console.log(fmt('dim', `  auto-detected: ${autoDetected.join(' | ')}`));
+  }
 
   if (options.dryRun) {
     console.log(fmt('yellow', '\n[run] Dry run — skipping pipeline execution.\n'));
