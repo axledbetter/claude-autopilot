@@ -68,6 +68,7 @@ Options (run):
   --dry-run            Show what would run without executing
   --diff               Send git diff hunks instead of full files (~70% fewer tokens)
   --delta              Only report findings new since last run (suppress pre-existing)
+  --inline-comments    Post per-line review comments on the PR diff
   --post-comments      Post/update a summary comment on the open PR
   --format <text|sarif>  Output format (default: text)
   --output <path>        Output file path (required with --format sarif)
@@ -124,6 +125,7 @@ switch (subcommand) {
     const dryRun = boolFlag('dry-run');
     const diff = boolFlag('diff');
     const delta = boolFlag('delta');
+    const inlineComments = boolFlag('inline-comments');
     const postComments = boolFlag('post-comments');
     const formatArg = flag('format');
     const outputPath = flag('output');
@@ -144,6 +146,7 @@ switch (subcommand) {
       dryRun,
       diff,
       delta,
+      inlineComments,
       postComments,
       format: formatArg as 'text' | 'sarif' | undefined,
       outputPath,
@@ -157,12 +160,14 @@ switch (subcommand) {
     const config = flag('config');
     const outputPath = flag('output');
     const noPostComments = boolFlag('no-post-comments');
+    const noInlineComments = boolFlag('no-inline-comments');
     const diff = boolFlag('diff');
     const code = await runCi({
       configPath: config,
       base,
       sarifOutput: outputPath,
       postComments: noPostComments ? false : undefined,
+      inlineComments: noInlineComments ? false : undefined,
       diff,
     });
     process.exit(code);

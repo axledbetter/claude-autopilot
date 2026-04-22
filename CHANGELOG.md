@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.4.0] — 2026-04-22
+
+### Added
+- **`ignore:` config key** — embed suppression rules in `autopilot.config.yaml` via `ignore: ['tests/**', { rule: hardcoded-secrets, path: src/vendor/** }]`; merged with `.autopilot-ignore` file rules at run time
+- **Per-run cost log** — appends `{timestamp, files, inputTokens, outputTokens, costUSD, durationMs}` to `.autopilot-cache/costs.jsonl` after every run; corrupt lines skipped on read; `readCostLog()` exported for tooling
+- **`--inline-comments`** — posts a GitHub PR review with per-line inline comments for every finding that has a `file:line`; re-runs dismiss the previous autopilot review before posting a new one; `autopilot ci` enables this by default (`--no-inline-comments` to opt out)
+- **`reviewStrategy: auto-diff`** — tries diff first, falls back to full-file `auto` when diff is empty (new files, no git history); `--diff` flag still forces pure diff mode
+- `src/cli/pr-review-comments.ts` — `postReviewComments()` using `gh api repos/{nwo}/pulls/{pr}/reviews`
+- `src/core/persist/cost-log.ts` — `appendCostLog()`, `readCostLog()`
+- 9 new tests — **257 total**
+
 ## [2.3.0] — 2026-04-22
 
 ### Added

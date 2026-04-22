@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { minimatch } from 'minimatch';
 import type { Finding } from '../findings/types.ts';
+import type { AutopilotConfig } from '../config/types.ts';
 
 export interface IgnoreRule {
   ruleId: string | '*';  // finding id prefix or '*' for any
@@ -34,6 +35,17 @@ function matchesRule(finding: Finding, rule: IgnoreRule): boolean {
   if (!ruleMatches) return false;
   if (rule.pathGlob === null) return true;
   return minimatch(finding.file.replace(/\\/g, '/'), rule.pathGlob, { matchBase: true });
+}
+
+/** Convert `ignore:` entries from autopilot.config.yaml into IgnoreRules. */
+export function parseConfigIgnore(entries: AutopilotConfig['ignore']): IgnoreRule[] {
+  if (!entries || entries.length === 0) return [];
+  return entries.map(entry => {
+    if (typeof entry === 'string') {
+      return { ruleId: '*', pathGlob: entry };
+    }
+    return { ruleId: entry.rule ?? '*', pathGlob: entry.path };
+  });
 }
 
 export function applyIgnoreRules(findings: Finding[], rules: IgnoreRule[]): Finding[] {

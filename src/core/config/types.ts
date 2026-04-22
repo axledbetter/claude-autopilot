@@ -27,7 +27,8 @@ export interface AutopilotConfig {
     maxCodexRetries?: number;
     maxBugbotRounds?: number;
   };
-  reviewStrategy?: 'auto' | 'single-pass' | 'file-level' | 'diff';
+  ignore?: Array<string | { rule?: string; path: string }>;
+  reviewStrategy?: 'auto' | 'single-pass' | 'file-level' | 'diff' | 'auto-diff';
   chunking?: {
     smallTierMaxTokens?: number;
     partialReviewTokens?: number;

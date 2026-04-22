@@ -7,6 +7,7 @@ export interface CiCommandOptions {
   postComments?: boolean;
   sarifOutput?: string;
   diff?: boolean;
+  inlineComments?: boolean;
 }
 
 /**
@@ -36,5 +37,6 @@ export async function runCi(options: CiCommandOptions = {}): Promise<number> {
     format: 'sarif',
     outputPath: sarifOutput,
     diff: options.diff,
+    inlineComments: options.inlineComments ?? true,
   });
 }

@@ -38,8 +38,10 @@ import { detectProtectedPaths } from '../core/detect/protected-paths.ts';
 import { detectGitContext } from '../core/detect/git-context.ts';
 import { detectProject } from './detector.ts';
 import { detectPrNumber, formatComment, postPrComment } from './pr-comment.ts';
-import { loadIgnoreRules, applyIgnoreRules } from '../core/ignore/index.ts';
+import { postReviewComments } from './pr-review-comments.ts';
+import { loadIgnoreRules, parseConfigIgnore, applyIgnoreRules } from '../core/ignore/index.ts';
 import { loadCachedFindings, saveCachedFindings, filterNewFindings } from '../core/persist/findings-cache.ts';
+import { appendCostLog } from '../core/persist/cost-log.ts';
 
 function readToolVersion(): string {
   const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
@@ -66,8 +68,9 @@ export interface RunCommandOptions {
   base?: string;        // git base ref (default HEAD~1)
   files?: string[];     // explicit file list (skips git detection)
   dryRun?: boolean;     // skip review, print what would run
-  diff?: boolean;       // use diff strategy (send git hunks instead of full files)
-  delta?: boolean;      // only report findings not present in last run's baseline
+  diff?: boolean;           // use diff strategy (send git hunks instead of full files)
+  delta?: boolean;          // only report findings not present in last run's baseline
+  inlineComments?: boolean; // post per-line review comments on the PR diff
   format?: 'text' | 'sarif';
   outputPath?: string;
   postComments?: boolean; // post/update summary comment on the open PR
@@ -190,8 +193,8 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
   console.log('');
   const result = await runAutopilot(input);
 
-  // Apply .autopilot-ignore suppression rules
-  const ignoreRules = loadIgnoreRules(cwd);
+  // Apply .autopilot-ignore + config ignore: rules
+  const ignoreRules = [...loadIgnoreRules(cwd), ...parseConfigIgnore(config.ignore)];
   if (ignoreRules.length > 0) {
     const before = result.allFindings.length;
     result.allFindings = applyIgnoreRules(result.allFindings, ignoreRules);
@@ -220,6 +223,17 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
   // Always persist the unfiltered findings as the new baseline
   saveCachedFindings(cwd, result.allFindings);
 
+  // Append to per-run cost log
+  const reviewPhase = result.phases.find(p => p.phase === 'review') as { usage?: { input: number; output: number } } | undefined;
+  appendCostLog(cwd, {
+    timestamp: new Date().toISOString(),
+    files: touchedFiles.length,
+    inputTokens: reviewPhase?.usage?.input ?? 0,
+    outputTokens: reviewPhase?.usage?.output ?? 0,
+    costUSD: result.totalCostUSD ?? 0,
+    durationMs: result.durationMs,
+  });
+
   // emitAnnotations is a no-op unless GITHUB_ACTIONS=true
   emitAnnotations(result.allFindings);
 
@@ -229,6 +243,21 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     fs.mkdirSync(path.dirname(path.resolve(options.outputPath)), { recursive: true });
     fs.writeFileSync(options.outputPath, JSON.stringify(sarif, null, 2), 'utf8');
     console.log(fmt('dim', `[run] SARIF written to ${options.outputPath}`));
+  }
+
+  // Post inline PR review comments if requested
+  if (options.inlineComments) {
+    const pr = detectPrNumber(cwd);
+    if (!pr) {
+      console.log(fmt('yellow', '  [run] --inline-comments: no open PR found — skipping'));
+    } else {
+      try {
+        const { posted, skipped } = await postReviewComments(pr, result.allFindings, cwd);
+        console.log(fmt('dim', `  [run] PR #${pr} inline review: ${posted} comment${posted !== 1 ? 's' : ''} posted${skipped > 0 ? `, ${skipped} skipped (no line number)` : ''}`));
+      } catch (err) {
+        console.error(fmt('yellow', `  [run] Failed to post inline comments: ${err instanceof Error ? err.message : String(err)}`));
+      }
+    }
   }
 
   // Post PR comment if requested

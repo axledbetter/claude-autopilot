@@ -13,12 +13,12 @@ export interface ReviewChunk {
 
 export interface BuildChunksInput {
   touchedFiles: string[];
-  strategy: 'auto' | 'single-pass' | 'file-level' | 'diff';
+  strategy: 'auto' | 'single-pass' | 'file-level' | 'diff' | 'auto-diff';
   chunking?: AutopilotConfig['chunking'];
   engine: ReviewEngine;
   cwd?: string;
   protectedPaths?: string[];
-  base?: string;  // git base ref — required for 'diff' strategy
+  base?: string;  // git base ref — required for 'diff'/'auto-diff' strategy
 }
 
 const DEFAULT_SMALL_TIER_TOKENS = 8000;
@@ -31,6 +31,14 @@ export async function buildReviewChunks(input: BuildChunksInput): Promise<Review
   // Diff strategy: send unified diff hunks instead of full file contents
   if (input.strategy === 'diff') {
     return buildDiffChunks(input);
+  }
+
+  // auto-diff: try diff first; fall back to full-file auto if diff is empty
+  // (handles new files, initial commits, or repos with no base ref)
+  if (input.strategy === 'auto-diff') {
+    const diffChunks = buildDiffChunks(input);
+    if (diffChunks.length > 0) return diffChunks;
+    // fall through to auto with full files
   }
 
   const ranked = rankByRisk(input.touchedFiles, { protectedPaths: input.protectedPaths });
