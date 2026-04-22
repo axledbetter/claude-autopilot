@@ -4,7 +4,7 @@ import type { Finding } from '../../findings/types.ts';
 
 const SECRET_PATTERNS: { regex: RegExp; label: string }[] = [
   { regex: /\bAKIA[0-9A-Z]{16}\b/, label: 'AWS Access Key ID' },
-  { regex: /(?:password|passwd|pwd)\s*[:=]\s*['"][^'"]{6,}['"]/, label: 'Hardcoded password' },
+  { regex: /(?:^|[^a-z])(?:password|passwd|pwd)\s*[:=]\s*['"](?!\/)[^'"]{6,}['"]/, label: 'Hardcoded password' },
   { regex: /(?:api_key|apikey|api-key)\s*[:=]\s*['"][^'"]{8,}['"]/, label: 'Hardcoded API key' },
   { regex: /(?:secret|secret_key|secretkey)\s*[:=]\s*['"][^'"]{8,}['"]/, label: 'Hardcoded secret' },
   { regex: /(?:access_token|accesstoken)\s*[:=]\s*['"][^'"]{8,}['"]/, label: 'Hardcoded access token' },

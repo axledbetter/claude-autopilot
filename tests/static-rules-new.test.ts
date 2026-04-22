@@ -38,6 +38,16 @@ describe('hardcoded-secrets', () => {
     assert.equal(findings.length, 0);
     fs.rmSync(dir, { recursive: true });
   });
+
+  it('does not flag route object keys containing "password"', async () => {
+    const { hardcodedSecretsRule } = await import('../src/core/static-rules/rules/hardcoded-secrets.ts');
+    const dir = tmp();
+    const file = path.join(dir, 'routes.ts');
+    fs.writeFileSync(file, "const PUBLIC_ROUTES = { forgot_password: '/forgot-password' } as const;\n");
+    const findings = await hardcodedSecretsRule.check([file]);
+    assert.equal(findings.length, 0, `unexpected finding: ${findings[0]?.message}`);
+    fs.rmSync(dir, { recursive: true });
+  });
 });
 
 // ── console-log ───────────────────────────────────────────────────────────────
