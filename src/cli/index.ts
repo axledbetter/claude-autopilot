@@ -18,6 +18,8 @@ import { runCi } from './ci.ts';
 import { runFix } from './fix.ts';
 import { runScan } from './scan.ts';
 import { runReport } from './report.ts';
+import { runExplain } from './explain.ts';
+import { runIgnore } from './ignore-helper.ts';
 
 const args = process.argv.slice(2);
 
@@ -31,7 +33,7 @@ if (args[0] === '--version' || args[0] === '-v') {
   process.exit(0);
 }
 
-const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'ci', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
+const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus'];
 
 // Detect first non-flag arg as subcommand, default to 'run'
@@ -61,6 +63,8 @@ Commands:
   run          Review git-changed files (default)
   scan         Review any path — no git required
   report       Render cached findings as a markdown report
+  explain      Deep-dive explanation + remediation for a specific finding
+  ignore       Interactively add findings to .guardrail-ignore
   watch        Watch for file changes and re-run on each save
   fix          Auto-fix cached findings using the configured LLM
   costs        Show per-run cost summary
@@ -261,7 +265,25 @@ switch (subcommand) {
 
   case 'report': {
     const outputPath = flag('output');
-    const code = await runReport({ output: outputPath });
+    const trend = boolFlag('trend');
+    const code = await runReport({ output: outputPath, trend });
+    process.exit(code);
+    break;
+  }
+
+  case 'explain': {
+    const config = flag('config');
+    // Target is the first non-flag arg after 'explain'
+    const target = args.slice(1).find(a => !a.startsWith('--'));
+    const code = await runExplain({ configPath: config, target });
+    process.exit(code);
+    break;
+  }
+
+  case 'ignore': {
+    const all = boolFlag('all');
+    const dryRun = boolFlag('dry-run');
+    const code = await runIgnore({ all, dryRun });
     process.exit(code);
     break;
   }

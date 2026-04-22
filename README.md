@@ -77,6 +77,35 @@ npx guardrail scan --focus logic           # logic bugs only
 
 `scan` doesn't require git changes — point it at anything.
 
+### `guardrail report` — markdown report from cached findings
+
+```bash
+npx guardrail report                       # print to stdout
+npx guardrail report --output report.md    # write to file
+npx guardrail report --trend               # include run history + cost trend
+```
+
+### `guardrail explain` — deep-dive on a finding
+
+```bash
+npx guardrail explain                      # list cached findings with indices
+npx guardrail explain 3                    # explain finding #3
+npx guardrail explain src/auth/login.ts:42 # explain by file:line
+npx guardrail explain hardcoded-secrets    # explain by rule id
+```
+
+Sends the surrounding code + finding details to the LLM for a full explanation: root cause, remediation steps, before/after example, and when to suppress.
+
+### `guardrail ignore` — suppress findings interactively
+
+```bash
+npx guardrail ignore                       # step through cached findings, add rules
+npx guardrail ignore --all                 # suppress all findings (rule+path scope)
+npx guardrail ignore --dry-run             # preview rules without writing
+```
+
+Writes entries to `.guardrail-ignore`. For each finding, choose: suppress by path, by rule+path, or by rule everywhere.
+
 ### `guardrail ci` — opinionated CI entrypoint
 
 ```bash
@@ -91,6 +120,12 @@ npx guardrail ci --no-post-comments
 npx guardrail fix                          # fix critical findings
 npx guardrail fix --severity all           # fix everything
 npx guardrail fix --dry-run                # preview changes
+```
+
+### `guardrail costs` — usage summary
+
+```bash
+npx guardrail costs                        # all-time + 7-day summary + last 10 runs
 ```
 
 ### `guardrail watch` — dev loop
@@ -145,7 +180,12 @@ staticRules:
 ignore:
   - src/legacy/**                              # suppress all findings in path
   - { rule: console-log, path: scripts/** }    # suppress specific rule in path
+chunking:
+  rateLimitBackoff: exp    # exp (default) | linear | none — retry strategy on 429
+  parallelism: 3           # concurrent chunk reviews
 ```
+
+**Monorepo:** `guardrail run` auto-detects npm/yarn/pnpm workspaces, Turborepo, and Nx. Detected workspaces are logged during auto-detection and scoped test commands are applied per-package.
 
 ### Review Engine Adapters
 

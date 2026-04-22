@@ -36,6 +36,7 @@ import { emitAnnotations } from '../formatters/github-annotations.ts';
 import { detectStack } from '../core/detect/stack.ts';
 import { detectProtectedPaths } from '../core/detect/protected-paths.ts';
 import { detectGitContext } from '../core/detect/git-context.ts';
+import { detectWorkspaces, mapFilesToWorkspaces } from '../core/detect/workspaces.ts';
 import { detectProject } from './detector.ts';
 import { detectPrNumber, formatComment, postPrComment } from './pr-comment.ts';
 import { postReviewComments } from './pr-review-comments.ts';
@@ -125,6 +126,13 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     config = { ...config, testCommand: detected };
     autoDetected.push(`test: ${detected}`);
   }
+
+  // Monorepo workspace detection
+  const workspaces = detectWorkspaces(cwd);
+  if (workspaces && workspaces.length > 0) {
+    autoDetected.push(`workspaces: ${workspaces.length} (${workspaces.map(w => w.name).slice(0, 3).join(', ')}${workspaces.length > 3 ? ` +${workspaces.length - 3} more` : ''})`);
+  }
+
   const gitCtx = detectGitContext(cwd);
 
   // Resolve touched files
