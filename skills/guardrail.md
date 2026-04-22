@@ -1,16 +1,18 @@
 ---
 name: guardrail
-description: Run the @delegance/guardrail code review pipeline — static rules, LLM review, snapshot regression. Use before any PR or after completing a feature.
+description: LLM-powered code review that catches security holes, logic bugs, bad auth patterns, and architectural drift — not just linting. Use before any PR, after completing a feature, or to audit any path with `scan`.
 ---
 
-# guardrail — Code Review Pipeline
+# guardrail — LLM Code Review
 
-Runs static rules, optional LLM review, and impact-aware snapshot regression on git-changed files. Auto-detects stack, protected paths, and test command from the project. Outputs findings inline and optionally as SARIF for GitHub Code Scanning.
+Catches what linters miss: security holes, broken auth, logic bugs, race conditions, injection risks, architectural drift. Runs static rules for hygiene, then sends code to an LLM reviewer that understands context. Outputs SARIF for GitHub Code Scanning, posts inline PR comments, and has a pre-push hook for local enforcement.
 
 ## When to Use
 
 - Before creating a PR: `npx guardrail run --base main`
-- Inside CI: `npx guardrail ci` (one-command, posts PR comment + SARIF)
+- To audit any path without needing git changes: `npx guardrail scan src/auth/`
+- To ask a targeted question about code: `npx guardrail scan --ask "is there an IDOR here?" src/api/`
+- Inside CI: `npx guardrail ci`
 - Dev loop: `npx guardrail watch`
 - First setup: `npx guardrail setup && npx guardrail doctor`
 
@@ -22,16 +24,34 @@ npx guardrail doctor   # checks Node 22+, tsx, gh CLI, API key, git config
 
 ## Commands
 
-### `run` — pipeline on git-changed files
+### `run` — review git-changed files
 
 ```bash
 npx guardrail run                          # diff HEAD~1 (default)
 npx guardrail run --base main              # diff against branch
 npx guardrail run --files src/a.ts,src/b.ts  # explicit files
 npx guardrail run --dry-run                # show what would run
+npx guardrail run --diff                   # send hunks only (~70% fewer tokens)
+npx guardrail run --delta                  # only new findings since last run
 npx guardrail run --post-comments          # post/update summary on open PR
+npx guardrail run --inline-comments        # post per-line inline PR annotations
 npx guardrail run --format sarif --output guardrail.sarif
 ```
+
+### `scan` — review any path (no git required)
+
+```bash
+npx guardrail scan src/auth/               # scan a directory
+npx guardrail scan src/api/users.ts        # scan specific files
+npx guardrail scan --all                   # scan entire codebase
+npx guardrail scan --ask "is there SQL injection risk?" src/db/
+npx guardrail scan --ask "any IDOR vulnerabilities?" src/api/
+npx guardrail scan --focus security src/   # security findings only
+npx guardrail scan --focus logic src/      # logic bugs only
+npx guardrail scan --dry-run src/auth/     # list files without running
+```
+
+`scan` doesn't require git changes — use it to audit existing code, review a directory before merge, or answer a specific question about the codebase.
 
 ### `ci` — opinionated CI entrypoint
 
@@ -42,22 +62,25 @@ npx guardrail ci --no-post-comments
 npx guardrail ci --output results.sarif
 ```
 
-Equivalent to `run --base <ref> --post-comments --format sarif --output <path>`. Base ref resolves from `GITHUB_BASE_REF` → `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` → `HEAD~1`.
-
-### `setup` — zero-prompt first run
+### `fix` — auto-fix cached findings
 
 ```bash
-npx guardrail setup         # auto-detect stack, write config, install hook
-npx guardrail setup --force # overwrite existing config
+npx guardrail fix                          # fix critical findings
+npx guardrail fix --severity all           # fix everything
+npx guardrail fix --dry-run                # preview fixes
 ```
-
-Auto-detects: Go, Rails, FastAPI, T3, Next.js+Supabase. Runs doctor at end.
 
 ### `watch` — dev loop
 
 ```bash
 npx guardrail watch
 npx guardrail watch --debounce 500
+```
+
+### `costs` — usage summary
+
+```bash
+npx guardrail costs   # all-time + 7-day + last 10 runs
 ```
 
 ### `autoregress` — snapshot regression
@@ -90,29 +113,16 @@ Configure via `reviewEngine.adapter` in `guardrail.config.yaml`:
 | `codex` | `OPENAI_API_KEY` | gpt-5.3-codex via responses API |
 | `openai-compatible` | configurable | Any OpenAI-API endpoint (Groq, Ollama, Together) |
 
-`auto` priority order: Anthropic → Gemini → OpenAI → Groq. When multiple keys are present, `auto` scans the project source files and prefers the provider already referenced most.
+## What the LLM Catches
 
-## Auto-Detection
+Beyond static rules, the LLM review looks for:
 
-When config fields are absent, `guardrail run` fills them in automatically:
-
-- **stack** — parsed from `package.json`, `go.mod`, `Cargo.toml`, `requirements.txt`, `Gemfile`; injected into review prompt
-- **protectedPaths** — migration dirs (`data/deltas/`, `migrations/`, `prisma/migrations/`, etc.), schema files, infra dirs (`terraform/`, `.github/workflows/`)
-- **testCommand** — re-detected at run time from project files; set `testCommand: null` to disable explicitly
-- **git context** — branch + last commit injected as `Change context: branch: X | last commit: Y`
-
-Detection lines are printed dim after the file count: `auto-detected: stack: Next.js + Supabase | protected: data/deltas/** ...`
-
-## Interpreting Results
-
-**Exit code 0** — pass or warnings only. Safe to proceed.
-**Exit code 1** — blocking findings. Fix before merging.
-
-Finding severities: `critical` blocks merge, `warning` should fix, `note` informational.
-
-PR comment (via `--post-comments` or `ci`): status badge, phase table, critical/warning findings, cost footer. Edits existing comment on re-runs (tracked via `<!-- guardrail-review -->` marker).
-
-SARIF output: upload with `github/codeql-action/upload-sarif@v3` for inline PR diff annotations. Also auto-emits `::error`/`::warning` annotations when `GITHUB_ACTIONS=true`.
+- **Auth & access control** — missing middleware, broken RBAC, IDOR, privilege escalation paths
+- **Injection risks** — SQL injection, XSS vectors, unsafe deserialization, path traversal
+- **Secrets & data exposure** — API keys in logs, PII in error messages, overly broad queries
+- **Logic bugs** — incorrect conditionals, off-by-one errors, wrong comparison operators, missed edge cases
+- **Async errors** — unhandled promises, race conditions, missing awaits, callback hell
+- **Architectural drift** — layer violations, tightly coupled modules, missing abstractions
 
 ## Config (`guardrail.config.yaml`)
 
@@ -127,31 +137,27 @@ protectedPaths:         # auto-detected if omitted
 staticRules:
   - hardcoded-secrets
   - npm-audit
-  - package-lock-sync
   - console-log
   - todo-fixme
   - large-file
   - missing-tests
+ignore:
+  - src/legacy/**
+  - { rule: console-log, path: scripts/** }
 ```
-
-Preset defaults at: `node_modules/@delegance/guardrail/presets/<name>/guardrail.config.yaml`
-
-## GitHub Actions
-
-```yaml
-- uses: axledbetter/guardrail/.github/actions/ci@main
-  with:
-    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}   # or openai/gemini/groq
-```
-
-Runs `npx guardrail ci`, uploads SARIF, annotates PR diff. All API key inputs optional — whichever is set gets used by `auto`.
 
 ## Integration with Development Pipeline
 
 ```bash
-# After implementing feature
+# After implementing a feature
 npx guardrail run --base main
 
-# If findings → fix → re-run (max 3 iterations)
+# Or audit the new auth module specifically
+npx guardrail scan src/auth/ --focus security
+
+# If findings → fix → re-run
+npx guardrail fix
+npx guardrail run --base main
+
 # If clean → push → create PR
 ```

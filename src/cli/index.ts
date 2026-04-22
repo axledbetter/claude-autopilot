@@ -3,12 +3,12 @@
  * guardrail CLI — entry point
  *
  * Usage:
- *   guardrail init              scaffold guardrail.config.yaml from a preset
- *   guardrail run               run the pipeline on git-changed files
- *   guardrail run --base main   diff against a specific branch
- *   guardrail run --dry-run     show what would run, no execution
- *   guardrail watch             re-run pipeline on every file save (debounced)
- *   guardrail doctor            check prerequisites (alias: preflight)
+ *   guardrail run               review git-changed files
+ *   guardrail scan src/auth/    review any path (no git required)
+ *   guardrail scan --ask "..."  ask a targeted question about code
+ *   guardrail ci                opinionated CI entrypoint
+ *   guardrail watch             re-run on every file save
+ *   guardrail doctor            check prerequisites
  */
 import { runCommand } from './run.ts';
 import { runWatch } from './watch.ts';
@@ -16,6 +16,7 @@ import { runSetup } from './setup.ts';
 import { runDoctor } from './preflight.ts';
 import { runCi } from './ci.ts';
 import { runFix } from './fix.ts';
+import { runScan } from './scan.ts';
 
 const args = process.argv.slice(2);
 
@@ -29,8 +30,8 @@ if (args[0] === '--version' || args[0] === '-v') {
   process.exit(0);
 }
 
-const SUBCOMMANDS = ['init', 'run', 'ci', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
-const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce'];
+const SUBCOMMANDS = ['init', 'run', 'scan', 'ci', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
+const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus'];
 
 // Detect first non-flag arg as subcommand, default to 'run'
 const subcommand = (args[0] && !args[0].startsWith('--')) ? args[0] : 'run';
@@ -56,11 +57,15 @@ function printUsage(): void {
 Usage: guardrail <command> [options]
 
 Commands:
-  run          Run the pipeline on git-changed files (default)
-  watch        Watch for file changes and re-run pipeline on each save
+  run          Review git-changed files (default)
+  scan         Review any path — no git required
+  watch        Watch for file changes and re-run on each save
+  fix          Auto-fix cached findings using the configured LLM
+  costs        Show per-run cost summary
+  ci           Opinionated CI entrypoint (post comments + SARIF)
   init         Scaffold guardrail.config.yaml from a preset
-  doctor       Check prerequisites and show exact fix commands (alias: preflight)
-  autoregress  Run snapshot regression tests (run|diff|update|generate)
+  doctor       Check prerequisites (alias: preflight)
+  autoregress  Snapshot regression tests (run|diff|update|generate)
 
 Options (run):
   --base <ref>         Git base ref for diff (default: HEAD~1)
@@ -74,8 +79,13 @@ Options (run):
   --format <text|sarif>  Output format (default: text)
   --output <path>        Output file path (required with --format sarif)
 
-  fix          Auto-fix cached findings using the configured LLM
-  costs        Show per-run cost summary from .guardrail-cache/costs.jsonl
+Options (scan):
+  <path> [path...]     Files or directories to scan (or --all for entire codebase)
+  --all                Scan entire codebase
+  --ask <question>     Targeted question to inject into the LLM review prompt
+  --focus <type>       security | logic | performance (default: all)
+  --dry-run            List files that would be scanned without running
+  --config <path>      Path to config file
 
 Options (fix):
   --severity <critical|warning|all>  Which findings to fix (default: critical)
@@ -95,6 +105,30 @@ Options (autoregress):
 }
 
 switch (subcommand) {
+  case 'scan': {
+    const config = flag('config');
+    const ask = flag('ask');
+    const focusArg = flag('focus');
+    if (focusArg && !['security', 'logic', 'performance', 'all'].includes(focusArg)) {
+      console.error(`\x1b[31m[guardrail] --focus must be "security", "logic", "performance", or "all"\x1b[0m`);
+      process.exit(1);
+    }
+    const dryRun = boolFlag('dry-run');
+    const all = boolFlag('all');
+    // Remaining non-flag args after 'scan' are paths
+    const targets = args.slice(1).filter(a => !a.startsWith('--') && a !== ask && a !== focusArg && a !== config);
+    const code = await runScan({
+      configPath: config,
+      targets: targets.length > 0 ? targets : undefined,
+      all,
+      ask,
+      focus: focusArg as 'security' | 'logic' | 'performance' | 'all' | undefined,
+      dryRun,
+    });
+    process.exit(code);
+    break;
+  }
+
   case 'init': {
     console.log('\x1b[33m[init] guardrail init is deprecated — use: npx guardrail setup\x1b[0m\n');
     const force = args.includes('--force');

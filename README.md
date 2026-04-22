@@ -1,148 +1,165 @@
 # @delegance/guardrail
 
-Automated code review pipeline for Claude Code. Runs static rules, an optional LLM review engine, and impact-aware snapshot regression tests — outputs SARIF for GitHub Code Scanning, inline PR annotations, and a pre-push hook for local enforcement.
+LLM-powered code review that catches what linters miss — security holes, logic bugs, bad auth patterns, race conditions, and architectural drift. Runs on every push, posts inline PR comments, and outputs SARIF for GitHub Code Scanning.
+
+## What it finds
+
+Static analysis catches style. Guardrail catches things that break in production:
+
+- **Auth & access control** — missing middleware, broken RBAC, IDOR, privilege escalation
+- **Injection & data handling** — SQL injection, XSS vectors, unsafe deserialization, hardcoded secrets
+- **Logic bugs** — off-by-one, missing null checks, incorrect async handling, silent error swallowing
+- **Architectural drift** — layer violations, circular dependencies, god objects, missing abstractions
+- **Race conditions** — unguarded shared state, missing locks, TOCTOU
+- **Security misconfig** — CORS wildcards, missing rate limits, exposed internals
+
+Plus static rules for hygiene: npm audit, console.log, TODO/FIXME, large files, missing tests, package-lock drift.
 
 ## Install
 
 ```bash
-npm install @delegance/guardrail
+npm install -g @delegance/guardrail
 ```
 
-**Prerequisites:** Node 22+, [`gh` CLI](https://cli.github.com/) authenticated, [`claude` CLI](https://claude.ai/claude-code) (Claude Code).
+**Requires:** Node 22+, an LLM API key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `GROQ_API_KEY`).
+
+## Quick Start
+
+```bash
+# One command — auto-detects stack, writes config, installs pre-push hook
+npx guardrail setup
+
+# Review git-changed files before a PR
+npx guardrail run --base main
+
+# Scan any path without needing git changes
+npx guardrail scan src/auth/
+
+# Ask a targeted question about your code
+npx guardrail scan --ask "is there an IDOR vulnerability in this route?" src/api/users/
+```
 
 ## Claude Code Skill
 
-The package ships a ready-made Claude Code skill. After installing, copy it into your project:
+Ships a ready-made Claude Code skill. After installing, copy it into your project:
 
 ```bash
 mkdir -p .claude/skills
 cp node_modules/@delegance/guardrail/skills/guardrail.md .claude/skills/
 ```
 
-Claude will then know when and how to invoke `guardrail run`, interpret findings, and wire it into your dev pipeline automatically.
-
-## Quick Start
-
-```bash
-# One command — auto-detects project type, writes config, installs hook, runs doctor
-npx guardrail setup
-
-# Run your first pipeline
-npx guardrail run
-```
-
-`setup` detects your stack (Go, Rails, FastAPI, T3, Next.js+Supabase), infers your test command, writes `guardrail.config.yaml`, installs the pre-push hook, then runs `doctor` to show anything still missing.
+Claude agents will automatically invoke guardrail before PRs, interpret findings, and auto-fix blocking issues.
 
 ## Commands
 
-### `guardrail setup`
-
-Zero-prompt setup. Auto-detects project type and configures everything.
+### `guardrail run` — review git-changed files
 
 ```bash
-npx guardrail setup            # detect, write config, install hook
-npx guardrail setup --force    # overwrite existing guardrail.config.yaml
+npx guardrail run                          # diff against HEAD~1
+npx guardrail run --base main              # diff against a branch
+npx guardrail run --diff                   # send hunks only (~70% fewer tokens)
+npx guardrail run --delta                  # only report new findings since last run
+npx guardrail run --post-comments          # post summary comment on open PR
+npx guardrail run --inline-comments        # post per-line inline PR annotations
+npx guardrail run --format sarif --output guardrail.sarif
 ```
 
-### `guardrail doctor`
-
-Checks prerequisites. Runs automatically after `setup` — also useful any time `run` behaves unexpectedly.
+### `guardrail scan` — review any path
 
 ```bash
-npx guardrail doctor
+npx guardrail scan src/auth/               # scan a directory
+npx guardrail scan src/api/users.ts        # scan specific files
+npx guardrail scan --all                   # scan entire codebase
+npx guardrail scan --ask "is there SQL injection risk?" src/db/
+npx guardrail scan --focus security        # security findings only
+npx guardrail scan --focus logic           # logic bugs only
 ```
 
-Verifies: Node 22+, tsx, `gh` CLI auth, `claude` CLI, `OPENAI_API_KEY`, git user config, superpowers plugin. Exits 1 if blockers found. `guardrail preflight` is an alias.
+`scan` doesn't require git changes — point it at anything.
 
-### `guardrail run`
-
-Runs the pipeline on git-changed files.
+### `guardrail ci` — opinionated CI entrypoint
 
 ```bash
-npx guardrail run                        # diff against HEAD~1
-npx guardrail run --base main            # diff against main
-npx guardrail run --files src/foo.ts     # explicit file list
-npx guardrail run --format sarif --output results.sarif
-npx guardrail run --dry-run
+npx guardrail ci          # base=GITHUB_BASE_REF, posts PR comment, writes SARIF
+npx guardrail ci --base develop
+npx guardrail ci --no-post-comments
 ```
 
-### `guardrail watch`
+### `guardrail fix` — auto-fix cached findings
 
-Re-runs on every file save.
+```bash
+npx guardrail fix                          # fix critical findings
+npx guardrail fix --severity all           # fix everything
+npx guardrail fix --dry-run                # preview changes
+```
+
+### `guardrail watch` — dev loop
 
 ```bash
 npx guardrail watch
 npx guardrail watch --debounce 500
 ```
 
-### `guardrail autoregress`
-
-Impact-aware snapshot regression tests. Only fires snapshots whose source modules were touched by the current branch.
+### `guardrail costs` — usage summary
 
 ```bash
-npx guardrail autoregress run              # impact-selected (default)
-npx guardrail autoregress run --all
-npx guardrail autoregress diff             # show JSON diffs vs baselines
-npx guardrail autoregress update           # overwrite baselines
-npx guardrail autoregress generate         # LLM-generate snapshot tests for changed files
-npx guardrail autoregress generate --files src/foo.ts,src/bar.ts
+npx guardrail costs                        # all-time + 7-day summary + last 10 runs
 ```
 
-`generate` requires `OPENAI_API_KEY`.
-
-### `guardrail hook`
-
-Manages the `pre-push` git hook.
+### `guardrail autoregress` — snapshot regression
 
 ```bash
-npx guardrail hook install          # write .git/hooks/pre-push
-npx guardrail hook install --force  # overwrite existing
+npx guardrail autoregress generate   # generate baselines for changed files
+npx guardrail autoregress run        # run impact-selected snapshots
+npx guardrail autoregress run --all  # run all snapshots
+npx guardrail autoregress diff       # show diffs vs baselines
+npx guardrail autoregress update     # overwrite baselines after intentional change
+```
+
+### `guardrail setup` / `guardrail doctor` / `guardrail hook`
+
+```bash
+npx guardrail setup            # auto-detect stack, write config, install hook
+npx guardrail doctor           # check prerequisites
+npx guardrail hook install     # install pre-push git hook
 npx guardrail hook uninstall
-npx guardrail hook status
 ```
-
-Works in git worktrees.
-
-### `guardrail init`
-
-Interactive preset picker — for when you want to choose a preset manually instead of using `setup`.
-
-```bash
-npx guardrail init
-```
-
-Presets: `nextjs-supabase`, `t3`, `python-fastapi`, `rails-postgres`, `go`.
 
 ## Config (`guardrail.config.yaml`)
 
 ```yaml
 configVersion: 1
 reviewEngine:
-  adapter: auto        # auto-detects best available key at runtime
-testCommand: npm test
+  adapter: auto        # auto-selects best available key at runtime
+testCommand: npm test  # null to disable
 protectedPaths:
-  - src/core/**
   - data/deltas/**
+  - .github/workflows/**
 staticRules:
   - hardcoded-secrets
   - npm-audit
+  - console-log
+  - todo-fixme
+  - large-file
+  - missing-tests
+ignore:
+  - src/legacy/**                              # suppress all findings in path
+  - { rule: console-log, path: scripts/** }    # suppress specific rule in path
 ```
-
-Full schema and preset defaults: `presets/<name>/guardrail.config.yaml`.
 
 ### Review Engine Adapters
 
 | Adapter | Key required | Notes |
 |---|---|---|
-| `auto` | any below | Auto-selects best available (recommended) |
-| `claude` | `ANTHROPIC_API_KEY` | Opus 4.7 default |
+| `auto` | any | Auto-selects best available (recommended) |
+| `claude` | `ANTHROPIC_API_KEY` | Claude Opus 4.7 |
 | `gemini` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | Gemini 2.5 Pro, 1M context |
 | `codex` | `OPENAI_API_KEY` | GPT-5 Codex |
 | `openai-compatible` | configurable | Groq, Ollama, Together AI, etc. |
 
 `auto` priority: Anthropic → Gemini → OpenAI → Groq.
 
-**Groq example:**
+**Groq (fast/free tier):**
 ```yaml
 reviewEngine:
   adapter: openai-compatible
@@ -166,39 +183,19 @@ reviewEngine:
 ```yaml
 - uses: axledbetter/guardrail/.github/actions/ci@main
   with:
-    openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
 Runs the pipeline, uploads SARIF to GitHub Code Scanning, annotates the PR diff inline.
 
-## SARIF Output
+## Interpreting Results
 
-```bash
-npx guardrail run --format sarif --output guardrail.sarif
-```
+**Exit 0** — pass or warnings only. Safe to merge.
+**Exit 1** — critical findings. Fix before merging.
 
-Compatible with `github/codeql-action/upload-sarif@v3`.
+Findings: `critical` blocks merge · `warning` should fix · `note` informational.
 
-## Snapshot Regression Testing
-
-After each feature lands:
-
-```bash
-npx guardrail autoregress generate   # generate baselines for changed files
-```
-
-Future PRs automatically fail if covered behavior diverges. The impact selector uses `git merge-base` diff + one-hop import graph expansion — only relevant snapshots run, keeping CI fast.
-
-High-impact paths (`src/core/pipeline/**`, `src/adapters/**`, `src/core/findings/**`, `src/core/config/**`) always trigger a full run.
-
-## Public API
-
-```typescript
-import type { Finding, RunResult, AutopilotConfig } from '@delegance/guardrail';
-import { normalizeSnapshot } from '@delegance/guardrail';
-```
-
-Types are available for TypeScript consumers. Runtime import requires a tsx-aware bundler (the package ships TypeScript source).
+PR comments show: status badge, phase table, critical/warning findings, cost footer. Re-runs update the existing comment.
 
 ## Architecture
 
@@ -206,9 +203,9 @@ Four pluggable adapter points:
 
 | Point | Built-in | Purpose |
 |---|---|---|
-| `review-engine` | `auto`, `claude`, `gemini`, `codex`, `openai-compatible` | LLM code review |
-| `vcs-host` | `github` | PR comments + SARIF upload |
-| `migration-runner` | `supabase` | DB migration execution |
+| `review-engine` | `auto`, `claude`, `gemini`, `codex`, `openai-compatible` | LLM review |
+| `vcs-host` | `github` | PR comments + SARIF |
+| `migration-runner` | `supabase` | DB migrations |
 | `review-bot-parser` | `cursor` | Parse review bot comments |
 
 ## License
