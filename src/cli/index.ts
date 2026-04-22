@@ -37,6 +37,35 @@ if (args[0] === '--version' || args[0] === '-v') {
 const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus'];
 
+// Bare invocation — no subcommand, no flags → show welcome guide
+if (args.length === 0) {
+  const hasKey = !!(process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY ||
+    process.env.GOOGLE_API_KEY || process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY);
+  const keyLine = hasKey
+    ? '\x1b[32m✓\x1b[0m  LLM API key detected'
+    : '\x1b[33m!\x1b[0m  No LLM API key found — set one of:\n     ANTHROPIC_API_KEY  https://console.anthropic.com/\n     OPENAI_API_KEY     https://platform.openai.com/api-keys\n     GEMINI_API_KEY     https://aistudio.google.com/app/apikey\n     GROQ_API_KEY       https://console.groq.com/keys  (fast free tier)';
+  console.log(`
+\x1b[1m@delegance/guardrail\x1b[0m — LLM-powered code review for your PR diffs
+
+  ${keyLine}
+
+\x1b[1mQuick start:\x1b[0m
+
+  \x1b[36mnpx guardrail run --base main\x1b[0m          Review files changed vs main
+  \x1b[36mnpx guardrail scan src/auth/\x1b[0m           Scan any path (no git required)
+  \x1b[36mnpx guardrail scan --ask "SQL injection?" src/db/\x1b[0m
+  \x1b[36mnpx guardrail fix\x1b[0m                      Auto-fix cached findings
+
+\x1b[1mSetup:\x1b[0m
+
+  \x1b[36mnpx guardrail setup\x1b[0m                    Auto-detect stack, write config, install hook
+  \x1b[36mnpx guardrail doctor\x1b[0m                   Check prerequisites
+
+Run \x1b[36mnpx guardrail --help\x1b[0m for full command reference.
+`);
+  process.exit(0);
+}
+
 // Detect first non-flag arg as subcommand, default to 'run'
 const subcommand = (args[0] && !args[0].startsWith('--')) ? args[0] : 'run';
 

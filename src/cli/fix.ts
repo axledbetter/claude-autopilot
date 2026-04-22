@@ -109,6 +109,15 @@ export async function runFix(options: FixCommandOptions = {}): Promise<number> {
   const modeNote = options.dryRun ? ' (dry run)' : options.yes ? '' : ' (interactive — use --yes to skip prompts)';
   console.log(`\n${fmt('bold', '[guardrail fix]')} ${fixable.length} finding${fixable.length !== 1 ? 's' : ''} to attempt${modeNote}\n`);
 
+  // Print upfront summary of all fixable findings before prompting
+  for (const f of fixable) {
+    const sev = f.severity === 'critical' ? fmt('red', 'CRITICAL') : fmt('yellow', 'WARNING ');
+    const loc = fmt('dim', `${f.file}:${f.line}`);
+    console.log(`  [${sev}] ${loc} ${f.message}`);
+    if (f.suggestion) console.log(fmt('dim', `           → ${f.suggestion}`));
+  }
+  console.log('');
+
   // Load review engine (config optional — defaults to auto adapter)
   let engine: ReviewEngine;
   try {

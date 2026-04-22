@@ -112,7 +112,11 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
   const hasAnyKey = !!(process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY ||
     process.env.GOOGLE_API_KEY || process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY);
   if (!hasAnyKey) {
-    console.error(fmt('red', '[scan] No LLM API key found — set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY'));
+    console.error(fmt('red', '[scan] No LLM API key — set one of:'));
+    console.error(fmt('dim', '         ANTHROPIC_API_KEY  https://console.anthropic.com/'));
+    console.error(fmt('dim', '         OPENAI_API_KEY     https://platform.openai.com/api-keys'));
+    console.error(fmt('dim', '         GEMINI_API_KEY     https://aistudio.google.com/app/apikey'));
+    console.error(fmt('dim', '         GROQ_API_KEY       https://console.groq.com/keys  (fast free tier)'));
     return 1;
   }
   const engineRef = typeof config.reviewEngine === 'string' ? config.reviewEngine
