@@ -18,7 +18,7 @@ export interface CiCommandOptions {
  *
  * Defaults:
  *   base       GITHUB_BASE_REF → HEAD~1
- *   output     autopilot.sarif
+ *   output     guardrail.sarif
  *   post-comments  true (skip if no PR detected — run.ts handles gracefully)
  */
 export async function runCi(options: CiCommandOptions = {}): Promise<number> {
@@ -27,7 +27,7 @@ export async function runCi(options: CiCommandOptions = {}): Promise<number> {
     ?? process.env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME  // GitLab
     ?? 'HEAD~1';
 
-  const sarifOutput = options.sarifOutput ?? 'autopilot.sarif';
+  const sarifOutput = options.sarifOutput ?? 'guardrail.sarif';
 
   return runCommand({
     cwd: options.cwd,

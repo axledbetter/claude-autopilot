@@ -1,12 +1,12 @@
 import { runSafe } from '../core/shell.ts';
 import type { RunResult } from '../core/pipeline/run.ts';
-import type { AutopilotConfig } from '../core/config/types.ts';
+import type { GuardrailConfig } from '../core/config/types.ts';
 import type { GitContext } from '../core/detect/git-context.ts';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const COMMENT_MARKER = '<!-- autopilot-review -->';
+const COMMENT_MARKER = '<!-- guardrail-review -->';
 
 function readVersion(): string {
   try {
@@ -42,7 +42,7 @@ function findExistingCommentId(pr: number, cwd: string): number | null {
 /** Format a RunResult into a markdown PR comment. */
 export function formatComment(
   result: RunResult,
-  config: AutopilotConfig,
+  config: GuardrailConfig,
   gitCtx: GitContext,
   touchedFileCount: number,
 ): string {
@@ -108,9 +108,9 @@ export function formatComment(
   }
 
   if (result.totalCostUSD !== undefined) {
-    lines.push(`*Cost: $${result.totalCostUSD.toFixed(4)} · ${result.durationMs}ms · [@delegance/claude-autopilot](https://github.com/axledbetter/claude-autopilot) v${readVersion()}*`);
+    lines.push(`*Cost: $${result.totalCostUSD.toFixed(4)} · ${result.durationMs}ms · [@delegance/guardrail](https://github.com/axledbetter/guardrail) v${readVersion()}*`);
   } else {
-    lines.push(`*${result.durationMs}ms · [@delegance/claude-autopilot](https://github.com/axledbetter/claude-autopilot) v${readVersion()}*`);
+    lines.push(`*${result.durationMs}ms · [@delegance/guardrail](https://github.com/axledbetter/guardrail) v${readVersion()}*`);
   }
 
   return lines.join('\n');

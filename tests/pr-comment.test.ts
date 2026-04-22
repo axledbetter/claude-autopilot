@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { formatComment } from '../src/cli/pr-comment.ts';
 import type { RunResult } from '../src/core/pipeline/run.ts';
-import type { AutopilotConfig } from '../src/core/config/types.ts';
+import type { GuardrailConfig } from '../src/core/config/types.ts';
 import type { GitContext } from '../src/core/detect/git-context.ts';
 
 function makeResult(overrides: Partial<RunResult> = {}): RunResult {
@@ -15,13 +15,13 @@ function makeResult(overrides: Partial<RunResult> = {}): RunResult {
   };
 }
 
-const baseConfig: AutopilotConfig = { configVersion: 1, stack: 'Next.js 15 + Supabase' };
+const baseConfig: GuardrailConfig = { configVersion: 1, stack: 'Next.js 15 + Supabase' };
 const baseGitCtx: GitContext = { branch: 'feat/auth', commitMessage: 'add login', summary: 'branch: feat/auth | last commit: add login' };
 
 describe('formatComment', () => {
   test('includes marker so existing comment can be found', () => {
     const body = formatComment(makeResult(), baseConfig, baseGitCtx, 5);
-    assert.ok(body.startsWith('<!-- autopilot-review -->'));
+    assert.ok(body.startsWith('<!-- guardrail-review -->'));
   });
 
   test('shows pass status', () => {

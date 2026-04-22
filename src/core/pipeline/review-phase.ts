@@ -1,6 +1,6 @@
 import type { ReviewEngine } from '../../adapters/review-engine/types.ts';
 import type { Finding } from '../findings/types.ts';
-import type { AutopilotConfig } from '../config/types.ts';
+import type { GuardrailConfig } from '../config/types.ts';
 import { buildReviewChunks, type ReviewChunk } from '../chunking/index.ts';
 
 export interface ReviewPhaseResult {
@@ -15,7 +15,7 @@ export interface ReviewPhaseResult {
 export interface ReviewPhaseInput {
   touchedFiles: string[];
   engine: ReviewEngine;
-  config: AutopilotConfig;
+  config: GuardrailConfig;
   cwd?: string;
   gitSummary?: string;
   budgetRemainingUSD?: number;

@@ -1,11 +1,11 @@
-# @delegance/claude-autopilot
+# @delegance/guardrail
 
 Automated code review pipeline for Claude Code. Runs static rules, an optional LLM review engine, and impact-aware snapshot regression tests — outputs SARIF for GitHub Code Scanning, inline PR annotations, and a pre-push hook for local enforcement.
 
 ## Install
 
 ```bash
-npm install @delegance/claude-autopilot
+npm install @delegance/guardrail
 ```
 
 **Prerequisites:** Node 22+, [`gh` CLI](https://cli.github.com/) authenticated, [`claude` CLI](https://claude.ai/claude-code) (Claude Code).
@@ -16,104 +16,104 @@ The package ships a ready-made Claude Code skill. After installing, copy it into
 
 ```bash
 mkdir -p .claude/skills
-cp node_modules/@delegance/claude-autopilot/skills/autopilot.md .claude/skills/
+cp node_modules/@delegance/guardrail/skills/guardrail.md .claude/skills/
 ```
 
-Claude will then know when and how to invoke `autopilot run`, interpret findings, and wire it into your dev pipeline automatically.
+Claude will then know when and how to invoke `guardrail run`, interpret findings, and wire it into your dev pipeline automatically.
 
 ## Quick Start
 
 ```bash
 # One command — auto-detects project type, writes config, installs hook, runs doctor
-npx autopilot setup
+npx guardrail setup
 
 # Run your first pipeline
-npx autopilot run
+npx guardrail run
 ```
 
-`setup` detects your stack (Go, Rails, FastAPI, T3, Next.js+Supabase), infers your test command, writes `autopilot.config.yaml`, installs the pre-push hook, then runs `doctor` to show anything still missing.
+`setup` detects your stack (Go, Rails, FastAPI, T3, Next.js+Supabase), infers your test command, writes `guardrail.config.yaml`, installs the pre-push hook, then runs `doctor` to show anything still missing.
 
 ## Commands
 
-### `autopilot setup`
+### `guardrail setup`
 
 Zero-prompt setup. Auto-detects project type and configures everything.
 
 ```bash
-npx autopilot setup            # detect, write config, install hook
-npx autopilot setup --force    # overwrite existing autopilot.config.yaml
+npx guardrail setup            # detect, write config, install hook
+npx guardrail setup --force    # overwrite existing guardrail.config.yaml
 ```
 
-### `autopilot doctor`
+### `guardrail doctor`
 
 Checks prerequisites. Runs automatically after `setup` — also useful any time `run` behaves unexpectedly.
 
 ```bash
-npx autopilot doctor
+npx guardrail doctor
 ```
 
-Verifies: Node 22+, tsx, `gh` CLI auth, `claude` CLI, `OPENAI_API_KEY`, git user config, superpowers plugin. Exits 1 if blockers found. `autopilot preflight` is an alias.
+Verifies: Node 22+, tsx, `gh` CLI auth, `claude` CLI, `OPENAI_API_KEY`, git user config, superpowers plugin. Exits 1 if blockers found. `guardrail preflight` is an alias.
 
-### `autopilot run`
+### `guardrail run`
 
 Runs the pipeline on git-changed files.
 
 ```bash
-npx autopilot run                        # diff against HEAD~1
-npx autopilot run --base main            # diff against main
-npx autopilot run --files src/foo.ts     # explicit file list
-npx autopilot run --format sarif --output results.sarif
-npx autopilot run --dry-run
+npx guardrail run                        # diff against HEAD~1
+npx guardrail run --base main            # diff against main
+npx guardrail run --files src/foo.ts     # explicit file list
+npx guardrail run --format sarif --output results.sarif
+npx guardrail run --dry-run
 ```
 
-### `autopilot watch`
+### `guardrail watch`
 
 Re-runs on every file save.
 
 ```bash
-npx autopilot watch
-npx autopilot watch --debounce 500
+npx guardrail watch
+npx guardrail watch --debounce 500
 ```
 
-### `autopilot autoregress`
+### `guardrail autoregress`
 
 Impact-aware snapshot regression tests. Only fires snapshots whose source modules were touched by the current branch.
 
 ```bash
-npx autopilot autoregress run              # impact-selected (default)
-npx autopilot autoregress run --all
-npx autopilot autoregress diff             # show JSON diffs vs baselines
-npx autopilot autoregress update           # overwrite baselines
-npx autopilot autoregress generate         # LLM-generate snapshot tests for changed files
-npx autopilot autoregress generate --files src/foo.ts,src/bar.ts
+npx guardrail autoregress run              # impact-selected (default)
+npx guardrail autoregress run --all
+npx guardrail autoregress diff             # show JSON diffs vs baselines
+npx guardrail autoregress update           # overwrite baselines
+npx guardrail autoregress generate         # LLM-generate snapshot tests for changed files
+npx guardrail autoregress generate --files src/foo.ts,src/bar.ts
 ```
 
 `generate` requires `OPENAI_API_KEY`.
 
-### `autopilot hook`
+### `guardrail hook`
 
 Manages the `pre-push` git hook.
 
 ```bash
-npx autopilot hook install          # write .git/hooks/pre-push
-npx autopilot hook install --force  # overwrite existing
-npx autopilot hook uninstall
-npx autopilot hook status
+npx guardrail hook install          # write .git/hooks/pre-push
+npx guardrail hook install --force  # overwrite existing
+npx guardrail hook uninstall
+npx guardrail hook status
 ```
 
 Works in git worktrees.
 
-### `autopilot init`
+### `guardrail init`
 
 Interactive preset picker — for when you want to choose a preset manually instead of using `setup`.
 
 ```bash
-npx autopilot init
+npx guardrail init
 ```
 
 Presets: `nextjs-supabase`, `t3`, `python-fastapi`, `rails-postgres`, `go`.
 
-## Config (`autopilot.config.yaml`)
+## Config (`guardrail.config.yaml`)
 
 ```yaml
 configVersion: 1
@@ -128,7 +128,7 @@ staticRules:
   - npm-audit
 ```
 
-Full schema and preset defaults: `presets/<name>/autopilot.config.yaml`.
+Full schema and preset defaults: `presets/<name>/guardrail.config.yaml`.
 
 ### Review Engine Adapters
 
@@ -164,7 +164,7 @@ reviewEngine:
 ## GitHub Actions
 
 ```yaml
-- uses: axledbetter/claude-autopilot/.github/actions/ci@main
+- uses: axledbetter/guardrail/.github/actions/ci@main
   with:
     openai-api-key: ${{ secrets.OPENAI_API_KEY }}
 ```
@@ -174,7 +174,7 @@ Runs the pipeline, uploads SARIF to GitHub Code Scanning, annotates the PR diff 
 ## SARIF Output
 
 ```bash
-npx autopilot run --format sarif --output autopilot.sarif
+npx guardrail run --format sarif --output guardrail.sarif
 ```
 
 Compatible with `github/codeql-action/upload-sarif@v3`.
@@ -184,7 +184,7 @@ Compatible with `github/codeql-action/upload-sarif@v3`.
 After each feature lands:
 
 ```bash
-npx autopilot autoregress generate   # generate baselines for changed files
+npx guardrail autoregress generate   # generate baselines for changed files
 ```
 
 Future PRs automatically fail if covered behavior diverges. The impact selector uses `git merge-base` diff + one-hop import graph expansion — only relevant snapshots run, keeping CI fast.
@@ -194,8 +194,8 @@ High-impact paths (`src/core/pipeline/**`, `src/adapters/**`, `src/core/findings
 ## Public API
 
 ```typescript
-import type { Finding, RunResult, AutopilotConfig } from '@delegance/claude-autopilot';
-import { normalizeSnapshot } from '@delegance/claude-autopilot';
+import type { Finding, RunResult, AutopilotConfig } from '@delegance/guardrail';
+import { normalizeSnapshot } from '@delegance/guardrail';
 ```
 
 Types are available for TypeScript consumers. Runtime import requires a tsx-aware bundler (the package ships TypeScript source).

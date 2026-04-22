@@ -1,14 +1,14 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { loadConfig } from './loader.ts';
-import { AutopilotError } from '../errors.ts';
-import type { AutopilotConfig } from './types.ts';
+import { GuardrailError } from '../errors.ts';
+import type { GuardrailConfig } from './types.ts';
 
 const PRESET_ROOT = path.resolve(process.cwd(), 'presets');
 
 export interface ResolvedPreset {
   name: string;
-  config: AutopilotConfig;
+  config: GuardrailConfig;
   stack: string;
 }
 
@@ -17,13 +17,13 @@ export async function resolvePreset(name: string): Promise<ResolvedPreset> {
   try {
     await fs.stat(presetDir);
   } catch {
-    throw new AutopilotError(`Preset not found: ${name}`, {
+    throw new GuardrailError(`Preset not found: ${name}`, {
       code: 'invalid_config',
       details: { name, presetDir },
     });
   }
 
-  const config = await loadConfig(path.join(presetDir, 'autopilot.config.yaml'));
+  const config = await loadConfig(path.join(presetDir, 'guardrail.config.yaml'));
   let stack = '';
   try {
     stack = await fs.readFile(path.join(presetDir, 'stack.md'), 'utf8');
@@ -33,7 +33,7 @@ export async function resolvePreset(name: string): Promise<ResolvedPreset> {
   return { name, config, stack };
 }
 
-export function mergeConfigs(preset: AutopilotConfig, user: AutopilotConfig): AutopilotConfig {
+export function mergeConfigs(preset: GuardrailConfig, user: GuardrailConfig): GuardrailConfig {
   return {
     ...preset,
     ...user,

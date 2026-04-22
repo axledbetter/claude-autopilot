@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { AutopilotError } from '../../core/errors.ts';
+import { GuardrailError } from '../../core/errors.ts';
 import type { Capabilities } from '../base.ts';
 import type { ReviewEngine, ReviewInput, ReviewOutput } from './types.ts';
 import { parseReviewOutput } from './parse-output.ts';
@@ -51,7 +51,7 @@ export const claudeAdapter: ReviewEngine = {
   async review(input: ReviewInput): Promise<ReviewOutput> {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
-      throw new AutopilotError('ANTHROPIC_API_KEY not set', { code: 'auth', provider: 'claude' });
+      throw new GuardrailError('ANTHROPIC_API_KEY not set', { code: 'auth', provider: 'claude' });
     }
 
     const model = (input.context as Record<string, unknown> | undefined)?.['model'] as string | undefined ?? DEFAULT_MODEL;
@@ -72,7 +72,7 @@ export const claudeAdapter: ReviewEngine = {
       const message = err instanceof Error ? err.message : String(err);
       const isRateLimit = /rate.limit|429|overloaded/i.test(message);
       const isAuth = /unauthorized|401|invalid.api.key|authentication/i.test(message);
-      throw new AutopilotError(`Claude review call failed: ${message}`, {
+      throw new GuardrailError(`Claude review call failed: ${message}`, {
         code: isAuth ? 'auth' : isRateLimit ? 'rate_limit' : 'transient_network',
         provider: 'claude',
         retryable: isRateLimit,

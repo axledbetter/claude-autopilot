@@ -7,7 +7,7 @@ export type AdapterRef = string | AdapterReference;
 
 export type StaticRuleReference = string | { adapter: string; options?: Record<string, unknown> };
 
-export interface AutopilotConfig {
+export interface GuardrailConfig {
   configVersion: 1;
   preset?: string;
   reviewEngine?: AdapterRef;

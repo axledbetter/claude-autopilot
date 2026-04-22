@@ -25,11 +25,11 @@ import { loadRulesFromConfig } from '../core/static-rules/registry.ts';
 import { resolvePreset } from '../core/config/preset-resolver.ts';
 import { mergeConfigs } from '../core/config/preset-resolver.ts';
 import { loadAdapter } from '../adapters/loader.ts';
-import { runAutopilot } from '../core/pipeline/run.ts';
+import { runGuardrail } from '../core/pipeline/run.ts';
 import { resolveGitTouchedFiles } from '../core/git/touched-files.ts';
 import type { RunInput } from '../core/pipeline/run.ts';
 import type { ReviewEngine } from '../adapters/review-engine/types.ts';
-import type { AutopilotConfig } from '../core/config/types.ts';
+import type { GuardrailConfig } from '../core/config/types.ts';
 import { fileURLToPath } from 'node:url';
 import { toSarif } from '../formatters/sarif.ts';
 import { emitAnnotations } from '../formatters/github-annotations.ts';
@@ -82,16 +82,16 @@ export interface RunCommandOptions {
  */
 export async function runCommand(options: RunCommandOptions = {}): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
-  const configPath = options.configPath ?? path.join(cwd, 'autopilot.config.yaml');
+  const configPath = options.configPath ?? path.join(cwd, 'guardrail.config.yaml');
 
   if (!fs.existsSync(configPath)) {
-    console.error(fmt('red', `[run] autopilot.config.yaml not found at ${configPath}`));
-    console.error(fmt('dim', '      Run: npx autopilot init'));
+    console.error(fmt('red', `[run] guardrail.config.yaml not found at ${configPath}`));
+    console.error(fmt('dim', '      Run: npx guardrail init'));
     return 1;
   }
 
   // Load + merge config
-  let config: AutopilotConfig;
+  let config: GuardrailConfig;
   try {
     const userConfig = await loadConfig(configPath);
     if (userConfig.preset) {
@@ -134,7 +134,7 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     return 0;
   }
 
-  console.log(`\n${fmt('bold', '[autopilot run]')} ${fmt('dim', configPath)}`);
+  console.log(`\n${fmt('bold', '[guardrail run]')} ${fmt('dim', configPath)}`);
   console.log(`${fmt('dim', `  ${touchedFiles.length} changed file(s):`)} ${touchedFiles.slice(0, 5).join(', ')}${touchedFiles.length > 5 ? ` … +${touchedFiles.length - 5} more` : ''}`);
   if (gitCtx.summary) {
     console.log(fmt('dim', `  ${gitCtx.summary}`));
@@ -191,7 +191,7 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
   };
 
   console.log('');
-  const result = await runAutopilot(input);
+  const result = await runGuardrail(input);
 
   // Apply .autopilot-ignore + config ignore: rules
   const ignoreRules = [...loadIgnoreRules(cwd), ...parseConfigIgnore(config.ignore)];

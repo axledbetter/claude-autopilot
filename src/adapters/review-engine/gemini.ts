@@ -1,6 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { parseReviewOutput } from './parse-output.ts';
-import { AutopilotError } from '../../core/errors.ts';
+import { GuardrailError } from '../../core/errors.ts';
 import type { Capabilities } from '../base.ts';
 import type { ReviewEngine, ReviewInput, ReviewOutput } from './types.ts';
 
@@ -59,7 +59,7 @@ export const geminiAdapter: ReviewEngine = {
   async review(input: ReviewInput): Promise<ReviewOutput> {
     const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
     if (!apiKey) {
-      throw new AutopilotError('GEMINI_API_KEY (or GOOGLE_API_KEY) not set', { code: 'auth', provider: 'gemini' });
+      throw new GuardrailError('GEMINI_API_KEY (or GOOGLE_API_KEY) not set', { code: 'auth', provider: 'gemini' });
     }
 
     const model = (input.context as Record<string, unknown> | undefined)?.['model'] as string | undefined ?? DEFAULT_MODEL;
@@ -80,7 +80,7 @@ export const geminiAdapter: ReviewEngine = {
       const message = err instanceof Error ? err.message : String(err);
       const isRateLimit = /rate.limit|429|quota/i.test(message);
       const isAuth = /api.key|unauthorized|403/i.test(message);
-      throw new AutopilotError(`Gemini review call failed: ${message}`, {
+      throw new GuardrailError(`Gemini review call failed: ${message}`, {
         code: isAuth ? 'auth' : isRateLimit ? 'rate_limit' : 'transient_network',
         provider: 'gemini',
         retryable: isRateLimit,

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as os from 'node:os';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { runAutopilot } from '../../src/core/pipeline/run.ts';
+import { runGuardrail } from '../../src/core/pipeline/run.ts';
 import type { RunInput } from '../../src/core/pipeline/run.ts';
 import type { StaticRule } from '../../src/core/phases/static-rules.ts';
 import type { ReviewEngine, ReviewInput, ReviewOutput } from '../../src/adapters/review-engine/types.ts';
@@ -61,7 +61,7 @@ async function makeTempFile(dir: string, name: string, content: string): Promise
 describe('run pipeline — scenarios', () => {
 
   it('S1: clean run with no rules, no test command, no engine → pass', async () => {
-    const result = await runAutopilot({
+    const result = await runGuardrail({
       touchedFiles: [],
       config: { configVersion: 1, testCommand: null },
     });
@@ -72,7 +72,7 @@ describe('run pipeline — scenarios', () => {
 
   it('S2: static-rule warning does not fail-fast', async () => {
     const rule = makeRule([makeFinding({ severity: 'warning' })]);
-    const result = await runAutopilot({
+    const result = await runGuardrail({
       touchedFiles: ['foo.ts'],
       config: { configVersion: 1, testCommand: null },
       staticRules: [rule],
@@ -84,7 +84,7 @@ describe('run pipeline — scenarios', () => {
 
   it('S3: static-rule critical fails fast — tests phase not run', async () => {
     const rule = makeRule([makeFinding({ id: 'r1', severity: 'critical' })]);
-    const result = await runAutopilot({
+    const result = await runGuardrail({
       touchedFiles: ['foo.ts'],
       config: { configVersion: 1, testCommand: 'this-command-does-not-exist' },
       staticRules: [rule],
@@ -97,7 +97,7 @@ describe('run pipeline — scenarios', () => {
 
   it('S4: tests fail → review phase not run', async () => {
     const engine = makeEngine([makeFinding()]);
-    const result = await runAutopilot({
+    const result = await runGuardrail({
       touchedFiles: [],
       config: { configVersion: 1, testCommand: 'this-command-does-not-exist-999' },
       reviewEngine: engine,
@@ -108,7 +108,7 @@ describe('run pipeline — scenarios', () => {
 
   it('S5: review engine returns criticals → status fail', async () => {
     const engine = makeEngine([makeFinding({ severity: 'critical', source: 'review-engine' })]);
-    const result = await runAutopilot({
+    const result = await runGuardrail({
       touchedFiles: ['__mock_file_s5__.ts'], // nonexistent but non-empty so review runs
       config: { configVersion: 1, testCommand: null },
       reviewEngine: engine,
@@ -119,7 +119,7 @@ describe('run pipeline — scenarios', () => {
 
   it('S6: review engine returns warnings → status warn', async () => {
     const engine = makeEngine([makeFinding({ severity: 'warning', source: 'review-engine' })]);
-    const result = await runAutopilot({
+    const result = await runGuardrail({
       touchedFiles: ['__mock_file_s6__.ts'],
       config: { configVersion: 1, testCommand: null },
       reviewEngine: engine,
@@ -129,7 +129,7 @@ describe('run pipeline — scenarios', () => {
 
   it('S7: review engine clean → status pass', async () => {
     const engine = makeEngine([]);
-    const result = await runAutopilot({
+    const result = await runGuardrail({
       touchedFiles: [],
       config: { configVersion: 1, testCommand: null },
       reviewEngine: engine,
@@ -139,7 +139,7 @@ describe('run pipeline — scenarios', () => {
 
   it('S8: costUSD accumulated in RunResult', async () => {
     const engine = makeEngine([], 0.05);
-    const result = await runAutopilot({
+    const result = await runGuardrail({
       touchedFiles: ['__mock_file_s8__.ts'],
       config: { configVersion: 1, testCommand: null },
       reviewEngine: engine,
@@ -149,7 +149,7 @@ describe('run pipeline — scenarios', () => {
 
   it('S9: no cost when engine returns no costUSD', async () => {
     const engine = makeEngine([]);
-    const result = await runAutopilot({
+    const result = await runGuardrail({
       touchedFiles: [],
       config: { configVersion: 1, testCommand: null },
       reviewEngine: engine,
@@ -162,7 +162,7 @@ describe('run pipeline — scenarios', () => {
     const reviewNote = makeFinding({ id: 'review-n', severity: 'note', source: 'review-engine' });
     const rule = makeRule([ruleWarning]);
     const engine = makeEngine([reviewNote]);
-    const result = await runAutopilot({
+    const result = await runGuardrail({
       touchedFiles: ['x.ts'],
       config: { configVersion: 1, testCommand: null },
       staticRules: [rule],
@@ -172,7 +172,7 @@ describe('run pipeline — scenarios', () => {
   });
 
   it('S11: durationMs is positive', async () => {
-    const result = await runAutopilot({
+    const result = await runGuardrail({
       touchedFiles: [],
       config: { configVersion: 1, testCommand: null },
     });
@@ -181,7 +181,7 @@ describe('run pipeline — scenarios', () => {
 
   it('S12: budget 0 → budget-exceeded warning emitted', async () => {
     const engine = makeEngine([], 0.01);
-    const result = await runAutopilot({
+    const result = await runGuardrail({
       touchedFiles: ['__mock_file_s12__.ts'],
       config: { configVersion: 1, testCommand: null, cost: { budgetUSD: 0 } },
       reviewEngine: engine,
@@ -206,7 +206,7 @@ describe('run pipeline — scenarios', () => {
         return 'fixed' as const;
       },
     };
-    const result = await runAutopilot({
+    const result = await runGuardrail({
       touchedFiles: ['foo.ts'],
       config: { configVersion: 1, testCommand: null },
       staticRules: [rule],
@@ -223,7 +223,7 @@ describe('run pipeline — scenarios', () => {
         return { findings: [], rawOutput: '' };
       },
     };
-    await runAutopilot({
+    await runGuardrail({
       touchedFiles: [],
       config: { configVersion: 1, testCommand: null },
       reviewEngine: engine,
@@ -235,7 +235,7 @@ describe('run pipeline — scenarios', () => {
     // Different file paths ensure dedup does not collapse them to one
     const r1 = makeRule([makeFinding({ id: 'r1', file: 'a.ts' })], 'rule-1');
     const r2 = makeRule([makeFinding({ id: 'r2', file: 'b.ts' })], 'rule-2');
-    const result = await runAutopilot({
+    const result = await runGuardrail({
       touchedFiles: ['a.ts'],
       config: { configVersion: 1, testCommand: null },
       staticRules: [r1, r2],
@@ -258,7 +258,7 @@ describe('chunking — scenarios', () => {
     try {
       await makeTempFile(dir, 'a.ts', 'const a = 1;');
       await makeTempFile(dir, 'b.ts', 'const b = 2;');
-      await runAutopilot({
+      await runGuardrail({
         touchedFiles: ['a.ts', 'b.ts'],
         config: { configVersion: 1, testCommand: null, reviewStrategy: 'single-pass' },
         reviewEngine: engine,
@@ -283,7 +283,7 @@ describe('chunking — scenarios', () => {
     try {
       await makeTempFile(dir, 'a.ts', 'const a = 1;');
       await makeTempFile(dir, 'b.ts', 'const b = 2;');
-      await runAutopilot({
+      await runGuardrail({
         touchedFiles: ['a.ts', 'b.ts'],
         config: { configVersion: 1, testCommand: null, reviewStrategy: 'file-level' },
         reviewEngine: engine,
@@ -308,7 +308,7 @@ describe('chunking — scenarios', () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ap-test-'));
     try {
       await makeTempFile(dir, 'tiny.ts', 'x');
-      await runAutopilot({
+      await runGuardrail({
         touchedFiles: ['tiny.ts'],
         config: { configVersion: 1, testCommand: null, reviewStrategy: 'auto' },
         reviewEngine: engine,
@@ -334,7 +334,7 @@ describe('chunking — scenarios', () => {
     try {
       await makeTempFile(dir, 'big1.ts', 'const big1 = true;');
       await makeTempFile(dir, 'big2.ts', 'const big2 = true;');
-      await runAutopilot({
+      await runGuardrail({
         touchedFiles: ['big1.ts', 'big2.ts'],
         config: { configVersion: 1, testCommand: null, reviewStrategy: 'auto' },
         reviewEngine: engine,

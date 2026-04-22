@@ -15,8 +15,8 @@ describe('isIgnored', () => {
     assert.equal(isIgnored('/proj/server.log'), true);
   });
 
-  it('W4: ignores .autopilot-cache paths', () => {
-    assert.equal(isIgnored('/home/user/.autopilot-cache/reviews/abc.json'), true);
+  it('W4: ignores .guardrail-cache paths', () => {
+    assert.equal(isIgnored('/home/user/.guardrail-cache/reviews/abc.json'), true);
   });
 
   it('W5: does not ignore normal .ts source files', () => {
@@ -24,7 +24,7 @@ describe('isIgnored', () => {
   });
 
   it('W6: does not ignore preset yaml files', () => {
-    assert.equal(isIgnored('/proj/presets/t3/autopilot.config.yaml'), false);
+    assert.equal(isIgnored('/proj/presets/t3/guardrail.config.yaml'), false);
   });
 
   it('W7: ignores tilde backup files', () => {

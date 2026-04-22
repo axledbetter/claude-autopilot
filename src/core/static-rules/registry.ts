@@ -31,7 +31,7 @@ export async function loadRulesFromConfig(refs: StaticRuleReference[]): Promise<
     if (loader) {
       rules.push(await loader());
     } else {
-      process.stderr.write(`[autopilot] Unknown static rule: "${name}" — skipping\n`);
+      process.stderr.write(`[guardrail] Unknown static rule: "${name}" — skipping\n`);
     }
   }
   return rules;

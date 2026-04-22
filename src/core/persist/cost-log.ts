@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-const CACHE_DIR = '.autopilot-cache';
+const CACHE_DIR = '.guardrail-cache';
 const LOG_FILE = 'costs.jsonl';
 
 export interface CostLogEntry {

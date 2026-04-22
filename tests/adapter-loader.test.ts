@@ -4,7 +4,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { loadAdapter } from '../src/adapters/loader.ts';
-import { AutopilotError } from '../src/core/errors.ts';
+import { GuardrailError } from '../src/core/errors.ts';
 
 test('loadAdapter resolves built-in codex', async () => {
   const adapter = await loadAdapter({ point: 'review-engine', ref: 'codex' });
@@ -31,7 +31,7 @@ test('loadAdapter rejects unknown built-in', async () => {
   await assert.rejects(
     () => loadAdapter({ point: 'review-engine', ref: 'does-not-exist' }),
     (err: unknown) => {
-      assert.ok(err instanceof AutopilotError);
+      assert.ok(err instanceof GuardrailError);
       assert.equal(err.code, 'invalid_config');
       return true;
     }
@@ -52,7 +52,7 @@ test('loadAdapter rejects mismatched apiVersion major', async () => {
   await assert.rejects(
     () => loadAdapter({ point: 'review-engine', ref: fakePath, unsafeAllowLocalAdapters: true }),
     (err: unknown) => {
-      assert.ok(err instanceof AutopilotError);
+      assert.ok(err instanceof GuardrailError);
       assert.equal(err.code, 'invalid_config');
       return true;
     }

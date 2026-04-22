@@ -1,7 +1,7 @@
 import { runSafe } from '../core/shell.ts';
 import type { Finding } from '../core/findings/types.ts';
 
-const REVIEW_MARKER = '<!-- autopilot-inline -->';
+const REVIEW_MARKER = '<!-- guardrail-inline -->';
 
 function getRepoNwo(cwd: string): string | null {
   const raw = runSafe('gh', ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'], { cwd });
@@ -50,7 +50,7 @@ export async function postReviewComments(
     runSafe('gh', [
       'api', `repos/${nwo}/pulls/${pr}/reviews/${existingId}/dismissals`,
       '--method', 'PUT',
-      '--field', 'message=Superseded by updated autopilot review',
+      '--field', 'message=Superseded by updated guardrail review',
     ], { cwd });
   }
 
@@ -87,6 +87,6 @@ function formatFindingBody(f: Finding): string {
             : '💡 **Note**';
   const lines = [`${sev} — ${f.message}`];
   if (f.suggestion) lines.push(`\n> **Suggestion:** ${f.suggestion}`);
-  lines.push(`\n*[@delegance/claude-autopilot](https://github.com/axledbetter/claude-autopilot)*`);
+  lines.push(`\n*[@delegance/guardrail](https://github.com/axledbetter/guardrail)*`);
   return lines.join('');
 }

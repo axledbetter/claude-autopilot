@@ -1,7 +1,7 @@
 // src/core/shell.ts
 
 import { execFileSync } from 'node:child_process';
-import { AutopilotError, type ErrorCode } from './errors.ts';
+import { GuardrailError, type ErrorCode } from './errors.ts';
 
 export interface RunOptions {
   timeout?: number;
@@ -27,7 +27,7 @@ export function runSafe(cmd: string, args: string[], options: RunOptions = {}): 
   }
 }
 
-/** Run a command; throw AutopilotError on failure. */
+/** Run a command; throw GuardrailError on failure. */
 export function runThrowing(cmd: string, args: string[], options: RunOptions & { errorCode?: ErrorCode; provider?: string } = {}): string {
   try {
     return execFileSync(cmd, args, {
@@ -39,7 +39,7 @@ export function runThrowing(cmd: string, args: string[], options: RunOptions & {
       env: options.env,
     }).toString();
   } catch (err) {
-    throw new AutopilotError(`Command failed: ${cmd} ${args.join(' ')}`, {
+    throw new GuardrailError(`Command failed: ${cmd} ${args.join(' ')}`, {
       code: options.errorCode ?? 'transient_network',
       provider: options.provider,
       details: { cmd, args, cause: err instanceof Error ? err.message : String(err) },

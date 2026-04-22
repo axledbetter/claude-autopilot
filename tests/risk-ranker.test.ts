@@ -53,8 +53,8 @@ describe('rankByRisk', () => {
   });
 
   it('config files rank above generic src files', () => {
-    const files = ['src/utils.ts', 'autopilot.config.yaml'];
+    const files = ['src/utils.ts', 'guardrail.config.yaml'];
     const ranked = rankByRisk(files);
-    assert.equal(ranked[0], 'autopilot.config.yaml');
+    assert.equal(ranked[0], 'guardrail.config.yaml');
   });
 });

@@ -3,8 +3,8 @@
 ## Setup
 
 ```bash
-git clone https://github.com/axledbetter/claude-autopilot.git
-cd claude-autopilot
+git clone https://github.com/axledbetter/guardrail.git
+cd guardrail
 npm install
 ```
 
@@ -31,7 +31,7 @@ src/
   index.ts      # Public API exports
 bin/
   autopilot.js  # Thin launcher — resolves tsx and spawns src/cli/index.ts
-presets/        # Per-stack autopilot.config.yaml defaults (nextjs-supabase, t3, go, etc.)
+presets/        # Per-stack guardrail.config.yaml defaults (nextjs-supabase, t3, go, etc.)
 skills/
   autopilot.md  # Claude Code skill shipped with the package
 tests/          # Unit + integration tests (mirrors src/ layout)
@@ -59,7 +59,7 @@ CI picks up the `v*` tag, runs tests, validates the tag matches `package.json`, 
 
 ## Adding a Preset
 
-1. Create `presets/<name>/autopilot.config.yaml` with stack-appropriate defaults
+1. Create `presets/<name>/guardrail.config.yaml` with stack-appropriate defaults
 2. Add the preset name and label to `src/cli/detector.ts` (`PRESET_LABELS`) and `src/cli/setup.ts`
 3. Add detection logic to `detectProject()` in `src/cli/detector.ts`
 4. Add a test case in `tests/detector.test.ts`

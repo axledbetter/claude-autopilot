@@ -1,5 +1,5 @@
-name: Autopilot Review
-description: Run @delegance/claude-autopilot — static rules, tests, LLM review, PR comment, SARIF upload
+name: Guardrail Review
+description: Run @delegance/guardrail — static rules, tests, LLM review, PR comment, SARIF upload
 
 inputs:
   anthropic-api-key:
@@ -18,16 +18,16 @@ inputs:
     description: Git base ref to diff against (default GITHUB_BASE_REF, then HEAD~1)
     required: false
   config:
-    description: Path to autopilot.config.yaml (default ./autopilot.config.yaml)
+    description: Path to guardrail.config.yaml (default ./guardrail.config.yaml)
     required: false
   post-comments:
     description: Post/update a summary comment on the PR (default true)
     required: false
     default: 'true'
   sarif-output:
-    description: Path to write SARIF output (default autopilot.sarif)
+    description: Path to write SARIF output (default guardrail.sarif)
     required: false
-    default: autopilot.sarif
+    default: guardrail.sarif
   version:
     description: Package version to use (default latest)
     required: false
@@ -41,11 +41,11 @@ runs:
       with:
         node-version: '22'
 
-    - name: Install autopilot
+    - name: Install guardrail
       shell: bash
-      run: npm install -g @delegance/claude-autopilot@${{ inputs.version }}
+      run: npm install -g @delegance/guardrail@${{ inputs.version }}
 
-    - name: Run autopilot ci
+    - name: Run guardrail ci
       shell: bash
       env:
         ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
@@ -64,7 +64,7 @@ runs:
         if [ "${{ inputs.post-comments }}" = "true" ]; then
           POST_COMMENTS_ARG="--post-comments"
         fi
-        npx autopilot ci \
+        npx guardrail ci \
           --base "$BASE" \
           --output "${{ inputs.sarif-output }}" \
           $CONFIG_ARG \

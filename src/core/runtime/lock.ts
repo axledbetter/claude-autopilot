@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { AutopilotError } from '../errors.ts';
+import { GuardrailError } from '../errors.ts';
 
 export interface LockHandle {
   release(): Promise<void>;
@@ -16,7 +16,7 @@ export function acquireLock(runId: string, lockDir = '.claude'): LockHandle {
       { flag: 'wx' }
     );
   } catch (err) {
-    throw new AutopilotError('Another autopilot run holds the lock', {
+    throw new GuardrailError('Another autopilot run holds the lock', {
       code: 'concurrency_lock',
       details: { lockPath, cause: err instanceof Error ? err.message : String(err) },
     });

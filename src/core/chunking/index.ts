@@ -1,7 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { ReviewEngine, ReviewInput } from '../../adapters/review-engine/types.ts';
-import type { AutopilotConfig } from '../config/types.ts';
+import type { GuardrailConfig } from '../config/types.ts';
 import { rankByRisk } from './risk-ranker.ts';
 import { getFileDiffs, formatDiffContent } from '../git/diff-hunks.ts';
 
@@ -14,7 +14,7 @@ export interface ReviewChunk {
 export interface BuildChunksInput {
   touchedFiles: string[];
   strategy: 'auto' | 'single-pass' | 'file-level' | 'diff' | 'auto-diff';
-  chunking?: AutopilotConfig['chunking'];
+  chunking?: GuardrailConfig['chunking'];
   engine: ReviewEngine;
   cwd?: string;
   protectedPaths?: string[];

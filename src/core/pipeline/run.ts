@@ -1,4 +1,4 @@
-import type { AutopilotConfig } from '../config/types.ts';
+import type { GuardrailConfig } from '../config/types.ts';
 import type { StaticRule } from '../phases/static-rules.ts';
 import type { ReviewEngine } from '../../adapters/review-engine/types.ts';
 import type { Finding } from '../findings/types.ts';
@@ -13,7 +13,7 @@ export type PhaseResult = StaticRulesPhaseResult | TestsPhaseResult | ReviewPhas
 
 export interface RunInput {
   touchedFiles: string[];
-  config: AutopilotConfig;
+  config: GuardrailConfig;
   reviewEngine?: ReviewEngine;
   staticRules?: StaticRule[];
   cwd?: string;
@@ -29,7 +29,7 @@ export interface RunResult {
   durationMs: number;
 }
 
-export async function runAutopilot(input: RunInput): Promise<RunResult> {
+export async function runGuardrail(input: RunInput): Promise<RunResult> {
   const start = Date.now();
   const phases: PhaseResult[] = [];
   let totalCostUSD: number | undefined;

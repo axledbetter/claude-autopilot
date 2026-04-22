@@ -4,7 +4,7 @@ export type ErrorCode =
   | 'auth' | 'rate_limit' | 'transient_network' | 'invalid_config'
   | 'adapter_bug' | 'user_input' | 'budget_exceeded' | 'concurrency_lock' | 'superseded';
 
-export interface AutopilotErrorOptions {
+export interface GuardrailErrorOptions {
   code: ErrorCode;
   retryable?: boolean;
   provider?: string;
@@ -18,16 +18,16 @@ const DEFAULT_RETRYABLE: Record<ErrorCode, boolean> = {
   concurrency_lock: false, superseded: false,
 };
 
-export class AutopilotError extends Error {
+export class GuardrailError extends Error {
   code: ErrorCode;
   retryable: boolean;
   provider?: string;
   step?: string;
   details: Record<string, unknown>;
 
-  constructor(message: string, options: AutopilotErrorOptions) {
+  constructor(message: string, options: GuardrailErrorOptions) {
     super(message);
-    this.name = 'AutopilotError';
+    this.name = 'GuardrailError';
     this.code = options.code;
     this.retryable = options.retryable ?? DEFAULT_RETRYABLE[options.code];
     this.provider = options.provider;

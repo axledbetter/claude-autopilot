@@ -26,8 +26,8 @@ export interface SetupOptions {
 function presetSearchPaths(name: string, cwd: string): string[] {
   const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   return [
-    path.join(pkgRoot, 'presets', name, 'autopilot.config.yaml'),
-    path.join(cwd, 'node_modules', '@delegance', 'claude-autopilot', 'presets', name, 'autopilot.config.yaml'),
+    path.join(pkgRoot, 'presets', name, 'guardrail.config.yaml'),
+    path.join(cwd, 'node_modules', '@delegance', 'claude-autopilot', 'presets', name, 'guardrail.config.yaml'),
   ];
 }
 
@@ -40,10 +40,10 @@ function findPresetConfig(name: string, cwd: string): string | null {
 
 export async function runSetup(options: SetupOptions = {}): Promise<void> {
   const cwd = options.cwd ?? process.cwd();
-  const dest = path.join(cwd, 'autopilot.config.yaml');
+  const dest = path.join(cwd, 'guardrail.config.yaml');
 
   if (fs.existsSync(dest) && !options.force) {
-    throw new Error('autopilot.config.yaml already exists — use --force to overwrite');
+    throw new Error('guardrail.config.yaml already exists — use --force to overwrite');
   }
 
   console.log('\n[setup] Detecting project type...');
@@ -55,7 +55,7 @@ export async function runSetup(options: SetupOptions = {}): Promise<void> {
     console.log(`  ${PASS}  ${label} (${detection.evidence})`);
   } else {
     console.log(`  ${WARN}  ${label} — no strong signals found, defaulted to ${detection.preset}`);
-    console.log(`       \x1b[2mEdit autopilot.config.yaml to switch presets if needed\x1b[0m`);
+    console.log(`       \x1b[2mEdit guardrail.config.yaml to switch presets if needed\x1b[0m`);
   }
   console.log(`  ${PASS}  Test command: ${detection.testCommand}`);
 
@@ -67,19 +67,19 @@ export async function runSetup(options: SetupOptions = {}): Promise<void> {
   let presetContent = await fsAsync.readFile(presetConfigPath, 'utf8');
   presetContent = presetContent.trimEnd() + `\ntestCommand: "${detection.testCommand}"\n`;
   await fsAsync.writeFile(dest, presetContent, 'utf8');
-  console.log(`  ${PASS}  Created autopilot.config.yaml`);
+  console.log(`  ${PASS}  Created guardrail.config.yaml`);
 
   if (!options.skipHook) {
     const hookCode = await runHook('install', { cwd, silent: true });
     if (hookCode === 0) {
       console.log(`  ${PASS}  Installed pre-push git hook`);
     } else {
-      console.log(`  ${WARN}  Hook install failed (not fatal — run: npx autopilot hook install)`);
+      console.log(`  ${WARN}  Hook install failed (not fatal — run: npx guardrail hook install)`);
     }
   }
 
   console.log('\n[setup] Checking prerequisites...');
   await runDoctor();
 
-  console.log('\n[setup] Done. Run: npx autopilot run\n');
+  console.log('\n[setup] Done. Run: npx guardrail run\n');
 }

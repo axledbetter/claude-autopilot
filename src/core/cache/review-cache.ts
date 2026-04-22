@@ -17,10 +17,10 @@ export interface ReviewCacheOptions {
 }
 
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000; // 24h
-// Prefer env override, then ~/.autopilot-cache to survive across cwd changes and container restarts
+// Prefer env override, then ~/.guardrail-cache to survive across cwd changes and container restarts
 const DEFAULT_CACHE_DIR = process.env.AUTOPILOT_CACHE_DIR
   ? path.join(process.env.AUTOPILOT_CACHE_DIR, 'reviews')
-  : path.join(os.homedir(), '.autopilot-cache', 'reviews');
+  : path.join(os.homedir(), '.guardrail-cache', 'reviews');
 
 export class ReviewCache {
   private readonly cacheDir: string;

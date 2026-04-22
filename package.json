@@ -1,26 +1,26 @@
 {
-  "name": "@delegance/claude-autopilot",
-  "version": "2.5.0",
+  "name": "@delegance/guardrail",
+  "version": "3.0.0",
   "type": "module",
-  "description": "Claude Code automation pipeline: spec → plan → implement → validate → PR",
+  "description": "Static rules + LLM code review pipeline: risk-ranked files, diff mode, SARIF, auto-fix",
   "keywords": [
-    "claude",
-    "autopilot",
-    "ai",
-    "pipeline",
+    "guardrail",
     "code-review",
+    "ai",
+    "static-analysis",
+    "sarif",
     "cli"
   ],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/axledbetter/claude-autopilot.git"
+    "url": "https://github.com/axledbetter/guardrail.git"
   },
   "engines": {
     "node": ">=22.0.0"
   },
   "bin": {
-    "autopilot": "bin/autopilot.js"
+    "guardrail": "bin/guardrail.js"
   },
   "types": "./src/index.ts",
   "exports": {

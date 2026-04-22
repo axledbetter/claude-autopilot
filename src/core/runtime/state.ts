@@ -1,6 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { AutopilotError } from '../errors.ts';
+import { GuardrailError } from '../errors.ts';
 
 export type PipelineStep =
   | 'plan' | 'worktree' | 'implement' | 'migrate' | 'validate'
@@ -72,7 +72,7 @@ export async function loadRunState(runId: string, runsDir?: string): Promise<Run
   try {
     return JSON.parse(await fs.readFile(file, 'utf8')) as RunState;
   } catch (err) {
-    throw new AutopilotError(`Run state not found: ${runId}`, {
+    throw new GuardrailError(`Run state not found: ${runId}`, {
       code: 'user_input',
       details: { runId, file, cause: err instanceof Error ? err.message : String(err) },
     });

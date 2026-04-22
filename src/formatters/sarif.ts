@@ -91,9 +91,9 @@ export function toSarif(
     runs: [{
       tool: {
         driver: {
-          name: 'claude-autopilot',
+          name: 'guardrail',
           version: opts.toolVersion,
-          informationUri: 'https://github.com/axledbetter/claude-autopilot',
+          informationUri: 'https://github.com/axledbetter/guardrail',
           rules: [...rulesMap.values()],
         },
       },

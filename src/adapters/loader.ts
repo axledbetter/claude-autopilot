@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { AutopilotError } from '../core/errors.ts';
+import { GuardrailError } from '../core/errors.ts';
 import { checkApiVersionCompatibility, type AdapterBase } from './base.ts';
 
 export type IntegrationPoint = 'review-engine' | 'vcs-host' | 'migration-runner' | 'review-bot-parser';
@@ -42,7 +42,7 @@ export async function loadAdapter<T extends AdapterBase>(options: LoadAdapterOpt
 
   if (isPathRef(ref)) {
     if (!options.unsafeAllowLocalAdapters) {
-      throw new AutopilotError(
+      throw new GuardrailError(
         `Path-based adapter refs require unsafeAllowLocalAdapters:true — set this only for trusted local adapters`,
         { code: 'invalid_config', details: { point, ref } }
       );
@@ -51,7 +51,7 @@ export async function loadAdapter<T extends AdapterBase>(options: LoadAdapterOpt
   } else {
     const builtin = BUILTIN_PATHS[point]?.[ref];
     if (!builtin) {
-      throw new AutopilotError(`Unknown built-in ${point} adapter: "${ref}"`, {
+      throw new GuardrailError(`Unknown built-in ${point} adapter: "${ref}"`, {
         code: 'invalid_config',
         details: { point, ref, available: Object.keys(BUILTIN_PATHS[point] ?? {}) },
       });
@@ -63,7 +63,7 @@ export async function loadAdapter<T extends AdapterBase>(options: LoadAdapterOpt
   try {
     mod = (await import(modulePath)) as { default?: T } | T;
   } catch (err) {
-    throw new AutopilotError(`Failed to import adapter from ${modulePath}`, {
+    throw new GuardrailError(`Failed to import adapter from ${modulePath}`, {
       code: 'invalid_config',
       details: { point, ref, modulePath, cause: err instanceof Error ? err.message : String(err) },
     });
@@ -71,7 +71,7 @@ export async function loadAdapter<T extends AdapterBase>(options: LoadAdapterOpt
 
   const adapter = ('default' in mod ? mod.default : mod) as T;
   if (!adapter || typeof adapter !== 'object') {
-    throw new AutopilotError(`Adapter module did not export a valid adapter object`, {
+    throw new GuardrailError(`Adapter module did not export a valid adapter object`, {
       code: 'invalid_config',
       details: { point, ref, modulePath },
     });
@@ -80,7 +80,7 @@ export async function loadAdapter<T extends AdapterBase>(options: LoadAdapterOpt
   validateShape(adapter, point, modulePath);
 
   if (!checkApiVersionCompatibility(adapter.apiVersion)) {
-    throw new AutopilotError(`Adapter apiVersion ${adapter.apiVersion} incompatible with core`, {
+    throw new GuardrailError(`Adapter apiVersion ${adapter.apiVersion} incompatible with core`, {
       code: 'invalid_config',
       details: { point, ref, adapterApiVersion: adapter.apiVersion },
     });
@@ -99,7 +99,7 @@ function validateShape(adapter: AdapterBase, point: IntegrationPoint, modulePath
     missing.push('name/apiVersion');
   }
   if (missing.length > 0) {
-    throw new AutopilotError(
+    throw new GuardrailError(
       `Adapter at ${modulePath} missing required methods: ${missing.join(', ')}`,
       { code: 'invalid_config', details: { point, modulePath, missing } }
     );

@@ -3,9 +3,9 @@ import * as path from 'node:path';
 import { loadConfig } from '../core/config/loader.ts';
 import { resolvePreset, mergeConfigs } from '../core/config/preset-resolver.ts';
 import { loadAdapter } from '../adapters/loader.ts';
-import { runAutopilot } from '../core/pipeline/run.ts';
+import { runGuardrail } from '../core/pipeline/run.ts';
 import type { ReviewEngine } from '../adapters/review-engine/types.ts';
-import type { AutopilotConfig } from '../core/config/types.ts';
+import type { GuardrailConfig } from '../core/config/types.ts';
 
 const C = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
@@ -17,7 +17,7 @@ const fmt = (c: keyof typeof C, t: string) => `${C[c]}${t}${C.reset}`;
 export const IGNORED_PATTERNS: readonly RegExp[] = [
   /(^|[/\\])node_modules([/\\]|$)/,
   /(^|[/\\])\.git([/\\]|$)/,
-  /(^|[/\\])\.autopilot-cache([/\\]|$)/,
+  /(^|[/\\])\.guardrail-cache([/\\]|$)/,
   /\.(log|tmp|swp|swo|DS_Store)$/,
   /~$/,
 ];
@@ -59,15 +59,15 @@ export interface WatchOptions {
 
 export async function runWatch(options: WatchOptions = {}): Promise<void> {
   const cwd = options.cwd ?? process.cwd();
-  const configPath = options.configPath ?? path.join(cwd, 'autopilot.config.yaml');
+  const configPath = options.configPath ?? path.join(cwd, 'guardrail.config.yaml');
   const debounceMs = options.debounceMs ?? 300;
 
   if (!fs.existsSync(configPath)) {
-    console.error(fmt('red', `[watch] autopilot.config.yaml not found — run: npx autopilot init`));
+    console.error(fmt('red', `[watch] guardrail.config.yaml not found — run: npx guardrail init`));
     process.exit(1);
   }
 
-  let config: AutopilotConfig;
+  let config: GuardrailConfig;
   try {
     const userConfig = await loadConfig(configPath);
     config = userConfig.preset
@@ -91,7 +91,7 @@ export async function runWatch(options: WatchOptions = {}): Promise<void> {
     }
   }
 
-  console.log(`\n${fmt('bold', '[autopilot watch]')} ${fmt('dim', cwd)}`);
+  console.log(`\n${fmt('bold', '[guardrail watch]')} ${fmt('dim', cwd)}`);
   console.log(fmt('dim', `  debounce: ${debounceMs}ms  |  Ctrl+C to exit\n`));
 
   let running = false;
@@ -111,7 +111,7 @@ export async function runWatch(options: WatchOptions = {}): Promise<void> {
     console.log(fmt('dim', `  changed: ${rel.slice(0, 4).join(', ')}${rel.length > 4 ? ` +${rel.length - 4} more` : ''}`));
 
     try {
-      const result = await runAutopilot({ touchedFiles: rel, config, reviewEngine, cwd });
+      const result = await runGuardrail({ touchedFiles: rel, config, reviewEngine, cwd });
 
       for (const phase of result.phases) {
         const icon = phase.status === 'pass' ? fmt('green', '✓')

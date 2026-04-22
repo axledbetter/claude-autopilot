@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import { loadConfig } from '../src/core/config/loader.ts';
 
 async function writeConfig(dir: string, content: string): Promise<string> {
-  const p = path.join(dir, 'autopilot.config.yaml');
+  const p = path.join(dir, 'guardrail.config.yaml');
   fs.writeFileSync(p, content, 'utf8');
   return p;
 }

@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
- * autopilot CLI — entry point
+ * guardrail CLI — entry point
  *
  * Usage:
- *   autopilot init              scaffold autopilot.config.yaml from a preset
- *   autopilot run               run the pipeline on git-changed files
- *   autopilot run --base main   diff against a specific branch
- *   autopilot run --dry-run     show what would run, no execution
- *   autopilot watch             re-run pipeline on every file save (debounced)
- *   autopilot doctor            check prerequisites (alias: preflight)
+ *   guardrail init              scaffold guardrail.config.yaml from a preset
+ *   guardrail run               run the pipeline on git-changed files
+ *   guardrail run --base main   diff against a specific branch
+ *   guardrail run --dry-run     show what would run, no execution
+ *   guardrail watch             re-run pipeline on every file save (debounced)
+ *   guardrail doctor            check prerequisites (alias: preflight)
  */
 import { runCommand } from './run.ts';
 import { runWatch } from './watch.ts';
@@ -41,7 +41,7 @@ function flag(name: string): string | undefined {
   if (idx < 0) return undefined;
   const val = args[idx + 1];
   if (val === undefined || val.startsWith('--')) {
-    console.error(`\x1b[31m[autopilot] --${name} requires a value\x1b[0m`);
+    console.error(`\x1b[31m[guardrail] --${name} requires a value\x1b[0m`);
     process.exit(1);
   }
   return val;
@@ -53,18 +53,18 @@ function boolFlag(name: string): boolean {
 
 function printUsage(): void {
   console.log(`
-Usage: autopilot <command> [options]
+Usage: guardrail <command> [options]
 
 Commands:
   run          Run the pipeline on git-changed files (default)
   watch        Watch for file changes and re-run pipeline on each save
-  init         Scaffold autopilot.config.yaml from a preset
+  init         Scaffold guardrail.config.yaml from a preset
   doctor       Check prerequisites and show exact fix commands (alias: preflight)
   autoregress  Run snapshot regression tests (run|diff|update|generate)
 
 Options (run):
   --base <ref>         Git base ref for diff (default: HEAD~1)
-  --config <path>      Path to config file (default: ./autopilot.config.yaml)
+  --config <path>      Path to config file (default: ./guardrail.config.yaml)
   --files <a,b,c>      Explicit comma-separated file list (skips git detection)
   --dry-run            Show what would run without executing
   --diff               Send git diff hunks instead of full files (~70% fewer tokens)
@@ -75,7 +75,7 @@ Options (run):
   --output <path>        Output file path (required with --format sarif)
 
   fix          Auto-fix cached findings using the configured LLM
-  costs        Show per-run cost summary from .autopilot-cache/costs.jsonl
+  costs        Show per-run cost summary from .guardrail-cache/costs.jsonl
 
 Options (fix):
   --severity <critical|warning|all>  Which findings to fix (default: critical)
@@ -83,7 +83,7 @@ Options (fix):
   --config <path>                    Path to config file
 
 Options (watch):
-  --config <path>      Path to config file (default: ./autopilot.config.yaml)
+  --config <path>      Path to config file (default: ./guardrail.config.yaml)
   --debounce <ms>      Debounce delay in ms (default: 300)
 
 Options (autoregress):
@@ -96,7 +96,7 @@ Options (autoregress):
 
 switch (subcommand) {
   case 'init': {
-    console.log('\x1b[33m[init] autopilot init is deprecated — use: npx autopilot setup\x1b[0m\n');
+    console.log('\x1b[33m[init] guardrail init is deprecated — use: npx guardrail setup\x1b[0m\n');
     const force = args.includes('--force');
     await runSetup({ force });
     break;
@@ -120,7 +120,7 @@ switch (subcommand) {
     const debounceArg = flag('debounce');
     const debounceMs = debounceArg ? parseInt(debounceArg, 10) : undefined;
     if (debounceArg && (isNaN(debounceMs!) || debounceMs! < 0)) {
-      console.error(`\x1b[31m[autopilot] --debounce must be a non-negative integer\x1b[0m`);
+      console.error(`\x1b[31m[guardrail] --debounce must be a non-negative integer\x1b[0m`);
       process.exit(1);
     }
     await runWatch({ configPath: config, debounceMs });
@@ -140,11 +140,11 @@ switch (subcommand) {
     const outputPath = flag('output');
 
     if (formatArg && formatArg !== 'text' && formatArg !== 'sarif') {
-      console.error(`\x1b[31m[autopilot] --format must be "text" or "sarif"\x1b[0m`);
+      console.error(`\x1b[31m[guardrail] --format must be "text" or "sarif"\x1b[0m`);
       process.exit(1);
     }
     if (formatArg === 'sarif' && !outputPath) {
-      console.error(`\x1b[31m[autopilot] --format sarif requires --output <path>\x1b[0m`);
+      console.error(`\x1b[31m[guardrail] --format sarif requires --output <path>\x1b[0m`);
       process.exit(1);
     }
 
@@ -203,7 +203,7 @@ switch (subcommand) {
     const config = flag('config');
     const severityArg = flag('severity');
     if (severityArg && !['critical', 'warning', 'all'].includes(severityArg)) {
-      console.error(`\x1b[31m[autopilot] --severity must be "critical", "warning", or "all"\x1b[0m`);
+      console.error(`\x1b[31m[guardrail] --severity must be "critical", "warning", or "all"\x1b[0m`);
       process.exit(1);
     }
     const dryRun = boolFlag('dry-run');
@@ -230,7 +230,7 @@ switch (subcommand) {
   }
 
   default:
-    console.error(`\x1b[31m[autopilot] Unknown subcommand: "${subcommand}"\x1b[0m`);
+    console.error(`\x1b[31m[guardrail] Unknown subcommand: "${subcommand}"\x1b[0m`);
     printUsage();
     process.exit(1);
 }

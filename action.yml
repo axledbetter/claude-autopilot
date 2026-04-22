@@ -6,8 +6,8 @@ author: axledbetter
 
 inputs:
   config:
-    description: Path to autopilot.config.yaml
-    default: autopilot.config.yaml
+    description: Path to guardrail.config.yaml
+    default: guardrail.config.yaml
   version:
     description: Package version to install (e.g. 1.0.0-alpha.5, latest, alpha)
     default: alpha
@@ -37,7 +37,7 @@ runs:
 
     - name: Run autopilot pipeline
       run: |
-        npx -y @delegance/claude-autopilot@${{ inputs.version }} \
+        npx -y @delegance/guardrail@${{ inputs.version }} \
           run \
           --config "${{ inputs.config }}" \
           --format sarif \

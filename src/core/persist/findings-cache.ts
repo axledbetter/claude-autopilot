@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { Finding } from '../findings/types.ts';
 
-const CACHE_DIR = '.autopilot-cache';
+const CACHE_DIR = '.guardrail-cache';
 const CACHE_FILE = 'findings.json';
 
 function cacheFilePath(cwd: string): string {

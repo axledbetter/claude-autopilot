@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { parseReviewOutput } from './parse-output.ts';
-import { AutopilotError } from '../../core/errors.ts';
+import { GuardrailError } from '../../core/errors.ts';
 import type { Capabilities } from '../base.ts';
 import type { ReviewEngine, ReviewInput, ReviewOutput } from './types.ts';
 
@@ -46,7 +46,7 @@ export const codexAdapter: ReviewEngine = {
   async review(input: ReviewInput): Promise<ReviewOutput> {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      throw new AutopilotError('OPENAI_API_KEY not set', { code: 'auth', provider: 'codex' });
+      throw new GuardrailError('OPENAI_API_KEY not set', { code: 'auth', provider: 'codex' });
     }
     const stack = input.context?.stack ?? 'A web application — stack details unspecified.';
     const gitCtx = input.context?.gitSummary ? `\n\nChange context: ${input.context.gitSummary}` : '';
@@ -65,7 +65,7 @@ export const codexAdapter: ReviewEngine = {
       const message = err instanceof Error ? err.message : String(err);
       const isRateLimit = /rate.limit|429/i.test(message);
       const isAuth = /unauthorized|401|invalid.api.key/i.test(message);
-      throw new AutopilotError(`Codex review call failed: ${message}`, {
+      throw new GuardrailError(`Codex review call failed: ${message}`, {
         code: isAuth ? 'auth' : isRateLimit ? 'rate_limit' : 'transient_network',
         provider: 'codex',
         retryable: isRateLimit,

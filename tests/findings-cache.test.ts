@@ -42,7 +42,7 @@ describe('loadCachedFindings', () => {
   });
 
   it('returns empty array on corrupt cache file', () => {
-    const cacheDir = path.join(tmpDir, '.autopilot-cache');
+    const cacheDir = path.join(tmpDir, '.guardrail-cache');
     fs.mkdirSync(cacheDir, { recursive: true });
     fs.writeFileSync(path.join(cacheDir, 'findings.json'), 'not json', 'utf8');
     assert.deepEqual(loadCachedFindings(tmpDir), []);

@@ -1,6 +1,6 @@
 import type { Capabilities } from '../base.ts';
 import type { ReviewEngine, ReviewInput, ReviewOutput } from './types.ts';
-import { AutopilotError } from '../../core/errors.ts';
+import { GuardrailError } from '../../core/errors.ts';
 import { detectProviderUsage, dominantProvider, type Provider } from '../../core/detect/provider-usage.ts';
 
 interface AvailableProvider {
@@ -50,7 +50,7 @@ async function resolveAdapter(cwd: string): Promise<ReviewEngine> {
   const available = getAvailableProviders();
 
   if (available.length === 0) {
-    throw new AutopilotError(
+    throw new GuardrailError(
       'No LLM API key found. Set one of: ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, GROQ_API_KEY',
       { code: 'auth', provider: 'auto' },
     );

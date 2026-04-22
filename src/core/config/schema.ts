@@ -1,4 +1,4 @@
-export const AUTOPILOT_CONFIG_SCHEMA = {
+export const GUARDRAIL_CONFIG_SCHEMA = {
   $schema: 'http://json-schema.org/draft-07/schema#',
   type: 'object',
   required: ['configVersion'],

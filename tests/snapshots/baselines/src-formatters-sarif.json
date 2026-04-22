@@ -13,9 +13,9 @@
       {
         "tool": {
           "driver": {
-            "name": "claude-autopilot",
+            "name": "guardrail",
             "version": "9.9.9",
-            "informationUri": "https://github.com/axledbetter/claude-autopilot",
+            "informationUri": "https://github.com/axledbetter/guardrail",
             "rules": [
               {
                 "id": "no-secrets",
@@ -137,9 +137,9 @@
       {
         "tool": {
           "driver": {
-            "name": "claude-autopilot",
+            "name": "guardrail",
             "version": "1.2.3",
-            "informationUri": "https://github.com/axledbetter/claude-autopilot",
+            "informationUri": "https://github.com/axledbetter/guardrail",
             "rules": [
               {
                 "id": "cat-a",

@@ -1,5 +1,5 @@
 import { runSafe, runThrowing } from '../../core/shell.ts';
-import { AutopilotError } from '../../core/errors.ts';
+import { GuardrailError } from '../../core/errors.ts';
 import type { Capabilities } from '../base.ts';
 import type { VcsHost, GenericComment, PrMetadata, CreatePrOptions, CreatePrResult } from './types.ts';
 
@@ -13,7 +13,7 @@ export const githubAdapter: VcsHost = {
 
   async getPrDiff(pr: number | string): Promise<string> {
     const result = runSafe('gh', ['pr', 'diff', String(pr)]);
-    if (result === null) throw new AutopilotError(`Failed to get diff for PR ${pr}`, { code: 'transient_network' });
+    if (result === null) throw new GuardrailError(`Failed to get diff for PR ${pr}`, { code: 'transient_network' });
     return result;
   },
 

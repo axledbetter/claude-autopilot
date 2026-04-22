@@ -26,7 +26,7 @@ export async function runCosts(cwd = process.cwd()): Promise<number> {
   const log = readCostLog(cwd);
 
   if (log.length === 0) {
-    console.log(fmt('yellow', '[costs] No run history found — run `autopilot run` first.'));
+    console.log(fmt('yellow', '[costs] No run history found — run `guardrail run` first.'));
     return 0;
   }
 
@@ -40,7 +40,7 @@ export async function runCosts(cwd = process.cwd()): Promise<number> {
   const totalOutput = log.reduce((s, e) => s + e.outputTokens, 0);
   const recentCost = recent.reduce((s, e) => s + e.costUSD, 0);
 
-  console.log(`\n${fmt('bold', '[autopilot costs]')}\n`);
+  console.log(`\n${fmt('bold', '[guardrail costs]')}\n`);
 
   // Summary row
   console.log(fmt('bold', 'Summary'));

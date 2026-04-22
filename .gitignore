@@ -12,4 +12,4 @@ dist/
 
 .worktrees/
 .npmrc
-.autopilot-cache/
+.guardrail-cache/

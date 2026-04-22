@@ -56,7 +56,7 @@ export async function runDoctor(): Promise<DoctorResult> {
   checks.push({
     name: 'tsx available',
     result: tsxVersion ? 'pass' : 'fail',
-    message: !tsxVersion ? 'tsx not found — run: npm install @delegance/claude-autopilot (includes tsx)' : undefined,
+    message: !tsxVersion ? 'tsx not found — run: npm install @delegance/guardrail (includes tsx)' : undefined,
   });
 
   // 3. gh CLI authenticated
@@ -67,13 +67,13 @@ export async function runDoctor(): Promise<DoctorResult> {
     message: ghAuth === null ? 'gh CLI not authenticated — run: gh auth login' : undefined,
   });
 
-  // 4. autopilot.config.yaml in cwd
-  const configYaml = path.join(process.cwd(), 'autopilot.config.yaml');
+  // 4. guardrail.config.yaml in cwd
+  const configYaml = path.join(process.cwd(), 'guardrail.config.yaml');
   checks.push({
-    name: 'autopilot.config.yaml',
+    name: 'guardrail.config.yaml',
     result: fs.existsSync(configYaml) ? 'pass' : 'warn',
     message: !fs.existsSync(configYaml)
-      ? 'autopilot.config.yaml not found in current directory — copy from a preset: presets/nextjs-supabase/autopilot.config.yaml'
+      ? 'guardrail.config.yaml not found in current directory — copy from a preset: presets/nextjs-supabase/guardrail.config.yaml'
       : undefined,
   });
 
@@ -140,7 +140,7 @@ export async function runDoctor(): Promise<DoctorResult> {
 
   console.log('');
   if (blockers > 0) {
-    console.log(`\x1b[31m[doctor] ${blockers} blocker(s) — fix before running npx autopilot run\x1b[0m\n`);
+    console.log(`\x1b[31m[doctor] ${blockers} blocker(s) — fix before running npx guardrail run\x1b[0m\n`);
   } else if (warnings > 0) {
     console.log(`\x1b[33m[doctor] ${warnings} warning(s) — pipeline will run but some steps may be skipped\x1b[0m\n`);
   } else {

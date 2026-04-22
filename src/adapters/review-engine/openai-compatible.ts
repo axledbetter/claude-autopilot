@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { parseReviewOutput } from './parse-output.ts';
-import { AutopilotError } from '../../core/errors.ts';
+import { GuardrailError } from '../../core/errors.ts';
 import type { Capabilities } from '../base.ts';
 import type { ReviewEngine, ReviewInput, ReviewOutput } from './types.ts';
 
@@ -56,8 +56,8 @@ export const openaiCompatibleAdapter: ReviewEngine = {
 
     const model = opts['model'] as string | undefined;
     if (!model) {
-      throw new AutopilotError(
-        'openai-compatible adapter requires options.model to be set in autopilot.config.yaml',
+      throw new GuardrailError(
+        'openai-compatible adapter requires options.model to be set in guardrail.config.yaml',
         { code: 'invalid_config', provider: 'openai-compatible' },
       );
     }
@@ -81,7 +81,7 @@ export const openaiCompatibleAdapter: ReviewEngine = {
       const message = err instanceof Error ? err.message : String(err);
       const isRateLimit = /rate.limit|429/i.test(message);
       const isAuth = /unauthorized|401|invalid.api.key/i.test(message);
-      throw new AutopilotError(`openai-compatible review call failed: ${message}`, {
+      throw new GuardrailError(`openai-compatible review call failed: ${message}`, {
         code: isAuth ? 'auth' : isRateLimit ? 'rate_limit' : 'transient_network',
         provider: 'openai-compatible',
         retryable: isRateLimit,

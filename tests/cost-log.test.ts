@@ -38,8 +38,8 @@ describe('cost log', () => {
 
   it('skips corrupt lines gracefully', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-cost-corrupt-'));
-    fs.mkdirSync(path.join(dir, '.autopilot-cache'), { recursive: true });
-    fs.writeFileSync(path.join(dir, '.autopilot-cache', 'costs.jsonl'),
+    fs.mkdirSync(path.join(dir, '.guardrail-cache'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.guardrail-cache', 'costs.jsonl'),
       'not json\n{"timestamp":"x","files":1,"inputTokens":0,"outputTokens":0,"costUSD":0,"durationMs":0}\n', 'utf8');
     const log = readCostLog(dir);
     assert.equal(log.length, 1);

@@ -31,17 +31,17 @@ interface FixResult {
 
 export async function runFix(options: FixCommandOptions = {}): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
-  const configPath = options.configPath ?? path.join(cwd, 'autopilot.config.yaml');
+  const configPath = options.configPath ?? path.join(cwd, 'guardrail.config.yaml');
   const severityFilter = options.severity ?? 'critical';
 
   if (!fs.existsSync(configPath)) {
-    console.error(fmt('red', `[fix] autopilot.config.yaml not found at ${configPath}`));
+    console.error(fmt('red', `[fix] guardrail.config.yaml not found at ${configPath}`));
     return 1;
   }
 
   const findings = loadCachedFindings(cwd);
   if (findings.length === 0) {
-    console.log(fmt('yellow', '[fix] No cached findings — run `autopilot run` first.'));
+    console.log(fmt('yellow', '[fix] No cached findings — run `guardrail run` first.'));
     return 0;
   }
 
@@ -57,7 +57,7 @@ export async function runFix(options: FixCommandOptions = {}): Promise<number> {
     return 0;
   }
 
-  console.log(`\n${fmt('bold', '[autopilot fix]')} ${fixable.length} finding${fixable.length !== 1 ? 's' : ''} to attempt\n`);
+  console.log(`\n${fmt('bold', '[guardrail fix]')} ${fixable.length} finding${fixable.length !== 1 ? 's' : ''} to attempt\n`);
 
   // Load review engine
   let engine: ReviewEngine;
