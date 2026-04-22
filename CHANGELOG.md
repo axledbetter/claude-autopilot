@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.2.0] — 2026-04-22
+
+### Added
+- **`reviewStrategy: diff`** — new chunking strategy that sends `git diff` unified hunks instead of full file contents; typically ~70% fewer tokens and more focused findings (LLM sees exactly what changed)
+- **`--diff` flag** on `run` and `ci` subcommands — shorthand to activate diff strategy without editing config
+- **`src/core/git/diff-hunks.ts`** — `getFileDiffs()`, `parseUnifiedDiff()`, `formatDiffContent()`; per-file diff sections in fenced code blocks; files that exceed `maxChars` are omitted with a count notice
+- `BuildChunksInput.base` / `ReviewPhaseInput.base` / `RunInput.base` — threads git base ref through pipeline to diff engine
+- 9 new tests for `parseUnifiedDiff` and `formatDiffContent` — **233 total**
+
 ## [2.1.0] — 2026-04-22
 
 ### Added

@@ -64,6 +64,7 @@ export interface RunCommandOptions {
   base?: string;        // git base ref (default HEAD~1)
   files?: string[];     // explicit file list (skips git detection)
   dryRun?: boolean;     // skip review, print what would run
+  diff?: boolean;       // use diff strategy (send git hunks instead of full files)
   format?: 'text' | 'sarif';
   outputPath?: string;
   postComments?: boolean; // post/update summary comment on the open PR
@@ -167,6 +168,11 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     ? await loadRulesFromConfig(config.staticRules)
     : [];
 
+  // Apply --diff flag: override reviewStrategy to 'diff'
+  if (options.diff && config.reviewStrategy !== 'diff') {
+    config = { ...config, reviewStrategy: 'diff' };
+  }
+
   // Execute pipeline
   const input: RunInput = {
     touchedFiles,
@@ -175,6 +181,7 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     staticRules,
     cwd,
     gitSummary: gitCtx.summary ?? undefined,
+    base: options.base,
   };
 
   console.log('');

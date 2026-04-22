@@ -19,6 +19,7 @@ export interface ReviewPhaseInput {
   cwd?: string;
   gitSummary?: string;
   budgetRemainingUSD?: number;
+  base?: string;
 }
 
 export async function runReviewPhase(input: ReviewPhaseInput): Promise<ReviewPhaseResult> {
@@ -35,6 +36,7 @@ export async function runReviewPhase(input: ReviewPhaseInput): Promise<ReviewPha
     engine: input.engine,
     cwd: input.cwd,
     protectedPaths: input.config.protectedPaths,
+    base: input.base,
   });
 
   const allFindings: Finding[] = [];

@@ -18,6 +18,7 @@ export interface RunInput {
   staticRules?: StaticRule[];
   cwd?: string;
   gitSummary?: string;
+  base?: string;
 }
 
 export interface RunResult {
@@ -62,6 +63,7 @@ export async function runAutopilot(input: RunInput): Promise<RunResult> {
       cwd: input.cwd,
       gitSummary: input.gitSummary,
       budgetRemainingUSD: budgetUSD,
+      base: input.base,
     });
     phases.push(reviewResult);
     if (reviewResult.costUSD !== undefined) {
