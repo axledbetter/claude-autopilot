@@ -14,6 +14,7 @@ import { runCommand } from './run.ts';
 import { runWatch } from './watch.ts';
 import { runSetup } from './setup.ts';
 import { runDoctor } from './preflight.ts';
+import { runCi } from './ci.ts';
 
 const args = process.argv.slice(2);
 
@@ -27,7 +28,7 @@ if (args[0] === '--version' || args[0] === '-v') {
   process.exit(0);
 }
 
-const SUBCOMMANDS = ['init', 'run', 'watch', 'hook', 'autoregress', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
+const SUBCOMMANDS = ['init', 'run', 'ci', 'watch', 'hook', 'autoregress', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce'];
 
 // Detect first non-flag arg as subcommand, default to 'run'
@@ -140,6 +141,21 @@ switch (subcommand) {
       postComments,
       format: formatArg as 'text' | 'sarif' | undefined,
       outputPath,
+    });
+    process.exit(code);
+    break;
+  }
+
+  case 'ci': {
+    const base = flag('base');
+    const config = flag('config');
+    const outputPath = flag('output');
+    const noPostComments = boolFlag('no-post-comments');
+    const code = await runCi({
+      configPath: config,
+      base,
+      sarifOutput: outputPath,
+      postComments: noPostComments ? false : undefined,
     });
     process.exit(code);
     break;

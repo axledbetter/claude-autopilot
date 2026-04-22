@@ -5,138 +5,153 @@ description: Run the @delegance/claude-autopilot code review pipeline — static
 
 # autopilot — Code Review Pipeline
 
-Runs static rules, optional LLM review (Codex), and impact-aware snapshot regression tests on git-changed files. Outputs findings inline and optionally as SARIF for GitHub Code Scanning.
+Runs static rules, optional LLM review, and impact-aware snapshot regression on git-changed files. Auto-detects stack, protected paths, and test command from the project. Outputs findings inline and optionally as SARIF for GitHub Code Scanning.
 
 ## When to Use
 
-- Before creating a PR (catch issues before review)
-- After completing a feature branch (validate the full changeset)
-- Inside a CI pipeline step (use `--format sarif --output results.sarif`)
-- Anytime `validate` is called in a dev pipeline
+- Before creating a PR: `npx autopilot run --base main`
+- Inside CI: `npx autopilot ci` (one-command, posts PR comment + SARIF)
+- Dev loop: `npx autopilot watch`
+- First setup: `npx autopilot setup && npx autopilot doctor`
 
 ## Prerequisites
 
-Run `npx autopilot doctor` once per project setup to verify:
-- Node 22+, tsx, gh CLI authenticated, claude CLI, OPENAI_API_KEY, git user config
+```bash
+npx autopilot doctor   # checks Node 22+, tsx, gh CLI, API key, git config
+```
 
 ## Commands
 
-### Run pipeline on changed files
+### `run` — pipeline on git-changed files
 
 ```bash
-# Diff against HEAD~1 (default — last commit)
-npx autopilot run
-
-# Diff against a branch (typical pre-PR use)
-npx autopilot run --base main
-
-# Explicit file list (skip git detection)
-npx autopilot run --files src/foo.ts,src/bar.ts
-
-# Dry run — show what would run, no execution
-npx autopilot run --dry-run
-
-# SARIF output for GitHub Code Scanning
+npx autopilot run                          # diff HEAD~1 (default)
+npx autopilot run --base main              # diff against branch
+npx autopilot run --files src/a.ts,src/b.ts  # explicit files
+npx autopilot run --dry-run                # show what would run
+npx autopilot run --post-comments          # post/update summary on open PR
 npx autopilot run --format sarif --output autopilot.sarif
 ```
 
-### Zero-prompt setup (new project)
+### `ci` — opinionated CI entrypoint
 
 ```bash
-npx autopilot setup
+npx autopilot ci          # base=GITHUB_BASE_REF, post-comments=true, sarif written
+npx autopilot ci --base develop
+npx autopilot ci --no-post-comments
+npx autopilot ci --output results.sarif
 ```
 
-Auto-detects project type (Go, Rails, FastAPI, T3, Next.js+Supabase), writes `autopilot.config.yaml`, installs pre-push hook, runs doctor.
+Equivalent to `run --base <ref> --post-comments --format sarif --output <path>`. Base ref resolves from `GITHUB_BASE_REF` → `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` → `HEAD~1`.
 
-### Check prerequisites
+### `setup` — zero-prompt first run
 
 ```bash
-npx autopilot doctor
+npx autopilot setup         # auto-detect stack, write config, install hook
+npx autopilot setup --force # overwrite existing config
 ```
 
-Exits 1 if blockers found. Safe to re-run anytime.
+Auto-detects: Go, Rails, FastAPI, T3, Next.js+Supabase. Runs doctor at end.
 
-### Watch mode (dev loop)
+### `watch` — dev loop
 
 ```bash
-npx autopilot watch              # re-run on every file save
+npx autopilot watch
 npx autopilot watch --debounce 500
 ```
 
-### Snapshot regression testing
+### `autoregress` — snapshot regression
 
 ```bash
-# Generate baselines for changed files (requires OPENAI_API_KEY)
-npx autopilot autoregress generate
-
-# Run only impact-selected snapshots (default — fast)
-npx autopilot autoregress run
-
-# Run all snapshots
-npx autopilot autoregress run --all
-
-# Show diffs vs baselines
-npx autopilot autoregress diff
-
-# Overwrite baselines after intentional behavior change
-npx autopilot autoregress update
+npx autopilot autoregress generate   # create baselines for changed files
+npx autopilot autoregress run        # run impact-selected snapshots
+npx autopilot autoregress run --all  # run all snapshots
+npx autopilot autoregress diff       # show diffs vs baselines
+npx autopilot autoregress update     # overwrite baselines after intentional change
 ```
 
-### Pre-push git hook
+### `hook` — pre-push git hook
 
 ```bash
-npx autopilot hook install       # write .git/hooks/pre-push
+npx autopilot hook install
 npx autopilot hook uninstall
 npx autopilot hook status
 ```
 
+## LLM Review Adapters
+
+Configure via `reviewEngine.adapter` in `autopilot.config.yaml`:
+
+| Adapter | Key env var | Notes |
+|---------|-------------|-------|
+| `auto` | any | Picks available provider; prefers the one already used in code |
+| `claude` | `ANTHROPIC_API_KEY` | Claude Opus 4.7 |
+| `gemini` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | Gemini 2.5 Pro, 1M context |
+| `codex` | `OPENAI_API_KEY` | gpt-5.3-codex via responses API |
+| `openai-compatible` | configurable | Any OpenAI-API endpoint (Groq, Ollama, Together) |
+
+`auto` priority order: Anthropic → Gemini → OpenAI → Groq. When multiple keys are present, `auto` scans the project source files and prefers the provider already referenced most.
+
+## Auto-Detection
+
+When config fields are absent, `autopilot run` fills them in automatically:
+
+- **stack** — parsed from `package.json`, `go.mod`, `Cargo.toml`, `requirements.txt`, `Gemfile`; injected into review prompt
+- **protectedPaths** — migration dirs (`data/deltas/`, `migrations/`, `prisma/migrations/`, etc.), schema files, infra dirs (`terraform/`, `.github/workflows/`)
+- **testCommand** — re-detected at run time from project files; set `testCommand: null` to disable explicitly
+- **git context** — branch + last commit injected as `Change context: branch: X | last commit: Y`
+
+Detection lines are printed dim after the file count: `auto-detected: stack: Next.js + Supabase | protected: data/deltas/** ...`
+
 ## Interpreting Results
 
-**Exit code 0** — no findings, or only warnings. Safe to proceed.
+**Exit code 0** — pass or warnings only. Safe to proceed.
+**Exit code 1** — blocking findings. Fix before merging.
 
-**Exit code 1** — one or more blocking findings. Fix before merging.
+Finding severities: `critical` blocks merge, `warning` should fix, `note` informational.
 
-**Finding severities:**
-- `error` — blocks merge (hardcoded secrets, npm audit Critical/High, failed tests)
-- `warning` — should fix, won't block
-- `info` — informational
+PR comment (via `--post-comments` or `ci`): status badge, phase table, critical/warning findings, cost footer. Edits existing comment on re-runs (tracked via `<!-- autopilot-review -->` marker).
 
-**SARIF output** — upload to GitHub Code Scanning with `github/codeql-action/upload-sarif@v3` for inline PR annotations.
+SARIF output: upload with `github/codeql-action/upload-sarif@v3` for inline PR diff annotations. Also auto-emits `::error`/`::warning` annotations when `GITHUB_ACTIONS=true`.
 
 ## Config (`autopilot.config.yaml`)
 
 ```yaml
 configVersion: 1
 reviewEngine:
-  adapter: codex         # LLM review via OpenAI (requires OPENAI_API_KEY)
-testCommand: npm test
-protectedPaths:
-  - src/core/**
+  adapter: auto         # auto, claude, gemini, codex, openai-compatible
+testCommand: npm test   # null to disable
+protectedPaths:         # auto-detected if omitted
+  - data/deltas/**
+  - .github/workflows/**
 staticRules:
   - hardcoded-secrets
   - npm-audit
+  - package-lock-sync
+  - console-log
+  - todo-fixme
+  - large-file
+  - missing-tests
 ```
 
-Full schema and preset defaults: `node_modules/@delegance/claude-autopilot/presets/<name>/autopilot.config.yaml`
-
-## Integration with Development Pipeline
-
-In a full spec→PR pipeline, `autopilot run` replaces the validate step:
-
-```bash
-# After implementing feature on branch
-npx autopilot run --base main
-
-# If findings → fix → re-run (max 3 iterations)
-# If clean → push → create PR
-```
+Preset defaults at: `node_modules/@delegance/claude-autopilot/presets/<name>/autopilot.config.yaml`
 
 ## GitHub Actions
 
 ```yaml
 - uses: axledbetter/claude-autopilot/.github/actions/ci@main
   with:
-    openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}   # or openai/gemini/groq
 ```
 
-Runs the pipeline, uploads SARIF, annotates the PR diff inline.
+Runs `npx autopilot ci`, uploads SARIF, annotates PR diff. All API key inputs optional — whichever is set gets used by `auto`.
+
+## Integration with Development Pipeline
+
+```bash
+# After implementing feature
+npx autopilot run --base main
+
+# If findings → fix → re-run (max 3 iterations)
+# If clean → push → create PR
+```

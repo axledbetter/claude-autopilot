@@ -1,0 +1,78 @@
+name: Autopilot Review
+description: Run @delegance/claude-autopilot — static rules, tests, LLM review, PR comment, SARIF upload
+
+inputs:
+  anthropic-api-key:
+    description: Anthropic API key (recommended — Claude Opus)
+    required: false
+  openai-api-key:
+    description: OpenAI API key (fallback for Codex)
+    required: false
+  gemini-api-key:
+    description: Google Gemini API key (fallback)
+    required: false
+  groq-api-key:
+    description: Groq API key (fallback — fast/free tier)
+    required: false
+  base-ref:
+    description: Git base ref to diff against (default GITHUB_BASE_REF, then HEAD~1)
+    required: false
+  config:
+    description: Path to autopilot.config.yaml (default ./autopilot.config.yaml)
+    required: false
+  post-comments:
+    description: Post/update a summary comment on the PR (default true)
+    required: false
+    default: 'true'
+  sarif-output:
+    description: Path to write SARIF output (default autopilot.sarif)
+    required: false
+    default: autopilot.sarif
+  version:
+    description: Package version to use (default latest)
+    required: false
+    default: latest
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node 22
+      uses: actions/setup-node@v5
+      with:
+        node-version: '22'
+
+    - name: Install autopilot
+      shell: bash
+      run: npm install -g @delegance/claude-autopilot@${{ inputs.version }}
+
+    - name: Run autopilot ci
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+        GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
+        GROQ_API_KEY: ${{ inputs.groq-api-key }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        BASE="${{ inputs.base-ref }}"
+        BASE="${BASE:-${GITHUB_BASE_REF:-HEAD~1}}"
+        CONFIG_ARG=""
+        if [ -n "${{ inputs.config }}" ]; then
+          CONFIG_ARG="--config ${{ inputs.config }}"
+        fi
+        POST_COMMENTS_ARG=""
+        if [ "${{ inputs.post-comments }}" = "true" ]; then
+          POST_COMMENTS_ARG="--post-comments"
+        fi
+        npx autopilot ci \
+          --base "$BASE" \
+          --output "${{ inputs.sarif-output }}" \
+          $CONFIG_ARG \
+          $POST_COMMENTS_ARG
+
+    - name: Upload SARIF to GitHub Code Scanning
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif-output }}
+      continue-on-error: true

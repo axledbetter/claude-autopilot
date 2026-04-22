@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.0] — 2026-04-22
+
+### Added
+- **`autopilot ci`** — opinionated single-command CI entrypoint; defaults to `--post-comments`, `--format sarif`, and base ref from `GITHUB_BASE_REF`/`CI_MERGE_REQUEST_TARGET_BRANCH_NAME`/`HEAD~1`; supports `--base`, `--output`, `--no-post-comments`
+- **`.github/actions/ci/action.yml`** — composite GitHub Actions action; accepts `anthropic-api-key`, `openai-api-key`, `gemini-api-key`, `groq-api-key`, `base-ref`, `config`, `sarif-output`, `post-comments` inputs; runs `npx autopilot ci`, uploads SARIF via `codeql-action/upload-sarif@v3`
+- **Updated `skills/autopilot.md`** — complete rewrite covering all adapters, auto-detection, `--post-comments`, `ci` command, action.yml usage
+
 ## [1.9.0] — 2026-04-22
 
 ### Added
