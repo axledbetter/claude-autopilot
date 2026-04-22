@@ -34,6 +34,7 @@ export async function runReviewPhase(input: ReviewPhaseInput): Promise<ReviewPha
     chunking: input.config.chunking,
     engine: input.engine,
     cwd: input.cwd,
+    protectedPaths: input.config.protectedPaths,
   });
 
   const allFindings: Finding[] = [];

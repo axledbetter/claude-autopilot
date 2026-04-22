@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { ReviewEngine, ReviewInput } from '../../adapters/review-engine/types.ts';
 import type { AutopilotConfig } from '../config/types.ts';
+import { rankByRisk } from './risk-ranker.ts';
 
 export interface ReviewChunk {
   content: string;
@@ -15,6 +16,7 @@ export interface BuildChunksInput {
   chunking?: AutopilotConfig['chunking'];
   engine: ReviewEngine;
   cwd?: string;
+  protectedPaths?: string[];
 }
 
 const DEFAULT_SMALL_TIER_TOKENS = 8000;
@@ -24,7 +26,8 @@ export async function buildReviewChunks(input: BuildChunksInput): Promise<Review
   const smallMax = input.chunking?.smallTierMaxTokens ?? DEFAULT_SMALL_TIER_TOKENS;
   const fileMax = input.chunking?.perFileMaxTokens ?? DEFAULT_FILE_TIER_TOKENS;
 
-  const fileContents = await readFiles(input.touchedFiles, input.cwd);
+  const ranked = rankByRisk(input.touchedFiles, { protectedPaths: input.protectedPaths });
+  const fileContents = await readFiles(ranked, input.cwd);
 
   if (input.strategy === 'single-pass') {
     const combined = formatBatch(fileContents);

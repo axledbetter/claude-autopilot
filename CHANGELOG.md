@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.0] — 2026-04-22
+
+### Added
+- **Risk-weighted file ordering** (`src/core/chunking/risk-ranker.ts`) — ranks files before sending to LLM: protected paths (score 100) → auth/security (80) → payment/billing (70) → core logic (50) → config files (40) → everything else (30) → tests (10) → docs (5); ensures most sensitive code appears at the start of the LLM's context window
+- `BuildChunksInput.protectedPaths` — passed from config through review-phase to ranker so glob patterns from `protectedPaths:` config key are respected
+- 9 new tests for `rankByRisk` — **224 total**
+
 ## [2.0.0] — 2026-04-22
 
 ### Added
