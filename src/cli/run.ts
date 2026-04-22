@@ -21,6 +21,7 @@ for (const f of ENV_FILES) {
 }
 
 import { loadConfig } from '../core/config/loader.ts';
+import { loadRulesFromConfig } from '../core/static-rules/registry.ts';
 import { resolvePreset } from '../core/config/preset-resolver.ts';
 import { mergeConfigs } from '../core/config/preset-resolver.ts';
 import { loadAdapter } from '../adapters/loader.ts';
@@ -127,11 +128,17 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     }
   }
 
+  // Load static rules from config
+  const staticRules = config.staticRules && config.staticRules.length > 0
+    ? await loadRulesFromConfig(config.staticRules)
+    : [];
+
   // Execute pipeline
   const input: RunInput = {
     touchedFiles,
     config,
     reviewEngine,
+    staticRules,
     cwd,
   };
 

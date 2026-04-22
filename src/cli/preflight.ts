@@ -87,14 +87,17 @@ export async function runDoctor(): Promise<DoctorResult> {
       : undefined,
   });
 
-  // 6. OPENAI_API_KEY set
+  // 6. LLM API key (ANTHROPIC_API_KEY preferred, OPENAI_API_KEY as fallback)
   const envVars = envFile ? loadEnvFile(envFile) : {};
+  const hasAnthropic = !!process.env.ANTHROPIC_API_KEY || !!envVars['ANTHROPIC_API_KEY'];
   const hasOpenAI = !!process.env.OPENAI_API_KEY || !!envVars['OPENAI_API_KEY'];
+  const hasLLMKey = hasAnthropic || hasOpenAI;
+  const llmKeyName = hasAnthropic ? 'ANTHROPIC_API_KEY' : hasOpenAI ? 'OPENAI_API_KEY' : 'none';
   checks.push({
-    name: 'OPENAI_API_KEY',
-    result: hasOpenAI ? 'pass' : 'warn',
-    message: !hasOpenAI
-      ? `OPENAI_API_KEY not set — Codex review steps will be skipped`
+    name: `LLM API key (${llmKeyName})`,
+    result: hasLLMKey ? 'pass' : 'warn',
+    message: !hasLLMKey
+      ? `No LLM API key found — set ANTHROPIC_API_KEY (recommended) or OPENAI_API_KEY to enable review`
       : undefined,
   });
 
