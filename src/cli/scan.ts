@@ -139,7 +139,16 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
   const findings = applyIgnoreRules(result.findings, ignoreRules);
 
   // Print results
-  if (findings.length === 0) {
+  if (findings.length === 0 && options.ask && result.rawOutputs && result.rawOutputs.length > 0) {
+    // --ask returned prose rather than structured findings — surface raw response
+    console.log(fmt('cyan', `Answer:`));
+    for (const raw of result.rawOutputs) {
+      // Strip markdown fences and the ## Findings / ## Review Summary headers if present
+      const cleaned = raw.replace(/^##\s+Review Summary\s*\n/gm, '').replace(/^##\s+Findings\s*\n/gm, '').trim();
+      console.log(cleaned);
+    }
+    console.log('');
+  } else if (findings.length === 0) {
     console.log(fmt('green', '✓ No findings'));
   } else {
     const critical = findings.filter(f => f.severity === 'critical');
@@ -183,7 +192,13 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
 
 function buildFocusHint(ask: string | undefined, focus: string | null): string {
   const parts: string[] = [];
-  if (ask) parts.push(`Reviewer question: ${ask}`);
+  if (ask) {
+    parts.push(
+      `TARGETED QUESTION (required): The reviewer specifically wants to know: "${ask}". ` +
+      `You MUST answer this question using the structured findings format. ` +
+      `Even if no issues are found, output at least one ### [NOTE] finding that directly answers the question.`,
+    );
+  }
   if (focus === 'security') parts.push('Focus: security vulnerabilities, auth issues, injection risks, data exposure');
   if (focus === 'logic') parts.push('Focus: logic bugs, incorrect behavior, edge cases, null handling, async errors');
   if (focus === 'performance') parts.push('Focus: performance issues, N+1 queries, blocking I/O, memory leaks');

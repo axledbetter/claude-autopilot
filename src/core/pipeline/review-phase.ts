@@ -8,6 +8,7 @@ export interface ReviewPhaseResult {
   phase: 'review';
   status: 'pass' | 'warn' | 'fail' | 'skip';
   findings: Finding[];
+  rawOutputs?: string[];
   costUSD?: number;
   usage?: { input: number; output: number };
   durationMs: number;
@@ -25,6 +26,7 @@ export interface ReviewPhaseInput {
 
 interface ChunkResult {
   findings: Finding[];
+  rawOutput: string;
   inputTokens: number;
   outputTokens: number;
   costUSD: number;
@@ -49,6 +51,7 @@ async function reviewChunkWithRetry(chunk: ReviewChunk, input: ReviewPhaseInput)
       });
       return {
         findings: output.findings,
+        rawOutput: output.rawOutput,
         inputTokens: output.usage?.input ?? 0,
         outputTokens: output.usage?.output ?? 0,
         costUSD: output.usage?.costUSD ?? 0,
@@ -130,7 +133,7 @@ export async function runReviewPhase(input: ReviewPhaseInput): Promise<ReviewPha
           protectedPath: false,
           createdAt: new Date().toISOString(),
         }],
-        inputTokens: 0, outputTokens: 0, costUSD: 0,
+        rawOutput: '', inputTokens: 0, outputTokens: 0, costUSD: 0,
       });
     }
   } else {
@@ -141,9 +144,11 @@ export async function runReviewPhase(input: ReviewPhaseInput): Promise<ReviewPha
   let totalOutputTokens = 0;
   let totalCostUSD = 0;
   const allFindings: Finding[] = [];
+  const allRawOutputs: string[] = [];
 
   for (const r of chunkResults) {
     allFindings.push(...r.findings);
+    if (r.rawOutput) allRawOutputs.push(r.rawOutput);
     totalInputTokens += r.inputTokens;
     totalOutputTokens += r.outputTokens;
     totalCostUSD += r.costUSD;
@@ -157,6 +162,7 @@ export async function runReviewPhase(input: ReviewPhaseInput): Promise<ReviewPha
     phase: 'review',
     status,
     findings: allFindings,
+    rawOutputs: allRawOutputs.length > 0 ? allRawOutputs : undefined,
     costUSD: totalCostUSD > 0 ? totalCostUSD : undefined,
     usage: totalInputTokens > 0 ? { input: totalInputTokens, output: totalOutputTokens } : undefined,
     durationMs: Date.now() - start,
