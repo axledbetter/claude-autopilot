@@ -10,7 +10,7 @@ export interface IgnoreRule {
 }
 
 export function loadIgnoreRules(cwd: string): IgnoreRule[] {
-  const filePath = path.join(cwd, '.autopilot-ignore');
+  const filePath = path.join(cwd, '.guardrail-ignore');
   if (!fs.existsSync(filePath)) return [];
 
   const rules: IgnoreRule[] = [];

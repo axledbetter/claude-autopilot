@@ -25,7 +25,7 @@ before(() => { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-ignore-')); })
 after(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
 
 function writeIgnore(content: string): void {
-  fs.writeFileSync(path.join(tmpDir, '.autopilot-ignore'), content, 'utf8');
+  fs.writeFileSync(path.join(tmpDir, '.guardrail-ignore'), content, 'utf8');
 }
 
 describe('loadIgnoreRules', () => {

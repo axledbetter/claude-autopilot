@@ -125,7 +125,7 @@ export async function runDoctor(): Promise<DoctorResult> {
 
 
   // Print results
-  console.log('\n\x1b[1m[doctor] Autopilot prerequisite check\x1b[0m\n');
+  console.log('\n\x1b[1m[doctor] Guardrail prerequisite check\x1b[0m\n');
   let blockers = 0;
   let warnings = 0;
   for (const check of checks) {

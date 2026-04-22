@@ -193,7 +193,7 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
   console.log('');
   const result = await runGuardrail(input);
 
-  // Apply .autopilot-ignore + config ignore: rules
+  // Apply .guardrail-ignore + config ignore: rules
   const ignoreRules = [...loadIgnoreRules(cwd), ...parseConfigIgnore(config.ignore)];
   if (ignoreRules.length > 0) {
     const before = result.allFindings.length;
@@ -203,7 +203,7 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     }
     const suppressed = before - result.allFindings.length;
     if (suppressed > 0) {
-      console.log(fmt('dim', `  [run] ${suppressed} finding${suppressed !== 1 ? 's' : ''} suppressed by .autopilot-ignore`));
+      console.log(fmt('dim', `  [run] ${suppressed} finding${suppressed !== 1 ? 's' : ''} suppressed by .guardrail-ignore`));
     }
   }
 
