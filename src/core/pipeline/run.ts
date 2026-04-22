@@ -17,6 +17,7 @@ export interface RunInput {
   reviewEngine?: ReviewEngine;
   staticRules?: StaticRule[];
   cwd?: string;
+  gitSummary?: string;
 }
 
 export interface RunResult {
@@ -59,6 +60,7 @@ export async function runAutopilot(input: RunInput): Promise<RunResult> {
       engine: input.reviewEngine,
       config: input.config,
       cwd: input.cwd,
+      gitSummary: input.gitSummary,
       budgetRemainingUSD: budgetUSD,
     });
     phases.push(reviewResult);

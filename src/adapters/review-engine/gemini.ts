@@ -14,7 +14,7 @@ const COST_PER_M_OUTPUT = 10.0;
 const PROMPT_TEMPLATE = `You are a senior software architect reviewing code changes for quality, security, and correctness.
 
 The codebase context:
-{STACK}
+{STACK}{GIT_CONTEXT}
 
 Please review the following:
 
@@ -64,7 +64,8 @@ export const geminiAdapter: ReviewEngine = {
 
     const model = (input.context as Record<string, unknown> | undefined)?.['model'] as string | undefined ?? DEFAULT_MODEL;
     const stack = input.context?.stack ?? 'A web application — stack details unspecified.';
-    const prompt = PROMPT_TEMPLATE.replace('{STACK}', stack).replace('{CONTENT}', input.content);
+    const gitCtx = input.context?.gitSummary ? `\n\nChange context: ${input.context.gitSummary}` : '';
+    const prompt = PROMPT_TEMPLATE.replace('{STACK}', stack).replace('{GIT_CONTEXT}', gitCtx).replace('{CONTENT}', input.content);
 
     const genAI = new GoogleGenerativeAI(apiKey);
     const genModel = genAI.getGenerativeModel({

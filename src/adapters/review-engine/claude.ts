@@ -14,7 +14,7 @@ const COST_PER_M_OUTPUT = 75.0;
 const SYSTEM_PROMPT_TEMPLATE = `You are a senior software architect reviewing code changes for quality, security, and correctness.
 
 The codebase context:
-{STACK}
+{STACK}{GIT_CONTEXT}
 
 Provide structured feedback in exactly this format:
 
@@ -56,7 +56,8 @@ export const claudeAdapter: ReviewEngine = {
 
     const model = (input.context as Record<string, unknown> | undefined)?.['model'] as string | undefined ?? DEFAULT_MODEL;
     const stack = input.context?.stack ?? 'A web application — stack details unspecified.';
-    const systemPrompt = SYSTEM_PROMPT_TEMPLATE.replace('{STACK}', stack);
+    const gitCtx = input.context?.gitSummary ? `\n\nChange context: ${input.context.gitSummary}` : '';
+    const systemPrompt = SYSTEM_PROMPT_TEMPLATE.replace('{STACK}', stack).replace('{GIT_CONTEXT}', gitCtx);
 
     const client = new Anthropic({ apiKey });
     let response: Anthropic.Message;

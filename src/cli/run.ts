@@ -33,6 +33,10 @@ import type { AutopilotConfig } from '../core/config/types.ts';
 import { fileURLToPath } from 'node:url';
 import { toSarif } from '../formatters/sarif.ts';
 import { emitAnnotations } from '../formatters/github-annotations.ts';
+import { detectStack } from '../core/detect/stack.ts';
+import { detectProtectedPaths } from '../core/detect/protected-paths.ts';
+import { detectGitContext } from '../core/detect/git-context.ts';
+import { detectProject } from './detector.ts';
 
 function readToolVersion(): string {
   const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
@@ -92,6 +96,20 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     return 1;
   }
 
+  // Fill in missing config fields from auto-detection
+  if (!config.stack) {
+    const detected = detectStack(cwd);
+    if (detected) config = { ...config, stack: detected };
+  }
+  if (!config.protectedPaths || config.protectedPaths.length === 0) {
+    const detected = detectProtectedPaths(cwd);
+    if (detected.length > 0) config = { ...config, protectedPaths: detected };
+  }
+  if (config.testCommand === undefined) {
+    config = { ...config, testCommand: detectProject(cwd).testCommand };
+  }
+  const gitCtx = detectGitContext(cwd);
+
   // Resolve touched files
   const touchedFiles = options.files ?? resolveGitTouchedFiles({ cwd, base: options.base });
   if (touchedFiles.length === 0) {
@@ -141,6 +159,7 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     reviewEngine,
     staticRules,
     cwd,
+    gitSummary: gitCtx.summary ?? undefined,
   };
 
   console.log('');

@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.7.0] — 2026-04-22
+
+### Added
+- **Stack auto-detection** (`src/core/detect/stack.ts`) — infers human-readable stack string from `package.json`, `go.mod`, `Cargo.toml`, `requirements.txt`, `Gemfile`; detects framework, ORM, auth, UI library, language; injected into review prompt automatically when `stack:` is absent from config
+- **Protected-paths auto-detection** (`src/core/detect/protected-paths.ts`) — scans for migration dirs (`data/deltas/`, `migrations/`, `db/migrate/`, `prisma/migrations/`, `alembic/versions/`, `flyway/`), schema files (`schema.prisma`, `schema.sql`, `db/schema.rb`), infra dirs (`terraform/`, `k8s/`, `helm/`, `.github/workflows/`); populates `protectedPaths` when not set in config
+- **Test-command runtime fallback** — re-runs project detector at `run` time when `testCommand` is absent from config; `null` still disables the test phase explicitly
+- **Git context enrichment** (`src/core/detect/git-context.ts`) — injects branch name and last commit message into the review prompt as `Change context: branch: feat/x | last commit: add user auth` so the LLM understands intent
+- `ReviewInput.context.gitSummary` — new context field; all five adapters (claude, gemini, codex, openai-compatible, auto) inject it when present
+- 18 new tests (9 stack + 9 protected-paths) — **199 total**
+
 ## [1.6.0] — 2026-04-22
 
 ### Added

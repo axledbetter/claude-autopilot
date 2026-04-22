@@ -17,6 +17,7 @@ export interface ReviewPhaseInput {
   engine: ReviewEngine;
   config: AutopilotConfig;
   cwd?: string;
+  gitSummary?: string;
   budgetRemainingUSD?: number;
 }
 
@@ -49,7 +50,7 @@ export async function runReviewPhase(input: ReviewPhaseInput): Promise<ReviewPha
     const output = await input.engine.review({
       content: chunk.content,
       kind: chunk.kind,
-      context: { stack: input.config.stack, cwd: input.cwd },
+      context: { stack: input.config.stack, cwd: input.cwd, gitSummary: input.gitSummary },
     });
     allFindings.push(...output.findings);
     if (output.usage) {

@@ -10,7 +10,7 @@ const MAX_OUTPUT_TOKENS = 4096;
 const SYSTEM_PROMPT_TEMPLATE = `You are a senior software architect providing feedback on designs, proposals, and ideas.
 
 The codebase context:
-{STACK}
+{STACK}{GIT_CONTEXT}
 
 Provide structured feedback in exactly this format:
 
@@ -49,7 +49,8 @@ export const codexAdapter: ReviewEngine = {
       throw new AutopilotError('OPENAI_API_KEY not set', { code: 'auth', provider: 'codex' });
     }
     const stack = input.context?.stack ?? 'A web application — stack details unspecified.';
-    const systemPrompt = SYSTEM_PROMPT_TEMPLATE.replace('{STACK}', stack);
+    const gitCtx = input.context?.gitSummary ? `\n\nChange context: ${input.context.gitSummary}` : '';
+    const systemPrompt = SYSTEM_PROMPT_TEMPLATE.replace('{STACK}', stack).replace('{GIT_CONTEXT}', gitCtx);
 
     const client = new OpenAI({ apiKey });
     let response;
