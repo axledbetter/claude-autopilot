@@ -42,6 +42,7 @@ import { postReviewComments } from './pr-review-comments.ts';
 import { loadIgnoreRules, parseConfigIgnore, applyIgnoreRules } from '../core/ignore/index.ts';
 import { loadCachedFindings, saveCachedFindings, filterNewFindings } from '../core/persist/findings-cache.ts';
 import { appendCostLog } from '../core/persist/cost-log.ts';
+import { postCommitStatus, resolveCommitSha } from '../adapters/vcs-host/commit-status.ts';
 
 function readToolVersion(): string {
   const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
@@ -190,6 +191,12 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     base: options.base,
   };
 
+  // Post pending commit status (best-effort — never fatal)
+  const commitSha = resolveCommitSha(cwd);
+  if (commitSha) {
+    postCommitStatus({ sha: commitSha, state: 'pending', description: `Reviewing ${touchedFiles.length} file(s)…`, cwd });
+  }
+
   console.log('');
   const result = await runGuardrail(input);
 
@@ -302,6 +309,19 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     console.log(`\n  ${fmt('dim', `cost: $${result.totalCostUSD.toFixed(4)}`)}  ${fmt('dim', `${result.durationMs}ms total`)}`);
   } else {
     console.log(`\n  ${fmt('dim', `${result.durationMs}ms total`)}`);
+  }
+
+  // Post final commit status
+  if (commitSha) {
+    const critical = result.allFindings.filter(f => f.severity === 'critical').length;
+    const warnings = result.allFindings.filter(f => f.severity === 'warning').length;
+    const state = result.status === 'fail' ? 'failure' : 'success';
+    const desc = result.status === 'pass'
+      ? 'All checks passed'
+      : result.status === 'warn'
+        ? `Passed with ${warnings} warning${warnings !== 1 ? 's' : ''}`
+        : `${critical} critical finding${critical !== 1 ? 's' : ''}`;
+    postCommitStatus({ sha: commitSha, state, description: desc, cwd });
   }
 
   // Final verdict

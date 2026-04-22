@@ -2,6 +2,7 @@ import type { ReviewEngine } from '../../adapters/review-engine/types.ts';
 import type { Finding } from '../findings/types.ts';
 import type { GuardrailConfig } from '../config/types.ts';
 import { buildReviewChunks, type ReviewChunk } from '../chunking/index.ts';
+import { GuardrailError } from '../errors.ts';
 
 export interface ReviewPhaseResult {
   phase: 'review';
@@ -29,18 +30,38 @@ interface ChunkResult {
   costUSD: number;
 }
 
-async function reviewChunk(chunk: ReviewChunk, input: ReviewPhaseInput): Promise<ChunkResult> {
-  const output = await input.engine.review({
-    content: chunk.content,
-    kind: chunk.kind,
-    context: { stack: input.config.stack, cwd: input.cwd, gitSummary: input.gitSummary },
-  });
-  return {
-    findings: output.findings,
-    inputTokens: output.usage?.input ?? 0,
-    outputTokens: output.usage?.output ?? 0,
-    costUSD: output.usage?.costUSD ?? 0,
-  };
+function backoffMs(attempt: number, strategy: 'exp' | 'linear' | 'none'): number {
+  if (strategy === 'none') return 0;
+  if (strategy === 'linear') return attempt * 2000;
+  return Math.min(Math.pow(2, attempt) * 1000, 32000); // exp: 1s, 2s, 4s, 8s … 32s cap
+}
+
+async function reviewChunkWithRetry(chunk: ReviewChunk, input: ReviewPhaseInput): Promise<ChunkResult> {
+  const strategy = input.config.chunking?.rateLimitBackoff ?? 'exp';
+  const maxAttempts = strategy === 'none' ? 1 : 4;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const output = await input.engine.review({
+        content: chunk.content,
+        kind: chunk.kind,
+        context: { stack: input.config.stack, cwd: input.cwd, gitSummary: input.gitSummary },
+      });
+      return {
+        findings: output.findings,
+        inputTokens: output.usage?.input ?? 0,
+        outputTokens: output.usage?.output ?? 0,
+        costUSD: output.usage?.costUSD ?? 0,
+      };
+    } catch (err) {
+      const isRateLimit = err instanceof GuardrailError && err.code === 'rate_limit';
+      const isLast = attempt === maxAttempts - 1;
+      if (!isRateLimit || isLast) throw err;
+      const delay = backoffMs(attempt + 1, strategy);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw new Error('unreachable');
 }
 
 /** Run up to `limit` promises concurrently, preserving result order. */
@@ -93,7 +114,7 @@ export async function runReviewPhase(input: ReviewPhaseInput): Promise<ReviewPha
     let budgetExceeded = false;
     for (const chunk of chunks) {
       if (spent >= budgetUSD) { budgetExceeded = true; break; }
-      const r = await reviewChunk(chunk, input);
+      const r = await reviewChunkWithRetry(chunk, input);
       spent += r.costUSD;
       chunkResults.push(r);
     }
@@ -113,7 +134,7 @@ export async function runReviewPhase(input: ReviewPhaseInput): Promise<ReviewPha
       });
     }
   } else {
-    chunkResults = await pMap(chunks, chunk => reviewChunk(chunk, input), parallelism);
+    chunkResults = await pMap(chunks, chunk => reviewChunkWithRetry(chunk, input), parallelism);
   }
 
   let totalInputTokens = 0;

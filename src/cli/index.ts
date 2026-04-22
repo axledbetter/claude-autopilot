@@ -17,6 +17,7 @@ import { runDoctor } from './preflight.ts';
 import { runCi } from './ci.ts';
 import { runFix } from './fix.ts';
 import { runScan } from './scan.ts';
+import { runReport } from './report.ts';
 
 const args = process.argv.slice(2);
 
@@ -30,7 +31,7 @@ if (args[0] === '--version' || args[0] === '-v') {
   process.exit(0);
 }
 
-const SUBCOMMANDS = ['init', 'run', 'scan', 'ci', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
+const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'ci', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus'];
 
 // Detect first non-flag arg as subcommand, default to 'run'
@@ -59,6 +60,7 @@ Usage: guardrail <command> [options]
 Commands:
   run          Review git-changed files (default)
   scan         Review any path — no git required
+  report       Render cached findings as a markdown report
   watch        Watch for file changes and re-run on each save
   fix          Auto-fix cached findings using the configured LLM
   costs        Show per-run cost summary
@@ -253,6 +255,13 @@ switch (subcommand) {
   case 'costs': {
     const { runCosts } = await import('./costs.ts');
     const code = await runCosts();
+    process.exit(code);
+    break;
+  }
+
+  case 'report': {
+    const outputPath = flag('output');
+    const code = await runReport({ output: outputPath });
     process.exit(code);
     break;
   }

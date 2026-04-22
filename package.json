@@ -1,6 +1,6 @@
 {
   "name": "@delegance/guardrail",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "type": "module",
   "description": "Static rules + LLM code review pipeline: risk-ranked files, diff mode, SARIF, auto-fix",
   "keywords": [
