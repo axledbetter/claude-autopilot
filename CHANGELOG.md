@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.3.0] — 2026-04-22
+
+### Added
+- **Parallel chunk review** — file-level chunks are now reviewed concurrently (default parallelism: 3, configurable via `chunking.parallelism`); serial fallback preserved when `cost.budgetUSD` is set so budget enforcement remains accurate
+- **`.autopilot-ignore`** — project-level suppression file; format: `<rule-id> <glob>` or bare `<glob>` (matches any finding on that path); comments and blank lines ignored; suppressed count printed dim after run
+- **`--delta` mode** — only reports findings new since the previous run; pre-existing findings are hidden and the count is printed dim; findings always persisted to `.autopilot-cache/findings.json` after each run (gitignored)
+- `src/core/ignore/index.ts` — `loadIgnoreRules()`, `applyIgnoreRules()`
+- `src/core/persist/findings-cache.ts` — `loadCachedFindings()`, `saveCachedFindings()`, `filterNewFindings()`
+- 15 new tests — **248 total**
+
 ## [2.2.0] — 2026-04-22
 
 ### Added

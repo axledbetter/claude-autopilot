@@ -38,6 +38,8 @@ import { detectProtectedPaths } from '../core/detect/protected-paths.ts';
 import { detectGitContext } from '../core/detect/git-context.ts';
 import { detectProject } from './detector.ts';
 import { detectPrNumber, formatComment, postPrComment } from './pr-comment.ts';
+import { loadIgnoreRules, applyIgnoreRules } from '../core/ignore/index.ts';
+import { loadCachedFindings, saveCachedFindings, filterNewFindings } from '../core/persist/findings-cache.ts';
 
 function readToolVersion(): string {
   const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
@@ -65,6 +67,7 @@ export interface RunCommandOptions {
   files?: string[];     // explicit file list (skips git detection)
   dryRun?: boolean;     // skip review, print what would run
   diff?: boolean;       // use diff strategy (send git hunks instead of full files)
+  delta?: boolean;      // only report findings not present in last run's baseline
   format?: 'text' | 'sarif';
   outputPath?: string;
   postComments?: boolean; // post/update summary comment on the open PR
@@ -186,6 +189,36 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
 
   console.log('');
   const result = await runAutopilot(input);
+
+  // Apply .autopilot-ignore suppression rules
+  const ignoreRules = loadIgnoreRules(cwd);
+  if (ignoreRules.length > 0) {
+    const before = result.allFindings.length;
+    result.allFindings = applyIgnoreRules(result.allFindings, ignoreRules);
+    for (const phase of result.phases) {
+      phase.findings = applyIgnoreRules(phase.findings, ignoreRules);
+    }
+    const suppressed = before - result.allFindings.length;
+    if (suppressed > 0) {
+      console.log(fmt('dim', `  [run] ${suppressed} finding${suppressed !== 1 ? 's' : ''} suppressed by .autopilot-ignore`));
+    }
+  }
+
+  // Delta mode: filter to only new findings vs last run's baseline, then persist
+  if (options.delta) {
+    const cached = loadCachedFindings(cwd);
+    const before = result.allFindings.length;
+    result.allFindings = filterNewFindings(result.allFindings, cached);
+    for (const phase of result.phases) {
+      phase.findings = filterNewFindings(phase.findings, cached);
+    }
+    const existing = before - result.allFindings.length;
+    if (existing > 0) {
+      console.log(fmt('dim', `  [run] ${existing} pre-existing finding${existing !== 1 ? 's' : ''} hidden (--delta mode)`));
+    }
+  }
+  // Always persist the unfiltered findings as the new baseline
+  saveCachedFindings(cwd, result.allFindings);
 
   // emitAnnotations is a no-op unless GITHUB_ACTIONS=true
   emitAnnotations(result.allFindings);

@@ -67,6 +67,7 @@ Options (run):
   --files <a,b,c>      Explicit comma-separated file list (skips git detection)
   --dry-run            Show what would run without executing
   --diff               Send git diff hunks instead of full files (~70% fewer tokens)
+  --delta              Only report findings new since last run (suppress pre-existing)
   --post-comments      Post/update a summary comment on the open PR
   --format <text|sarif>  Output format (default: text)
   --output <path>        Output file path (required with --format sarif)
@@ -122,6 +123,7 @@ switch (subcommand) {
     const filesArg = flag('files');
     const dryRun = boolFlag('dry-run');
     const diff = boolFlag('diff');
+    const delta = boolFlag('delta');
     const postComments = boolFlag('post-comments');
     const formatArg = flag('format');
     const outputPath = flag('output');
@@ -141,6 +143,7 @@ switch (subcommand) {
       files: filesArg ? filesArg.split(',').map(f => f.trim()) : undefined,
       dryRun,
       diff,
+      delta,
       postComments,
       format: formatArg as 'text' | 'sarif' | undefined,
       outputPath,
