@@ -2,6 +2,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { loadConfig } from '../core/config/loader.ts';
 import { loadAdapter } from '../adapters/loader.ts';
+import type { ReviewEngine } from '../adapters/review-engine/types.ts';
 import { runReviewPhase } from '../core/pipeline/review-phase.ts';
 import { detectStack } from '../core/detect/stack.ts';
 import { loadIgnoreRules, parseConfigIgnore, applyIgnoreRules } from '../core/ignore/index.ts';
@@ -107,9 +108,23 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
   }
 
   // Build review engine
-  const engine = await loadAdapter(config, cwd);
-  if (!engine) {
+  const hasAnyKey = !!(process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY ||
+    process.env.GOOGLE_API_KEY || process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY);
+  if (!hasAnyKey) {
     console.error(fmt('red', '[scan] No LLM API key found — set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY'));
+    return 1;
+  }
+  const engineRef = typeof config.reviewEngine === 'string' ? config.reviewEngine
+    : (config.reviewEngine?.adapter ?? 'auto');
+  let engine: ReviewEngine;
+  try {
+    engine = await loadAdapter<ReviewEngine>({
+      point: 'review-engine',
+      ref: engineRef,
+      options: typeof config.reviewEngine === 'object' ? config.reviewEngine.options as Record<string, unknown> : undefined,
+    });
+  } catch (err) {
+    console.error(fmt('red', `[scan] Could not load review engine: ${err instanceof Error ? err.message : String(err)}`));
     return 1;
   }
 
