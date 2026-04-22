@@ -3,7 +3,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { execSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { selectSnapshots } from '../src/snapshots/impact-selector.ts';
 import OpenAI from 'openai';
@@ -38,11 +38,15 @@ export function diffBaselines(baselineJson: string, currentJson: string): string
 
 function getChangedFiles(since?: string): string[] | null {
   try {
-    const base = since
-      ? since
-      : execSync('git merge-base origin/main HEAD', { cwd: ROOT }).toString().trim();
-    const out = execSync(`git diff ${base} HEAD --name-only`, { cwd: ROOT }).toString();
-    return out.trim().split('\n').filter(Boolean);
+    let base = since;
+    if (!base) {
+      const r = spawnSync('git', ['merge-base', 'origin/main', 'HEAD'], { cwd: ROOT, encoding: 'utf8' });
+      if (r.status !== 0) return null;
+      base = r.stdout.trim();
+    }
+    const r = spawnSync('git', ['diff', base, 'HEAD', '--name-only'], { cwd: ROOT, encoding: 'utf8' });
+    if (r.status !== 0) return null;
+    return r.stdout.trim().split('\n').filter(Boolean);
   } catch { return null; }
 }
 
@@ -146,8 +150,17 @@ function cmdUpdate(args: string[]): number {
       continue;
     }
     process.stdout.write(`  ${snap} ... `);
+    const slug2 = path.basename(snap, '.snap.ts');
+    const baselinePath = path.join(BASELINES_DIR, `${slug2}.json`);
+    const beforeMtime = fs.existsSync(baselinePath) ? fs.statSync(baselinePath).mtimeMs : 0;
     runSnapshot(snap, true);
-    console.log('updated');
+    const captured = fs.existsSync(baselinePath) && fs.statSync(baselinePath).mtimeMs > beforeMtime;
+    if (captured) {
+      console.log('updated');
+    } else {
+      console.error('CAPTURE FAILED (baseline not written)');
+      failed++;
+    }
   }
   return failed > 0 ? 1 : 0;
 }
@@ -219,7 +232,10 @@ async function cmdGenerate(args: string[]): Promise<number> {
 
   const client = new OpenAI({ apiKey });
   let sourceCommit = 'unknown';
-  try { sourceCommit = execSync('git rev-parse --short HEAD', { cwd: ROOT }).toString().trim(); } catch {}
+  try {
+    const r = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: ROOT, encoding: 'utf8' });
+    if (r.status === 0) sourceCommit = r.stdout.trim();
+  } catch {}
   const generatedAt = new Date().toISOString();
 
   for (const srcFile of srcFiles) {
