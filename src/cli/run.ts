@@ -37,6 +37,7 @@ import { detectStack } from '../core/detect/stack.ts';
 import { detectProtectedPaths } from '../core/detect/protected-paths.ts';
 import { detectGitContext } from '../core/detect/git-context.ts';
 import { detectProject } from './detector.ts';
+import { detectPrNumber, formatComment, postPrComment } from './pr-comment.ts';
 
 function readToolVersion(): string {
   const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
@@ -60,11 +61,12 @@ function fmt(color: keyof typeof C, text: string): string {
 export interface RunCommandOptions {
   cwd?: string;
   configPath?: string;
-  base?: string;       // git base ref (default HEAD~1)
-  files?: string[];    // explicit file list (skips git detection)
-  dryRun?: boolean;    // skip review, print what would run
+  base?: string;        // git base ref (default HEAD~1)
+  files?: string[];     // explicit file list (skips git detection)
+  dryRun?: boolean;     // skip review, print what would run
   format?: 'text' | 'sarif';
   outputPath?: string;
+  postComments?: boolean; // post/update summary comment on the open PR
 }
 
 /**
@@ -187,6 +189,22 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     fs.mkdirSync(path.dirname(path.resolve(options.outputPath)), { recursive: true });
     fs.writeFileSync(options.outputPath, JSON.stringify(sarif, null, 2), 'utf8');
     console.log(fmt('dim', `[run] SARIF written to ${options.outputPath}`));
+  }
+
+  // Post PR comment if requested
+  if (options.postComments) {
+    const pr = detectPrNumber(cwd);
+    if (!pr) {
+      console.log(fmt('yellow', '  [run] --post-comments: no open PR found — skipping comment'));
+    } else {
+      try {
+        const body = formatComment(result, config, gitCtx, touchedFiles.length);
+        const { action } = await postPrComment(pr, body, cwd);
+        console.log(fmt('dim', `  [run] PR #${pr} comment ${action}`));
+      } catch (err) {
+        console.error(fmt('yellow', `  [run] Failed to post PR comment: ${err instanceof Error ? err.message : String(err)}`));
+      }
+    }
   }
 
   // Print phase summaries

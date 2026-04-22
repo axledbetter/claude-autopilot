@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.9.0] — 2026-04-22
+
+### Added
+- **`--post-comments` flag on `run`** — posts a formatted markdown summary to the open PR after the pipeline; edits existing autopilot comment on re-runs instead of creating a new one (tracked via `<!-- autopilot-review -->` marker)
+- **`detectPrNumber()`** — reads `PR_NUMBER`/`GH_PR_NUMBER`/`GITHUB_PR_NUMBER` env vars (CI) or falls back to `gh pr view` (local)
+- **`formatComment()`** — status badge, context line, phase table, critical/warning findings with `file:line`, notes in `<details>`, cost footer
+- 10 new formatter tests — **215 total**
+
+## [1.8.0] — 2026-04-22
+
+### Added
+- **Shared `parseReviewOutput()`** (`src/adapters/review-engine/parse-output.ts`) — extracts `file:line` attribution from review finding bodies; used by all five adapters; eliminates ~100 lines of duplicated parser code
+
+### Fixed
+- `hardcoded-secrets` false positive on route object keys containing `password` (e.g. `forgot_password: '/forgot-password'`)
+
+## [1.7.2] — 2026-04-22
+
+### Fixed
+- `hardcoded-secrets` rule no longer fires on route path values (values starting with `/`)
+
+## [1.7.1] — 2026-04-22
+
+### Added
+- Detection logging: `auto-detected:` line in run output shows stack, protected paths, and test command when inferred; git context (branch + last commit) shown on every run
+
 ## [1.7.0] — 2026-04-22
 
 ### Added

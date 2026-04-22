@@ -65,6 +65,7 @@ Options (run):
   --config <path>      Path to config file (default: ./autopilot.config.yaml)
   --files <a,b,c>      Explicit comma-separated file list (skips git detection)
   --dry-run            Show what would run without executing
+  --post-comments      Post/update a summary comment on the open PR
   --format <text|sarif>  Output format (default: text)
   --output <path>        Output file path (required with --format sarif)
 
@@ -118,6 +119,7 @@ switch (subcommand) {
     const config = flag('config');
     const filesArg = flag('files');
     const dryRun = boolFlag('dry-run');
+    const postComments = boolFlag('post-comments');
     const formatArg = flag('format');
     const outputPath = flag('output');
 
@@ -135,6 +137,7 @@ switch (subcommand) {
       configPath: config,
       files: filesArg ? filesArg.split(',').map(f => f.trim()) : undefined,
       dryRun,
+      postComments,
       format: formatArg as 'text' | 'sarif' | undefined,
       outputPath,
     });
