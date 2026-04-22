@@ -20,6 +20,7 @@ import { runScan } from './scan.ts';
 import { runReport } from './report.ts';
 import { runExplain } from './explain.ts';
 import { runIgnore } from './ignore-helper.ts';
+import { runPr } from './pr.ts';
 
 const args = process.argv.slice(2);
 
@@ -33,7 +34,7 @@ if (args[0] === '--version' || args[0] === '-v') {
   process.exit(0);
 }
 
-const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
+const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus'];
 
 // Detect first non-flag arg as subcommand, default to 'run'
@@ -66,6 +67,7 @@ Commands:
   explain      Deep-dive explanation + remediation for a specific finding
   ignore       Interactively add findings to .guardrail-ignore
   watch        Watch for file changes and re-run on each save
+  pr           Review a specific PR by number (auto-detects if on PR branch)
   fix          Auto-fix cached findings using the configured LLM
   costs        Show per-run cost summary
   ci           Opinionated CI entrypoint (post comments + SARIF)
@@ -92,6 +94,12 @@ Options (scan):
   --focus <type>       security | logic | performance (default: all)
   --dry-run            List files that would be scanned without running
   --config <path>      Path to config file
+
+Options (pr):
+  <number>                   PR number to review (optional if on a PR branch)
+  --no-post-comments         Skip posting/updating PR summary comment
+  --no-inline-comments       Skip posting per-line inline annotations
+  --config <path>            Path to config file
 
 Options (fix):
   --severity <critical|warning|all>  Which findings to fix (default: critical)
@@ -218,6 +226,21 @@ switch (subcommand) {
       postComments: noPostComments ? false : undefined,
       inlineComments: noInlineComments ? false : undefined,
       diff,
+    });
+    process.exit(code);
+    break;
+  }
+
+  case 'pr': {
+    const config = flag('config');
+    const noPostComments = boolFlag('no-post-comments');
+    const noInlineComments = boolFlag('no-inline-comments');
+    const prNumber = args.slice(1).find(a => !a.startsWith('--') && /^\d+$/.test(a));
+    const code = await runPr({
+      configPath: config,
+      prNumber,
+      noPostComments,
+      noInlineComments,
     });
     process.exit(code);
     break;

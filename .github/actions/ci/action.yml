@@ -24,6 +24,10 @@ inputs:
     description: Post/update a summary comment on the PR (default true)
     required: false
     default: 'true'
+  inline-comments:
+    description: Post per-line inline PR review annotations (default false)
+    required: false
+    default: 'false'
   sarif-output:
     description: Path to write SARIF output (default guardrail.sarif)
     required: false
@@ -64,11 +68,16 @@ runs:
         if [ "${{ inputs.post-comments }}" = "true" ]; then
           POST_COMMENTS_ARG="--post-comments"
         fi
+        INLINE_ARG=""
+        if [ "${{ inputs.inline-comments }}" = "true" ]; then
+          INLINE_ARG="--inline-comments"
+        fi
         npx guardrail ci \
           --base "$BASE" \
           --output "${{ inputs.sarif-output }}" \
           $CONFIG_ARG \
-          $POST_COMMENTS_ARG
+          $POST_COMMENTS_ARG \
+          $INLINE_ARG
 
     - name: Upload SARIF to GitHub Code Scanning
       if: always()

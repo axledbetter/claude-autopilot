@@ -114,6 +114,17 @@ npx guardrail ci --base develop
 npx guardrail ci --no-post-comments
 ```
 
+### `guardrail pr` — review a pull request by number
+
+```bash
+npx guardrail pr 42                # review PR #42, post inline + summary comments
+npx guardrail pr                   # auto-detect PR from current branch
+npx guardrail pr 42 --no-inline-comments   # summary comment only
+npx guardrail pr 42 --no-post-comments     # print results locally, no GitHub comments
+```
+
+Fetches the PR base ref, runs the full pipeline against the diff, and posts inline annotations + a summary comment on the PR. Requires `gh` CLI authenticated.
+
 ### `guardrail fix` — auto-fix cached findings
 
 ```bash
@@ -221,9 +232,15 @@ reviewEngine:
 ## GitHub Actions
 
 ```yaml
-- uses: axledbetter/guardrail/.github/actions/ci@main
+- uses: axledbetter/claude-autopilot/.github/actions/ci@main
   with:
     anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    # Optional:
+    # post-comments: 'true'       # post/update PR summary comment (default true)
+    # inline-comments: 'false'    # post per-line PR annotations (default false)
+    # base-ref: 'main'            # base branch to diff against
+    # sarif-output: 'guardrail.sarif'
+    # version: 'latest'           # pin to a specific @delegance/guardrail version
 ```
 
 Runs the pipeline, uploads SARIF to GitHub Code Scanning, annotates the PR diff inline.
