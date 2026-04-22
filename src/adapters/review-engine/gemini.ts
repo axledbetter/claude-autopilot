@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import type { Finding } from '../../core/findings/types.ts';
+import { parseReviewOutput } from './parse-output.ts';
 import { AutopilotError } from '../../core/errors.ts';
 import type { Capabilities } from '../base.ts';
 import type { ReviewEngine, ReviewInput, ReviewOutput } from './types.ts';
@@ -95,7 +95,7 @@ export const geminiAdapter: ReviewEngine = {
       : undefined;
 
     return {
-      findings: parseGeminiOutput(rawOutput),
+      findings: parseReviewOutput(rawOutput, 'gemini'),
       rawOutput,
       usage: usage
         ? { input: usage.promptTokenCount, output: usage.candidatesTokenCount, costUSD }
@@ -105,28 +105,3 @@ export const geminiAdapter: ReviewEngine = {
 };
 
 export default geminiAdapter;
-
-function parseGeminiOutput(output: string): Finding[] {
-  const findings: Finding[] = [];
-  const regex = /### \[(CRITICAL|WARNING|NOTE)\]\s*(.+?)(?=\n### \[|## Review Summary|$)/gs;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(output)) !== null) {
-    const severity = match[1]!.toLowerCase() as Finding['severity'];
-    const body = match[2]!.trim();
-    const titleEnd = body.indexOf('\n');
-    const title = (titleEnd > 0 ? body.slice(0, titleEnd) : body).trim();
-    const suggestion = body.match(/\*\*Suggestion:\*\*\s*(.+)/s)?.[1]?.trim();
-    findings.push({
-      id: `gemini-${findings.length}`,
-      source: 'review-engine',
-      severity,
-      category: 'gemini-review',
-      file: '<unspecified>',
-      message: title,
-      suggestion,
-      protectedPath: false,
-      createdAt: new Date().toISOString(),
-    });
-  }
-  return findings;
-}

@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import type { Finding } from '../../core/findings/types.ts';
+import { parseReviewOutput } from './parse-output.ts';
 import { AutopilotError } from '../../core/errors.ts';
 import type { Capabilities } from '../base.ts';
 import type { ReviewEngine, ReviewInput, ReviewOutput } from './types.ts';
@@ -90,7 +90,7 @@ export const openaiCompatibleAdapter: ReviewEngine = {
 
     const rawOutput = response.choices[0]?.message.content ?? '';
     return {
-      findings: parseOutput(rawOutput),
+      findings: parseReviewOutput(rawOutput, 'openai-compatible'),
       rawOutput,
       usage: response.usage
         ? { input: response.usage.prompt_tokens, output: response.usage.completion_tokens }
@@ -100,28 +100,3 @@ export const openaiCompatibleAdapter: ReviewEngine = {
 };
 
 export default openaiCompatibleAdapter;
-
-function parseOutput(output: string): Finding[] {
-  const findings: Finding[] = [];
-  const regex = /### \[(CRITICAL|WARNING|NOTE)\]\s*(.+?)(?=\n### \[|## Review Summary|$)/gs;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(output)) !== null) {
-    const severity = match[1]!.toLowerCase() as Finding['severity'];
-    const body = match[2]!.trim();
-    const titleEnd = body.indexOf('\n');
-    const title = (titleEnd > 0 ? body.slice(0, titleEnd) : body).trim();
-    const suggestion = body.match(/\*\*Suggestion:\*\*\s*(.+)/s)?.[1]?.trim();
-    findings.push({
-      id: `openai-compatible-${findings.length}`,
-      source: 'review-engine',
-      severity,
-      category: 'openai-compatible-review',
-      file: '<unspecified>',
-      message: title,
-      suggestion,
-      protectedPath: false,
-      createdAt: new Date().toISOString(),
-    });
-  }
-  return findings;
-}

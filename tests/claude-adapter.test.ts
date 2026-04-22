@@ -141,3 +141,59 @@ describe('adapter loader — gemini and openai-compatible registration', () => {
     assert.equal(adapter.name, 'openai-compatible');
   });
 });
+
+// ── parseReviewOutput ─────────────────────────────────────────────────────────
+describe('parseReviewOutput', () => {
+  it('extracts file:line from backtick reference', async () => {
+    const { parseReviewOutput } = await import('../src/adapters/review-engine/parse-output.ts');
+    const output = `### [CRITICAL] Bad auth check
+In \`app/api/auth/route.ts:42\` the token is not validated.
+**Suggestion:** Add token validation.`;
+    const findings = parseReviewOutput(output, 'test');
+    assert.equal(findings[0]!.file, 'app/api/auth/route.ts');
+    assert.equal(findings[0]!.line, 42);
+  });
+
+  it('extracts bare file:line reference', async () => {
+    const { parseReviewOutput } = await import('../src/adapters/review-engine/parse-output.ts');
+    const output = `### [WARNING] Missing error handling
+See services/foo.ts:10 for the call site.
+**Suggestion:** Wrap in try/catch.`;
+    const findings = parseReviewOutput(output, 'test');
+    assert.equal(findings[0]!.file, 'services/foo.ts');
+    assert.equal(findings[0]!.line, 10);
+  });
+
+  it('returns unspecified when no file ref in body', async () => {
+    const { parseReviewOutput } = await import('../src/adapters/review-engine/parse-output.ts');
+    const output = `### [NOTE] Style issue
+This function is too long.
+**Suggestion:** Split it.`;
+    const findings = parseReviewOutput(output, 'test');
+    assert.equal(findings[0]!.file, '<unspecified>');
+    assert.equal(findings[0]!.line, undefined);
+  });
+
+  it('does not treat version strings as file refs', async () => {
+    const { parseReviewOutput } = await import('../src/adapters/review-engine/parse-output.ts');
+    const output = `### [NOTE] Upgrade dependency
+Use v2.3.4 of this library.
+**Suggestion:** Run npm install.`;
+    const findings = parseReviewOutput(output, 'test');
+    assert.equal(findings[0]!.file, '<unspecified>');
+  });
+
+  it('parses multiple findings with correct ids', async () => {
+    const { parseReviewOutput } = await import('../src/adapters/review-engine/parse-output.ts');
+    const output = `### [CRITICAL] Issue one
+Body one.
+### [WARNING] Issue two
+Body two.`;
+    const findings = parseReviewOutput(output, 'myprefix');
+    assert.equal(findings.length, 2);
+    assert.equal(findings[0]!.id, 'myprefix-0');
+    assert.equal(findings[1]!.id, 'myprefix-1');
+    assert.equal(findings[0]!.severity, 'critical');
+    assert.equal(findings[1]!.severity, 'warning');
+  });
+});

@@ -1,8 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { Finding } from '../../core/findings/types.ts';
 import { AutopilotError } from '../../core/errors.ts';
 import type { Capabilities } from '../base.ts';
 import type { ReviewEngine, ReviewInput, ReviewOutput } from './types.ts';
+import { parseReviewOutput } from './parse-output.ts';
 
 const DEFAULT_MODEL = 'claude-opus-4-7';
 const MAX_OUTPUT_TOKENS = 4096;
@@ -90,7 +90,7 @@ export const claudeAdapter: ReviewEngine = {
       : undefined;
 
     return {
-      findings: parseClaudeOutput(rawOutput),
+      findings: parseReviewOutput(rawOutput, 'claude'),
       rawOutput,
       usage: response.usage
         ? { input: response.usage.input_tokens, output: response.usage.output_tokens, costUSD }
@@ -100,28 +100,3 @@ export const claudeAdapter: ReviewEngine = {
 };
 
 export default claudeAdapter;
-
-function parseClaudeOutput(output: string): Finding[] {
-  const findings: Finding[] = [];
-  const regex = /### \[(CRITICAL|WARNING|NOTE)\]\s*(.+?)(?=\n### \[|## Review Summary|$)/gs;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(output)) !== null) {
-    const severity = match[1]!.toLowerCase() as Finding['severity'];
-    const body = match[2]!.trim();
-    const titleEnd = body.indexOf('\n');
-    const title = (titleEnd > 0 ? body.slice(0, titleEnd) : body).trim();
-    const suggestion = body.match(/\*\*Suggestion:\*\*\s*(.+)/s)?.[1]?.trim();
-    findings.push({
-      id: `claude-${findings.length}`,
-      source: 'review-engine',
-      severity,
-      category: 'claude-review',
-      file: '<unspecified>',
-      message: title,
-      suggestion,
-      protectedPath: false,
-      createdAt: new Date().toISOString(),
-    });
-  }
-  return findings;
-}
