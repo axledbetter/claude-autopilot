@@ -20,13 +20,6 @@ function severityOrder(s: Finding['severity']): number {
   return s === 'critical' ? 0 : s === 'warning' ? 1 : 2;
 }
 
-interface TrendData {
-  runs: number;
-  totalCostUSD: number;
-  avgFilesPerRun: number;
-  recentRuns: Array<{ date: string; costUSD: number; files: number }>;
-}
-
 function buildTrendSection(cwd: string): string {
   const log = readCostLog(cwd);
   if (log.length === 0) return '';
@@ -37,7 +30,7 @@ function buildTrendSection(cwd: string): string {
   const avgFiles = log.reduce((s, e) => s + e.files, 0) / log.length;
 
   const lines: string[] = [
-    '## 📈 Trend (last 7 days)',
+    '## 📈 Trend',
     '',
     `| Metric | Value |`,
     `|--------|-------|`,
@@ -62,10 +55,55 @@ function buildTrendSection(cwd: string): string {
   return lines.join('\n');
 }
 
+function buildFileBreakdown(findings: Finding[]): string {
+  const withFiles = findings.filter(f => f.file && f.file !== '<unspecified>' && f.file !== '<pipeline>');
+  if (withFiles.length === 0) return '';
+
+  const counts = new Map<string, { critical: number; warning: number; note: number; total: number }>();
+  for (const f of withFiles) {
+    const entry = counts.get(f.file) ?? { critical: 0, warning: 0, note: 0, total: 0 };
+    entry[f.severity]++;
+    entry.total++;
+    counts.set(f.file, entry);
+  }
+
+  const sorted = [...counts.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, 10);
+  if (sorted.length < 2) return ''; // single file — not worth a table
+
+  const lines = [
+    '## 📁 By File',
+    '',
+    '| File | Critical | Warning | Note | Total |',
+    '|------|----------|---------|------|-------|',
+  ];
+  for (const [file, c] of sorted) {
+    lines.push(`| \`${file}\` | ${c.critical || '–'} | ${c.warning || '–'} | ${c.note || '–'} | **${c.total}** |`);
+  }
+  if (counts.size > 10) lines.push(`| *(${counts.size - 10} more files)* | | | | |`);
+  lines.push('');
+  return lines.join('\n');
+}
+
+function buildSourceBreakdown(findings: Finding[]): string {
+  const counts = new Map<string, number>();
+  for (const f of findings) {
+    counts.set(f.source, (counts.get(f.source) ?? 0) + 1);
+  }
+  if (counts.size < 2) return '';
+
+  const lines = ['## 🔬 By Source', '', '| Source | Findings |', '|--------|----------|'];
+  for (const [source, n] of [...counts.entries()].sort((a, b) => b[1] - a[1])) {
+    lines.push(`| ${source} | ${n} |`);
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
 function buildMarkdown(findings: Finding[], cwd: string, trend: boolean): string {
   const critical = findings.filter(f => f.severity === 'critical');
   const warnings  = findings.filter(f => f.severity === 'warning');
   const notes     = findings.filter(f => f.severity === 'note');
+  const fixable   = critical.length + warnings.length;
 
   const lines: string[] = [
     '# Guardrail Report',
@@ -77,16 +115,26 @@ function buildMarkdown(findings: Finding[], cwd: string, trend: boolean): string
     `| Severity | Count |`,
     `|----------|-------|`,
     `| 🚨 Critical | ${critical.length} |`,
-    `| ⚠️ Warning  | ${warnings.length} |`,
-    `| ℹ️ Note     | ${notes.length} |`,
+    `| ⚠️  Warning  | ${warnings.length} |`,
+    `| ℹ️  Note     | ${notes.length} |`,
     `| **Total**   | **${findings.length}** |`,
     '',
   ];
+
+  if (fixable > 0) {
+    lines.push(`> **${fixable} finding${fixable !== 1 ? 's' : ''} can be auto-fixed** — run \`guardrail fix\` to attempt repairs.`, '');
+  }
 
   if (trend) {
     const trendSection = buildTrendSection(cwd);
     if (trendSection) lines.push(trendSection);
   }
+
+  const fileBreakdown = buildFileBreakdown(findings);
+  if (fileBreakdown) lines.push(fileBreakdown);
+
+  const sourceBreakdown = buildSourceBreakdown(findings);
+  if (sourceBreakdown) lines.push(sourceBreakdown);
 
   function renderGroup(label: string, icon: string, group: Finding[]) {
     if (group.length === 0) return;

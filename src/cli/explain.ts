@@ -13,6 +13,9 @@ const fmt = (c: keyof typeof C, t: string) => `${C[c]}${t}${C.reset}`;
 
 const CONTEXT_LINES = 30;
 
+const SECTION_ORDER = ['Root Cause', 'Risk', 'How to Fix', 'Example', 'When to Suppress'] as const;
+type SectionName = typeof SECTION_ORDER[number];
+
 export interface ExplainCommandOptions {
   cwd?: string;
   configPath?: string;
@@ -38,6 +41,33 @@ function pickFinding(findings: Finding[], target: string): Finding | null {
   const byId = findings.find(f => f.id.startsWith(target));
   if (byId) return byId;
   return null;
+}
+
+/** Parse LLM output into named sections by ## headers. */
+function parseSections(text: string): Map<string, string> {
+  const map = new Map<string, string>();
+  const parts = text.split(/^##\s+/m);
+  for (const part of parts) {
+    const newline = part.indexOf('\n');
+    if (newline < 0) continue;
+    const header = part.slice(0, newline).trim();
+    const body = part.slice(newline + 1).trim();
+    if (header && body) map.set(header, body);
+  }
+  return map;
+}
+
+function printSection(label: SectionName, body: string): void {
+  const icon: Record<SectionName, string> = {
+    'Root Cause':    '🔍',
+    'Risk':          '⚠️ ',
+    'How to Fix':    '🔧',
+    'Example':       '📝',
+    'When to Suppress': '✅',
+  };
+  console.log(`\n${fmt('bold', `${icon[label]}  ${label}`)}`);
+  console.log(fmt('dim', '─'.repeat(50)));
+  console.log(body);
 }
 
 export async function runExplain(options: ExplainCommandOptions = {}): Promise<number> {
@@ -102,29 +132,60 @@ export async function runExplain(options: ExplainCommandOptions = {}): Promise<n
   }
 
   const prompt = [
-    `I have a code finding I need help understanding:`,
+    `I need a structured explanation of this code finding:`,
     ``,
-    `Rule: ${finding.id}`,
+    `Rule:     ${finding.id}`,
     `Severity: ${finding.severity.toUpperCase()}`,
-    `File: ${finding.file}${finding.line ? `:${finding.line}` : ''}`,
-    `Message: ${finding.message}`,
-    finding.suggestion ? `Initial suggestion: ${finding.suggestion}` : '',
+    `File:     ${finding.file}${finding.line ? `:${finding.line}` : ''}`,
+    `Message:  ${finding.message}`,
+    finding.suggestion ? `Suggestion: ${finding.suggestion}` : '',
     codeContext,
     ``,
-    `Please provide:`,
-    `1. **Why this is a problem** — explain the root cause and real-world risk`,
-    `2. **How to fix it** — concrete code-level remediation steps`,
-    `3. **Example** — a before/after code snippet if applicable`,
-    `4. **When to ignore it** — legitimate cases where this finding can be suppressed`,
+    `Respond using EXACTLY these five section headers (no other headers):`,
+    ``,
+    `## Root Cause`,
+    `[technical explanation of why this problem exists]`,
+    ``,
+    `## Risk`,
+    `[real-world impact, exploitability, and severity rationale]`,
+    ``,
+    `## How to Fix`,
+    `[concrete, code-level remediation steps]`,
+    ``,
+    `## Example`,
+    `[before/after code snippet showing the fix, in a fenced code block]`,
+    ``,
+    `## When to Suppress`,
+    `[legitimate cases where this finding can be safely ignored]`,
   ].filter(s => s !== undefined && s !== null).join('\n');
 
-  console.log(`\n${fmt('bold', '[guardrail explain]')} ${fmt('dim', `${finding.file}${finding.line ? `:${finding.line}` : ''} — ${finding.id}`)}\n`);
+  const sev = finding.severity === 'critical' ? fmt('red', 'CRITICAL')
+    : finding.severity === 'warning' ? fmt('yellow', 'WARNING') : fmt('dim', 'NOTE');
+
+  console.log(`\n${fmt('bold', '[guardrail explain]')}`);
+  console.log(`  [${sev}] ${fmt('dim', `${finding.file}${finding.line ? `:${finding.line}` : ''}`)} — ${finding.message}`);
+  if (finding.suggestion) console.log(`  ${fmt('dim', `→ ${finding.suggestion}`)}`);
+  console.log('');
 
   try {
     const output = await engine.review({ content: prompt, kind: 'file-batch' });
-    // Print the raw explanation text (findings array will be empty for this prompt style)
     const text = output.rawOutput.trim();
-    console.log(text);
+    const sections = parseSections(text);
+
+    let printed = false;
+    for (const label of SECTION_ORDER) {
+      const body = sections.get(label);
+      if (body) {
+        printSection(label, body);
+        printed = true;
+      }
+    }
+
+    if (!printed) {
+      // LLM didn't follow the structure — print raw
+      console.log(text);
+    }
+
     console.log('');
   } catch (err) {
     console.error(fmt('red', `[explain] LLM error: ${err instanceof Error ? err.message : String(err)}`));
