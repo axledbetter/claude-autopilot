@@ -118,6 +118,12 @@ export async function runFix(options: FixCommandOptions = {}): Promise<number> {
   }
   console.log('');
 
+  // Dry-run: listing the findings is sufficient — no LLM needed
+  if (options.dryRun) {
+    console.log(fmt('yellow', `[fix] Dry run — ${fixable.length} finding${fixable.length !== 1 ? 's' : ''} listed above, no files modified.\n`));
+    return 0;
+  }
+
   // Load review engine (config optional — defaults to auto adapter)
   let engine: ReviewEngine;
   try {

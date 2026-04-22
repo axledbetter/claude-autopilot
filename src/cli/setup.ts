@@ -8,6 +8,9 @@ import { runDoctor } from './preflight.ts';
 
 const PASS = '\x1b[32m✓\x1b[0m';
 const WARN = '\x1b[33m!\x1b[0m';
+const DIM  = (t: string) => `\x1b[2m${t}\x1b[0m`;
+const BOLD = (t: string) => `\x1b[1m${t}\x1b[0m`;
+const CYAN = (t: string) => `\x1b[36m${t}\x1b[0m`;
 
 const PRESET_LABELS: Record<string, string> = {
   'nextjs-supabase': 'Next.js + Supabase',
@@ -46,18 +49,29 @@ export async function runSetup(options: SetupOptions = {}): Promise<void> {
     throw new Error('guardrail.config.yaml already exists — use --force to overwrite');
   }
 
-  console.log('\n[setup] Detecting project type...');
+  console.log(`\n${BOLD('[guardrail setup]')} ${DIM(cwd)}\n`);
+  console.log(`${BOLD('Detecting project…')}\n`);
 
   const detection = detectProject(cwd);
   const label = PRESET_LABELS[detection.preset] ?? detection.preset;
 
   if (detection.confidence === 'high') {
-    console.log(`  ${PASS}  ${label} (${detection.evidence})`);
+    console.log(`  ${PASS}  Stack:        ${label}`);
+    console.log(`  ${PASS}  Evidence:     ${DIM(detection.evidence)}`);
   } else {
-    console.log(`  ${WARN}  ${label} — no strong signals found, defaulted to ${detection.preset}`);
-    console.log(`       \x1b[2mEdit guardrail.config.yaml to switch presets if needed\x1b[0m`);
+    console.log(`  ${WARN}  Stack:        ${label} ${DIM('(low confidence — no strong signals)')}`);
+    console.log(`       ${DIM('Edit guardrail.config.yaml to switch presets if needed')}`);
   }
-  console.log(`  ${PASS}  Test command: ${detection.testCommand}`);
+  console.log(`  ${PASS}  Test command: ${DIM(detection.testCommand)}`);
+
+  const hasKey = !!(process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY ||
+    process.env.GOOGLE_API_KEY || process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY);
+  if (hasKey) {
+    console.log(`  ${PASS}  LLM API key:  detected`);
+  } else {
+    console.log(`  ${WARN}  LLM API key:  not found`);
+    console.log(`       ${DIM('Set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY')}`);
+  }
 
   const presetConfigPath = findPresetConfig(detection.preset, cwd);
   if (!presetConfigPath) {
@@ -67,19 +81,46 @@ export async function runSetup(options: SetupOptions = {}): Promise<void> {
   let presetContent = await fsAsync.readFile(presetConfigPath, 'utf8');
   presetContent = presetContent.trimEnd() + `\ntestCommand: "${detection.testCommand}"\n`;
   await fsAsync.writeFile(dest, presetContent, 'utf8');
-  console.log(`  ${PASS}  Created guardrail.config.yaml`);
 
+  console.log(`\n${BOLD('Config written to guardrail.config.yaml:')}\n`);
+  for (const line of presetContent.trimEnd().split('\n')) {
+    console.log(`  ${DIM(line)}`);
+  }
+
+  let hookInstalled = false;
   if (!options.skipHook) {
     const hookCode = await runHook('install', { cwd, silent: true });
-    if (hookCode === 0) {
-      console.log(`  ${PASS}  Installed pre-push git hook`);
+    hookInstalled = hookCode === 0;
+    if (hookInstalled) {
+      console.log(`\n  ${PASS}  Pre-push git hook installed`);
     } else {
-      console.log(`  ${WARN}  Hook install failed (not fatal — run: npx guardrail hook install)`);
+      console.log(`\n  ${WARN}  Hook install failed (run: npx guardrail hook install)`);
     }
   }
 
-  console.log('\n[setup] Checking prerequisites...');
+  console.log('\nChecking prerequisites…');
   await runDoctor();
 
-  console.log('\n[setup] Done. Run: npx guardrail run\n');
+  console.log(`\n${BOLD('Next steps:')}\n`);
+  if (!hasKey) {
+    console.log(`  1. ${CYAN('Set an LLM API key')} — guardrail needs one to review code:`);
+    console.log(`       export ANTHROPIC_API_KEY=sk-ant-...     # https://console.anthropic.com/`);
+    console.log(`       export OPENAI_API_KEY=sk-...            # https://platform.openai.com/api-keys`);
+    console.log(`       export GROQ_API_KEY=gsk_...             # https://console.groq.com/keys (free)\n`);
+    console.log(`  2. ${CYAN('Review your changes:')}`);
+    console.log(`       npx guardrail run --base main\n`);
+    console.log(`  3. ${CYAN('Scan any path directly:')}`);
+    console.log(`       npx guardrail scan src/auth/\n`);
+  } else {
+    console.log(`  ${CYAN('Review git-changed files:')}`);
+    console.log(`    npx guardrail run --base main\n`);
+    console.log(`  ${CYAN('Scan any path (no git needed):')}`);
+    console.log(`    npx guardrail scan src/auth/\n`);
+    console.log(`  ${CYAN('Ask a targeted question:')}`);
+    console.log(`    npx guardrail scan --ask "is there SQL injection here?" src/db/\n`);
+    if (!hookInstalled && !options.skipHook) {
+      console.log(`  ${CYAN('Install pre-push hook (auto-runs before git push):')}`);
+      console.log(`    npx guardrail hook install\n`);
+    }
+  }
 }

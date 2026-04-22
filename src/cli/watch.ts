@@ -29,10 +29,12 @@ export function isIgnored(p: string): boolean {
 /**
  * Pure debounce accumulator — returned functions are the testable core of watch logic.
  * schedule(file) → adds file, starts/resets timer; when debounce fires, calls flush(batch).
+ * onSchedule (optional) is called on every schedule() with the file and current queue size.
  */
 export function makeDebouncer(
   flushFn: (batch: string[]) => void,
   debounceMs: number,
+  onSchedule?: (file: string, queueSize: number) => void,
 ): { schedule: (file: string) => void; pending: () => string[] } {
   const pending = new Set<string>();
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -46,6 +48,7 @@ export function makeDebouncer(
         timer = null;
         flushFn(batch);
       }, debounceMs);
+      onSchedule?.(file, pending.size);
     },
     pending() { return [...pending]; },
   };
@@ -62,44 +65,52 @@ export async function runWatch(options: WatchOptions = {}): Promise<void> {
   const configPath = options.configPath ?? path.join(cwd, 'guardrail.config.yaml');
   const debounceMs = options.debounceMs ?? 300;
 
-  if (!fs.existsSync(configPath)) {
-    console.error(fmt('red', `[watch] guardrail.config.yaml not found — run: npx guardrail init`));
-    process.exit(1);
-  }
-
+  // Zero-config fallback — same as `run`
   let config: GuardrailConfig;
-  try {
-    const userConfig = await loadConfig(configPath);
-    config = userConfig.preset
-      ? mergeConfigs((await resolvePreset(userConfig.preset)).config, userConfig)
-      : userConfig;
-  } catch (err) {
-    console.error(fmt('red', `[watch] Config error: ${err instanceof Error ? err.message : String(err)}`));
-    process.exit(1);
-  }
-
-  let reviewEngine: ReviewEngine | undefined;
-  if (config.reviewEngine) {
-    const ref = typeof config.reviewEngine === 'string' ? config.reviewEngine : config.reviewEngine.adapter;
-    if (process.env.OPENAI_API_KEY) {
-      try {
-        reviewEngine = await loadAdapter<ReviewEngine>({
-          point: 'review-engine', ref,
-          options: typeof config.reviewEngine === 'string' ? undefined : config.reviewEngine.options,
-        });
-      } catch { /* skip */ }
+  if (!fs.existsSync(configPath)) {
+    config = { configVersion: 1, reviewEngine: { adapter: 'auto' }, testCommand: null };
+  } else {
+    try {
+      const userConfig = await loadConfig(configPath);
+      config = userConfig.preset
+        ? mergeConfigs((await resolvePreset(userConfig.preset)).config, userConfig)
+        : userConfig;
+    } catch (err) {
+      console.error(fmt('red', `[watch] Config error: ${err instanceof Error ? err.message : String(err)}`));
+      process.exit(1);
     }
   }
 
+  const hasAnyKey = !!(process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY ||
+    process.env.GOOGLE_API_KEY || process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY);
+
+  let reviewEngine: ReviewEngine | undefined;
+  if (config.reviewEngine && hasAnyKey) {
+    const ref = typeof config.reviewEngine === 'string' ? config.reviewEngine : config.reviewEngine.adapter;
+    try {
+      reviewEngine = await loadAdapter<ReviewEngine>({
+        point: 'review-engine', ref,
+        options: typeof config.reviewEngine === 'string' ? undefined : config.reviewEngine.options,
+      });
+    } catch { /* skip — static rules still run */ }
+  }
+
+  const keyStatus = hasAnyKey
+    ? fmt('green', '✓ LLM review enabled')
+    : fmt('yellow', '! No API key — static rules only  (set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY)');
+
   console.log(`\n${fmt('bold', '[guardrail watch]')} ${fmt('dim', cwd)}`);
-  console.log(fmt('dim', `  debounce: ${debounceMs}ms  |  Ctrl+C to exit\n`));
+  console.log(fmt('dim', `  debounce: ${debounceMs}ms  |  Ctrl+C to exit`));
+  console.log(`  ${keyStatus}\n`);
+  console.log(fmt('dim', '  Watching for changes…\n'));
 
   let running = false;
   const nextPending = new Set<string>();
+  let debounceLineShown = false;
 
   const runBatch = async (batch: string[]) => {
+    debounceLineShown = false;
     if (running) {
-      // Queue these files for the next run after the current one completes
       for (const f of batch) nextPending.add(f);
       return;
     }
@@ -137,7 +148,8 @@ export async function runWatch(options: WatchOptions = {}): Promise<void> {
     }
 
     running = false;
-    // Flush anything that accumulated while we were running
+    console.log(fmt('dim', '\n  Watching for changes…'));
+
     if (nextPending.size > 0) {
       const queued = [...nextPending];
       nextPending.clear();
@@ -145,7 +157,16 @@ export async function runWatch(options: WatchOptions = {}): Promise<void> {
     }
   };
 
-  const debouncer = makeDebouncer(batch => { runBatch(batch); }, debounceMs);
+  const debouncer = makeDebouncer(
+    batch => { runBatch(batch); },
+    debounceMs,
+    (_file, queueSize) => {
+      if (!debounceLineShown && !running) {
+        process.stdout.write(fmt('dim', `  ⋯ ${queueSize} file(s) queued — reviewing in ${debounceMs}ms…\r`));
+        debounceLineShown = true;
+      }
+    },
+  );
 
   const onEvent = (_event: string, filename: string | null) => {
     if (!filename) return;
