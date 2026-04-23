@@ -72,8 +72,11 @@ export async function runCouncil(
     synthesisCtx,
     config.timeoutMs,
   );
-  if (synthResponse.status === 'ok' && synthResponse.text) {
-    const synthesis = { label: synthesizer.label, text: synthResponse.text, latencyMs: synthResponse.latencyMs };
+  // status:'ok' means the synthesizer call itself completed without error.
+  // Empty text is valid (e.g. the --no-synthesize stub that intentionally
+  // returns ''); only treat actual failures/timeouts as partial.
+  if (synthResponse.status === 'ok') {
+    const synthesis = { label: synthesizer.label, text: synthResponse.text ?? '', latencyMs: synthResponse.latencyMs };
     return { schema_version: 1, run_id, status: 'success', prompt, responses, synthesis };
   }
   return { schema_version: 1, run_id, status: 'partial', prompt, responses };
