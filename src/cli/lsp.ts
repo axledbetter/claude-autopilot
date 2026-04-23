@@ -187,7 +187,7 @@ export async function runLsp(options: { cwd?: string } = {}): Promise<void> {
   process.stdin.on('data', (chunk: Buffer) => {
     buf = Buffer.concat([buf, chunk]);
     const { messages, remaining } = parseMessages(buf);
-    buf = remaining;
+    buf = remaining as Buffer<ArrayBuffer>;
     for (const msg of messages) handle(msg as LspMessage);
   });
 

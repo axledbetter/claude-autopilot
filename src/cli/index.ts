@@ -24,6 +24,8 @@ import { runPr } from './pr.ts';
 import { runBaseline } from './baseline.ts';
 import { runTriage } from './triage.ts';
 import { runLsp } from './lsp.ts';
+import { runWorker } from './worker.ts';
+import { runTestGen } from './test-gen.ts';
 
 const args = process.argv.slice(2);
 
@@ -37,7 +39,7 @@ if (args[0] === '--version' || args[0] === '-v') {
   process.exit(0);
 }
 
-const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
+const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity'];
 
 // Bare invocation — no subcommand, no flags → show welcome guide
@@ -58,6 +60,7 @@ if (args.length === 0) {
   \x1b[36mnpx guardrail scan src/auth/\x1b[0m           Scan any path (no git required)
   \x1b[36mnpx guardrail scan --ask "SQL injection?" src/db/\x1b[0m
   \x1b[36mnpx guardrail fix\x1b[0m                      Auto-fix cached findings
+  \x1b[36mnpx guardrail pr-desc\x1b[0m                  Generate PR description from current diff
 
 \x1b[1mSetup:\x1b[0m
 
@@ -107,6 +110,8 @@ Commands:
   doctor       Check prerequisites (alias: preflight)
   autoregress  Snapshot regression tests (run|diff|update|generate)
   lsp          Language server — publishes findings as LSP diagnostics (stdin/stdout)
+  worker       Persistent review daemon for multi-terminal parallel usage (start|stop|status)
+  test-gen     Detect uncovered exports and generate test cases using the LLM
 
 Options (run):
   --base <ref>         Git base ref for diff (default: HEAD~1)
@@ -156,7 +161,7 @@ switch (subcommand) {
     const config = flag('config');
     const ask = flag('ask');
     const focusArg = flag('focus');
-    if (focusArg && !['security', 'logic', 'performance', 'all'].includes(focusArg)) {
+    if (focusArg && !['security', 'logic', 'performance', 'brand', 'all'].includes(focusArg)) {
       console.error(`\x1b[31m[guardrail] --focus must be "security", "logic", "performance", or "all"\x1b[0m`);
       process.exit(1);
     }
@@ -169,7 +174,7 @@ switch (subcommand) {
       targets: targets.length > 0 ? targets : undefined,
       all,
       ask,
-      focus: focusArg as 'security' | 'logic' | 'performance' | 'all' | undefined,
+      focus: focusArg as 'security' | 'logic' | 'performance' | 'brand' | 'all' | undefined,
       dryRun,
     });
     process.exit(code);
@@ -215,6 +220,7 @@ switch (subcommand) {
     const dryRun = boolFlag('dry-run');
     const diff = boolFlag('diff');
     const delta = boolFlag('delta');
+    const staticOnly = args.includes('--static-only');
     const inlineComments = boolFlag('inline-comments');
     const postComments = boolFlag('post-comments');
     const formatArg = flag('format');
@@ -249,6 +255,7 @@ switch (subcommand) {
       postComments,
       format: formatArg as 'text' | 'sarif' | 'junit' | undefined,
       outputPath,
+      skipReview: staticOnly,
     });
     process.exit(code);
     break;
@@ -306,7 +313,11 @@ switch (subcommand) {
     const { runHook } = await import('./hook.ts');
     const hookSub = args[1] ?? 'status';
     const force = boolFlag('force');
-    const code = await runHook(hookSub, { force });
+    const code = await runHook(hookSub, {
+      force,
+      preCommitOnly: args.includes('--pre-commit-only'),
+      prePushOnly: args.includes('--pre-push-only'),
+    });
     process.exit(code);
     break;
   }
@@ -342,6 +353,39 @@ switch (subcommand) {
     const rest = args.slice(2);
     const code = await runTriage(sub, rest);
     process.exit(code);
+    break;
+  }
+
+  case 'test-gen': {
+    const config = flag('config');
+    const base = flag('base');
+    const dryRun = boolFlag('dry-run');
+    const verify = boolFlag('verify');
+    const targets = args.slice(1).filter(a => !a.startsWith('--') && a !== config && a !== base);
+    const code = await runTestGen({
+      cwd: process.cwd(),
+      configPath: config,
+      targets: targets.length > 0 ? targets : undefined,
+      base,
+      dryRun,
+      verify,
+    });
+    process.exit(code);
+    break;
+  }
+
+  case 'pr-desc': {
+    const { runPrDesc } = await import('./pr-desc.ts');
+    const baseIdx = args.indexOf('--base');
+    const base = baseIdx !== -1 ? args[baseIdx + 1] : undefined;
+    const outputIdx = args.indexOf('--output');
+    const output = outputIdx !== -1 ? args[outputIdx + 1] : undefined;
+    await runPrDesc({
+      base,
+      post: args.includes('--post'),
+      yes: args.includes('--yes'),
+      output,
+    });
     break;
   }
 
@@ -390,6 +434,14 @@ switch (subcommand) {
       process.exit(1);
     }
     await runSetup({ force, profile: profileArg as 'security-strict' | 'team' | 'solo' | undefined });
+    break;
+  }
+
+  case 'worker': {
+    const sub = args[1];
+    const config = flag('config');
+    const code = await runWorker(sub, { cwd: process.cwd(), configPath: config });
+    process.exit(code);
     break;
   }
 

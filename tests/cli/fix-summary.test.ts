@@ -8,8 +8,8 @@ import { saveCachedFindings } from '../../src/core/persist/findings-cache.ts';
 import type { Finding } from '../../src/core/findings/types.ts';
 
 const FINDINGS: Finding[] = [
-  { file: 'src/auth.ts', line: 42, severity: 'critical', message: 'Unparameterized SQL query', suggestion: 'Use parameterized queries', rule: 'sql-injection' },
-  { file: 'src/utils.ts', line: 7, severity: 'warning', message: 'console.log left in production', rule: 'console-log' },
+  { id: 'sql-injection:src/auth.ts:42', source: 'static-rules', category: 'sql-injection', file: 'src/auth.ts', line: 42, severity: 'critical', message: 'Unparameterized SQL query', suggestion: 'Use parameterized queries', protectedPath: false, createdAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'console-log:src/utils.ts:7', source: 'static-rules', category: 'console-log', file: 'src/utils.ts', line: 7, severity: 'warning', message: 'console.log left in production', protectedPath: false, createdAt: '2026-01-01T00:00:00.000Z' },
 ];
 
 async function captureConsole(fn: () => Promise<unknown>): Promise<string[]> {
