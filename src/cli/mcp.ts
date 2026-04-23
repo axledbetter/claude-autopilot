@@ -26,7 +26,7 @@ export async function runMcp(options: { cwd?: string; configPath?: string } = {}
   }
 
   // Determine adapter name and options from config
-  const engineRef = (config as Record<string, unknown>).reviewEngine;
+  const engineRef = (config as unknown as Record<string, unknown>).reviewEngine;
   const ref =
     typeof engineRef === 'string'
       ? engineRef

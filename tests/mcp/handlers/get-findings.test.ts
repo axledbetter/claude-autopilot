@@ -31,7 +31,7 @@ describe('handleGetFindings', () => {
     saveRun(tmp, 'run2', FINDINGS, {});
     const result = await handleGetFindings({ run_id: 'run2', severity: 'critical', cwd: tmp });
     assert.equal(result.findings.length, 1);
-    assert.equal(result.findings[0].severity, 'critical');
+    assert.equal(result.findings[0]!.severity, 'critical');
     fs.rmSync(tmp, { recursive: true });
   });
 
