@@ -1,6 +1,9 @@
 // tests/schema-alignment-extractor.test.ts
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 describe('extractFromSql', () => {
   it('extracts CREATE TABLE', async () => {
@@ -89,5 +92,60 @@ describe('extractFromSql', () => {
     assert.equal(entities.length, 2);
     assert.equal(entities[0]!.operation, 'add_column');
     assert.equal(entities[1]!.operation, 'drop_column');
+  });
+});
+
+describe('extractFromPrisma', () => {
+  it('extracts model name as create_table and fields as add_column', async () => {
+    const { extractFromPrisma } = await import('../src/core/schema-alignment/extractor/prisma.ts');
+    const content = `
+model User {
+  id    String @id
+  email String
+  name  String?
+}
+`;
+    const entities = extractFromPrisma(content);
+    const tableEntity = entities.find(e => e.operation === 'create_table');
+    assert.ok(tableEntity, 'expected create_table entity');
+    assert.equal(tableEntity!.table, 'User');
+    const cols = entities.filter(e => e.operation === 'add_column');
+    const names = cols.map(c => c.column);
+    assert.ok(names.includes('email'), `expected email in ${names.join(',')}`);
+    assert.ok(names.includes('name'), `expected name in ${names.join(',')}`);
+  });
+
+  it('handles multiple models', async () => {
+    const { extractFromPrisma } = await import('../src/core/schema-alignment/extractor/prisma.ts');
+    const content = `
+model User { id String @id \n  email String }
+model Order { id String @id \n  total Float }
+`;
+    const entities = extractFromPrisma(content);
+    const tables = entities.filter(e => e.operation === 'create_table').map(e => e.table);
+    assert.ok(tables.includes('User'));
+    assert.ok(tables.includes('Order'));
+  });
+});
+
+describe('extractor index', () => {
+  it('dispatches .sql files to sql extractor', async () => {
+    const { extract } = await import('../src/core/schema-alignment/extractor/index.ts');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-sa-'));
+    const file = path.join(dir, 'migration.sql');
+    fs.writeFileSync(file, 'ALTER TABLE users ADD COLUMN status text;');
+    const entities = extract(file);
+    assert.equal(entities[0]!.operation, 'add_column');
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  it('returns [] for unsupported extension and logs to stderr', async () => {
+    const { extract } = await import('../src/core/schema-alignment/extractor/index.ts');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-sa-'));
+    const file = path.join(dir, 'migration.rb');
+    fs.writeFileSync(file, '# rails migration');
+    const entities = extract(file);
+    assert.deepEqual(entities, []);
+    fs.rmSync(dir, { recursive: true });
   });
 });
