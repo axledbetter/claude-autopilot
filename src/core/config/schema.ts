@@ -126,6 +126,41 @@ export const GUARDRAIL_CONFIG_SCHEMA = {
     cache: { type: 'object' },
     persistence: { type: 'object' },
     concurrency: { type: 'object' },
+    council: {
+      type: 'object',
+      required: ['models', 'synthesizer'],
+      additionalProperties: false,
+      properties: {
+        models: {
+          type: 'array',
+          minItems: 2,
+          items: {
+            type: 'object',
+            required: ['adapter', 'model', 'label'],
+            additionalProperties: false,
+            properties: {
+              adapter: { type: 'string' },
+              model: { type: 'string' },
+              label: { type: 'string' },
+            },
+          },
+        },
+        synthesizer: {
+          type: 'object',
+          required: ['adapter', 'model', 'label'],
+          additionalProperties: false,
+          properties: {
+            adapter: { type: 'string' },
+            model: { type: 'string' },
+            label: { type: 'string' },
+          },
+        },
+        timeout_ms: { type: 'number' },
+        min_successful_responses: { type: 'number' },
+        parallel_input_max_tokens: { type: 'number' },
+        synthesis_input_max_tokens: { type: 'number' },
+      },
+    },
   },
   definitions: {
     adapterRef: {
