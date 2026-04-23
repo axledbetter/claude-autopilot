@@ -219,6 +219,7 @@ switch (subcommand) {
     const dryRun = boolFlag('dry-run');
     const diff = boolFlag('diff');
     const delta = boolFlag('delta');
+    const staticOnly = args.includes('--static-only');
     const inlineComments = boolFlag('inline-comments');
     const postComments = boolFlag('post-comments');
     const formatArg = flag('format');
@@ -253,6 +254,7 @@ switch (subcommand) {
       postComments,
       format: formatArg as 'text' | 'sarif' | 'junit' | undefined,
       outputPath,
+      skipReview: staticOnly,
     });
     process.exit(code);
     break;
@@ -310,7 +312,11 @@ switch (subcommand) {
     const { runHook } = await import('./hook.ts');
     const hookSub = args[1] ?? 'status';
     const force = boolFlag('force');
-    const code = await runHook(hookSub, { force });
+    const code = await runHook(hookSub, {
+      force,
+      preCommitOnly: args.includes('--pre-commit-only'),
+      prePushOnly: args.includes('--pre-push-only'),
+    });
     process.exit(code);
     break;
   }
