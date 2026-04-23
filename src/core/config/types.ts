@@ -68,4 +68,12 @@ export interface GuardrailConfig {
   cache?: Record<string, unknown>;
   persistence?: Record<string, unknown>;
   concurrency?: Record<string, unknown>;
+  council?: {
+    models: Array<{ adapter: string; model: string; label: string }>;
+    synthesizer: { adapter: string; model: string; label: string };
+    timeout_ms?: number;
+    min_successful_responses?: number;
+    parallel_input_max_tokens?: number;
+    synthesis_input_max_tokens?: number;
+  };
 }
