@@ -4,7 +4,7 @@ import { dedupFindings, findingContentKey } from '../findings/dedup.ts';
 export interface StaticRule {
   name: string;
   severity: 'critical' | 'warning' | 'note';
-  check(touchedFiles: string[]): Promise<Finding[]>;
+  check(touchedFiles: string[], config?: Record<string, unknown>): Promise<Finding[]>;
   autofix?(finding: Finding): Promise<FixStatus>;
 }
 

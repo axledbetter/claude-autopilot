@@ -89,6 +89,7 @@ export interface RunCommandOptions {
   format?: 'text' | 'sarif' | 'junit';
   outputPath?: string;
   postComments?: boolean; // post/update summary comment on the open PR
+  skipReview?: boolean;  // skip tests and review phases (static rules only)
 }
 
 /**
@@ -225,6 +226,7 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     cwd,
     gitSummary: gitCtx.summary ?? undefined,
     base: options.base,
+    skipReview: options.skipReview,
   };
 
   // Post pending commit status (best-effort — never fatal)

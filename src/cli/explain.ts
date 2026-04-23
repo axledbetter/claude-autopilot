@@ -4,6 +4,7 @@ import { loadCachedFindings } from '../core/persist/findings-cache.ts';
 import { loadConfig } from '../core/config/loader.ts';
 import { loadAdapter } from '../adapters/loader.ts';
 import type { Finding } from '../core/findings/types.ts';
+import type { ReviewEngine } from '../adapters/review-engine/types.ts';
 
 const C = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
@@ -168,7 +169,7 @@ export async function runExplain(options: ExplainCommandOptions = {}): Promise<n
   console.log('');
 
   try {
-    const output = await engine.review({ content: prompt, kind: 'file-batch' });
+    const output = await (engine as unknown as ReviewEngine).review({ content: prompt, kind: 'file-batch' });
     const text = output.rawOutput.trim();
     const sections = parseSections(text);
 
