@@ -26,6 +26,7 @@ import { runTriage } from './triage.ts';
 import { runLsp } from './lsp.ts';
 import { runWorker } from './worker.ts';
 import { runTestGen } from './test-gen.ts';
+import { runCouncilCmd } from './council.ts';
 
 const args = process.argv.slice(2);
 
@@ -39,7 +40,7 @@ if (args[0] === '--version' || args[0] === '-v') {
   process.exit(0);
 }
 
-const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
+const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity'];
 
 // Bare invocation — no subcommand, no flags → show welcome guide
@@ -441,6 +442,23 @@ switch (subcommand) {
     const sub = args[1];
     const config = flag('config');
     const code = await runWorker(sub, { cwd: process.cwd(), configPath: config });
+    process.exit(code);
+    break;
+  }
+
+  case 'council': {
+    const config = flag('config');
+    const prompt = flag('prompt');
+    const contextFile = flag('context-file');
+    const dryRun = boolFlag('dry-run');
+    const noSynthesize = boolFlag('no-synthesize');
+    const code = await runCouncilCmd({
+      prompt,
+      contextFile,
+      configPath: config,
+      dryRun,
+      noSynthesize,
+    });
     process.exit(code);
     break;
   }
