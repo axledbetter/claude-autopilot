@@ -13,3 +13,4 @@ dist/
 .worktrees/
 .npmrc
 .guardrail-cache/
+.tmp-import-scanner-*

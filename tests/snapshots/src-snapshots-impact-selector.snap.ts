@@ -1,4 +1,4 @@
-// @snapshot-for: src/snapshots/impact-selector.ts
+// @snapshot-for: scripts/snapshots/impact-selector.ts
 // @generated-at: 2026-04-21T17:42:06.431Z
 // @source-commit: d207869
 // @generator-version: 1.0.0-alpha.6
@@ -9,8 +9,8 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 
-import { selectSnapshots } from '../../src/snapshots/impact-selector.ts';
-import { normalizeSnapshot } from '../../src/snapshots/serializer.ts';
+import { selectSnapshots } from '../../scripts/snapshots/impact-selector.ts';
+import { normalizeSnapshot } from '../../scripts/snapshots/serializer.ts';
 
 const SLUG = 'src-snapshots-impact-selector';
 const baselineRaw = process.env.CAPTURE_BASELINE === '1' ? '{}' : fs.readFileSync(fileURLToPath(new URL('./baselines/src-snapshots-impact-selector.json', import.meta.url)), 'utf8');

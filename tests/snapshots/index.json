@@ -3,12 +3,12 @@
     "src/formatters/sarif.ts"
   ],
   "tests/snapshots/src-snapshots-impact-selector.snap.ts": [
-    "src/snapshots/impact-selector.ts"
+    "scripts/snapshots/impact-selector.ts"
   ],
   "tests/snapshots/src-snapshots-import-scanner.snap.ts": [
-    "src/snapshots/import-scanner.ts"
+    "scripts/snapshots/import-scanner.ts"
   ],
   "tests/snapshots/src-snapshots-serializer.snap.ts": [
-    "src/snapshots/serializer.ts"
+    "scripts/snapshots/serializer.ts"
   ]
 }

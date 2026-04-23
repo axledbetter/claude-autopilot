@@ -5,9 +5,9 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { selectSnapshots } from '../src/snapshots/impact-selector.ts';
+import { selectSnapshots } from './snapshots/impact-selector.ts';
 import OpenAI from 'openai';
-import { buildImportMap } from '../src/snapshots/import-scanner.ts';
+import { buildImportMap } from './snapshots/import-scanner.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');

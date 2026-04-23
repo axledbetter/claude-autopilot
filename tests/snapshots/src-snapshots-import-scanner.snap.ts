@@ -1,4 +1,4 @@
-// @snapshot-for: src/snapshots/import-scanner.ts
+// @snapshot-for: scripts/snapshots/import-scanner.ts
 // @generated-at: 2026-04-21T17:42:06.431Z
 // @source-commit: d207869
 // @generator-version: 1.0.0-alpha.6
@@ -9,8 +9,8 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 
-import { buildImportMap } from '../../src/snapshots/import-scanner.ts';
-import { normalizeSnapshot } from '../../src/snapshots/serializer.ts';
+import { buildImportMap } from '../../scripts/snapshots/import-scanner.ts';
+import { normalizeSnapshot } from '../../scripts/snapshots/serializer.ts';
 
 const SLUG = 'src-snapshots-import-scanner';
 void SLUG;

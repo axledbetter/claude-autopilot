@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { buildImportMap } from '../../src/snapshots/import-scanner.ts';
+import { buildImportMap } from '../../scripts/snapshots/import-scanner.ts';
 
 let tmpDir: string;
 

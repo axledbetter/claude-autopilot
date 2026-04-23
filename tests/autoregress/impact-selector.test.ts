@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { selectSnapshots } from '../../src/snapshots/impact-selector.ts';
+import { selectSnapshots } from '../../scripts/snapshots/impact-selector.ts';
 
 const INDEX: Record<string, string[]> = {
   'tests/snapshots/sarif.snap.ts': ['src/formatters/sarif.ts'],
