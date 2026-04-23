@@ -32,6 +32,8 @@ import type { ReviewEngine } from '../adapters/review-engine/types.ts';
 import type { GuardrailConfig } from '../core/config/types.ts';
 import { fileURLToPath } from 'node:url';
 import { toSarif } from '../formatters/sarif.ts';
+import { toJUnit } from '../formatters/junit.ts';
+import { loadTriage, filterTriaged } from '../core/persist/triage.ts';
 import { emitAnnotations } from '../formatters/github-annotations.ts';
 import { detectStack } from '../core/detect/stack.ts';
 import { detectProtectedPaths } from '../core/detect/protected-paths.ts';
@@ -84,7 +86,7 @@ export interface RunCommandOptions {
   newOnly?: boolean;        // only report findings not in committed .guardrail-baseline.json
   failOn?: 'critical' | 'warning' | 'note' | 'none'; // severity threshold for exit 1
   inlineComments?: boolean; // post per-line review comments on the PR diff
-  format?: 'text' | 'sarif';
+  format?: 'text' | 'sarif' | 'junit';
   outputPath?: string;
   postComments?: boolean; // post/update summary comment on the open PR
 }
@@ -202,6 +204,18 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     config = { ...config, reviewStrategy: 'diff' };
   }
 
+  // Pre-run cost estimate
+  if (config.cost?.estimateBeforeRun) {
+    const totalChars = touchedFiles.reduce((sum, f) => {
+      try { return sum + fs.statSync(f).size; } catch { return sum; }
+    }, 0);
+    const estTokens = Math.round(totalChars / 4);
+    const estCost = estTokens / 1_000_000 * 3.0; // rough: $3/M tokens (Sonnet)
+    const cap = config.cost?.maxPerRun;
+    console.log(fmt('dim', `  [run] estimated: ~${estTokens.toLocaleString()} tokens, ~$${estCost.toFixed(4)}`
+      + (cap ? ` (cap: $${cap})` : '')));
+  }
+
   // Execute pipeline
   const input: RunInput = {
     touchedFiles,
@@ -270,6 +284,19 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     }
   }
 
+  // Triage filter: suppress accepted-risk / false-positive findings
+  const triageStore = loadTriage(cwd);
+  if (triageStore.entries.length > 0) {
+    const { active, triageCount } = filterTriaged(result.allFindings, triageStore);
+    if (triageCount > 0) {
+      result.allFindings = active;
+      for (const phase of result.phases) {
+        phase.findings = filterTriaged(phase.findings, triageStore).active;
+      }
+      console.log(fmt('dim', `  [run] ${triageCount} triaged finding${triageCount !== 1 ? 's' : ''} suppressed (accepted-risk / false-positive)`));
+    }
+  }
+
   // Always persist the unfiltered findings as the run cache
   saveCachedFindings(cwd, result.allFindings);
 
@@ -293,6 +320,14 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     fs.mkdirSync(path.dirname(path.resolve(options.outputPath)), { recursive: true });
     fs.writeFileSync(options.outputPath, JSON.stringify(sarif, null, 2), 'utf8');
     console.log(fmt('dim', `[run] SARIF written to ${options.outputPath}`));
+  }
+
+  // Write JUnit XML output if requested
+  if (options.format === 'junit' && options.outputPath) {
+    const junit = toJUnit(result);
+    fs.mkdirSync(path.dirname(path.resolve(options.outputPath)), { recursive: true });
+    fs.writeFileSync(options.outputPath, junit, 'utf8');
+    console.log(fmt('dim', `[run] JUnit XML written to ${options.outputPath}`));
   }
 
   // Post inline PR review comments if requested

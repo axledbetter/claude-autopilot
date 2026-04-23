@@ -22,6 +22,7 @@ import { runExplain } from './explain.ts';
 import { runIgnore } from './ignore-helper.ts';
 import { runPr } from './pr.ts';
 import { runBaseline } from './baseline.ts';
+import { runTriage } from './triage.ts';
 
 const args = process.argv.slice(2);
 
@@ -35,8 +36,8 @@ if (args[0] === '--version' || args[0] === '-v') {
   process.exit(0);
 }
 
-const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
-const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note'];
+const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
+const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity'];
 
 // Bare invocation — no subcommand, no flags → show welcome guide
 if (args.length === 0) {
@@ -217,12 +218,12 @@ switch (subcommand) {
     const formatArg = flag('format');
     const outputPath = flag('output');
 
-    if (formatArg && formatArg !== 'text' && formatArg !== 'sarif') {
-      console.error(`\x1b[31m[guardrail] --format must be "text" or "sarif"\x1b[0m`);
+    if (formatArg && formatArg !== 'text' && formatArg !== 'sarif' && formatArg !== 'junit') {
+      console.error(`\x1b[31m[guardrail] --format must be "text", "sarif", or "junit"\x1b[0m`);
       process.exit(1);
     }
-    if (formatArg === 'sarif' && !outputPath) {
-      console.error(`\x1b[31m[guardrail] --format sarif requires --output <path>\x1b[0m`);
+    if ((formatArg === 'sarif' || formatArg === 'junit') && !outputPath) {
+      console.error(`\x1b[31m[guardrail] --format ${formatArg} requires --output <path>\x1b[0m`);
       process.exit(1);
     }
 
@@ -244,7 +245,7 @@ switch (subcommand) {
       failOn: failOnArg as 'critical' | 'warning' | 'note' | 'none' | undefined,
       inlineComments,
       postComments,
-      format: formatArg as 'text' | 'sarif' | undefined,
+      format: formatArg as 'text' | 'sarif' | 'junit' | undefined,
       outputPath,
     });
     process.exit(code);
@@ -323,11 +324,21 @@ switch (subcommand) {
       process.exit(1);
     }
     const dryRun = boolFlag('dry-run');
+    const noVerify = boolFlag('no-verify');
     const code = await runFix({
       configPath: config,
       severity: severityArg as 'critical' | 'warning' | 'all' | undefined,
       dryRun,
+      noVerify,
     });
+    process.exit(code);
+    break;
+  }
+
+  case 'triage': {
+    const sub = args[1];
+    const rest = args.slice(2);
+    const code = await runTriage(sub, rest);
     process.exit(code);
     break;
   }
@@ -366,7 +377,12 @@ switch (subcommand) {
 
   case 'setup': {
     const force = args.includes('--force');
-    await runSetup({ force });
+    const profileArg = flag('profile');
+    if (profileArg && !['security-strict', 'team', 'solo'].includes(profileArg)) {
+      console.error(`\x1b[31m[guardrail] --profile must be "security-strict", "team", or "solo"\x1b[0m`);
+      process.exit(1);
+    }
+    await runSetup({ force, profile: profileArg as 'security-strict' | 'team' | 'solo' | undefined });
     break;
   }
 

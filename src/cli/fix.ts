@@ -1,11 +1,13 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
+import { execSync } from 'node:child_process';
 import { loadCachedFindings } from '../core/persist/findings-cache.ts';
 import { loadConfig } from '../core/config/loader.ts';
 import { loadAdapter } from '../adapters/loader.ts';
 import type { ReviewEngine } from '../adapters/review-engine/types.ts';
 import type { Finding } from '../core/findings/types.ts';
+import type { GuardrailConfig } from '../core/config/types.ts';
 
 const C = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
@@ -26,7 +28,8 @@ export interface FixCommandOptions {
   configPath?: string;
   severity?: 'critical' | 'warning' | 'all';
   dryRun?: boolean;
-  yes?: boolean;  // skip per-fix confirmation prompts
+  yes?: boolean;      // skip per-fix confirmation prompts
+  noVerify?: boolean; // skip test verification after applying fix
 }
 
 interface FixResult {
@@ -124,21 +127,28 @@ export async function runFix(options: FixCommandOptions = {}): Promise<number> {
     return 0;
   }
 
-  // Load review engine (config optional — defaults to auto adapter)
+  // Load config + review engine (config optional — defaults to auto adapter)
   let engine: ReviewEngine;
+  let loadedConfig: GuardrailConfig | null = null;
   try {
-    const config = fs.existsSync(configPath) ? await loadConfig(configPath) : null;
-    const ref = config
-      ? (typeof config.reviewEngine === 'string' ? config.reviewEngine : (config.reviewEngine?.adapter ?? 'auto'))
+    loadedConfig = fs.existsSync(configPath) ? await loadConfig(configPath) : null;
+    const ref = loadedConfig
+      ? (typeof loadedConfig.reviewEngine === 'string' ? loadedConfig.reviewEngine : (loadedConfig.reviewEngine?.adapter ?? 'auto'))
       : 'auto';
     engine = await loadAdapter<ReviewEngine>({
       point: 'review-engine',
       ref,
-      options: config && typeof config.reviewEngine === 'object' ? config.reviewEngine.options : undefined,
+      options: loadedConfig && typeof loadedConfig.reviewEngine === 'object' ? loadedConfig.reviewEngine.options : undefined,
     });
   } catch (err) {
     console.error(fmt('red', `[fix] Could not load review engine: ${err instanceof Error ? err.message : String(err)}`));
     return 1;
+  }
+
+  const testCommand = loadedConfig?.testCommand ?? null;
+  const shouldVerify = !options.noVerify && !!testCommand;
+  if (shouldVerify) {
+    console.log(fmt('dim', `[fix] Verified mode — running "${testCommand}" after each fix\n`));
   }
 
   const results: FixResult[] = [];
@@ -205,7 +215,8 @@ export async function runFix(options: FixCommandOptions = {}): Promise<number> {
     // Apply fix atomically
     try {
       const absPath = path.resolve(cwd, finding.file);
-      const allLines = fs.readFileSync(absPath, 'utf8').split('\n');
+      const originalContent = fs.readFileSync(absPath, 'utf8');
+      const allLines = originalContent.split('\n');
       const newLines = [
         ...allLines.slice(0, result.startLine! - 1),
         ...result.replacementLines!,
@@ -214,8 +225,23 @@ export async function runFix(options: FixCommandOptions = {}): Promise<number> {
       const tmp = absPath + '.guardrail.tmp';
       fs.writeFileSync(tmp, newLines.join('\n'), 'utf8');
       fs.renameSync(tmp, absPath);
-      console.log(fmt('green', `    ✓ applied`));
-      results.push({ file: finding.file, line: finding.line!, findingMessage: finding.message, status: 'fixed' });
+
+      if (shouldVerify) {
+        // Verified mode — same shell invocation pattern as phases/tests.ts
+        console.log(fmt('dim', `    ↻ verifying…`));
+        const passed = runTestCommand(testCommand!, cwd);
+        if (passed) {
+          console.log(fmt('green', `    ✓ applied + tests pass`));
+          results.push({ file: finding.file, line: finding.line!, findingMessage: finding.message, status: 'fixed' });
+        } else {
+          fs.writeFileSync(absPath, originalContent, 'utf8');
+          console.log(fmt('yellow', `    ⚠ reverted — tests failed after fix`));
+          results.push({ file: finding.file, line: finding.line!, findingMessage: finding.message, status: 'rejected', reason: 'tests failed after fix — reverted' });
+        }
+      } else {
+        console.log(fmt('green', `    ✓ applied`));
+        results.push({ file: finding.file, line: finding.line!, findingMessage: finding.message, status: 'fixed' });
+      }
     } catch (err) {
       console.log(fmt('red', `    ✗ write failed: ${err instanceof Error ? err.message : String(err)}`));
       results.push({ file: finding.file, line: finding.line!, findingMessage: finding.message, status: 'failed', reason: String(err) });
@@ -241,6 +267,20 @@ export async function runFix(options: FixCommandOptions = {}): Promise<number> {
   }
 
   return failed > 0 ? 1 : 0;
+}
+
+function runTestCommand(cmd: string, cwd: string): boolean {
+  try {
+    execSync(cmd, {
+      cwd,
+      stdio: 'ignore',
+      timeout: 120000,
+      shell: process.env.SHELL ?? '/bin/sh',
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 interface GenerateResult {

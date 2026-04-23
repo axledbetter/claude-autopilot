@@ -20,10 +20,56 @@ const PRESET_LABELS: Record<string, string> = {
   'go': 'Go + PostgreSQL',
 };
 
+export type ProfileName = 'security-strict' | 'team' | 'solo';
+
+const PROFILES: Record<ProfileName, { label: string; overlay: string }> = {
+  'security-strict': {
+    label: 'Security Strict',
+    overlay: [
+      'staticRules:',
+      '  - hardcoded-secrets',
+      '  - npm-audit',
+      '  - package-lock-sync',
+      '  - sql-injection',
+      '  - missing-auth',
+      '  - ssrf',
+      '  - insecure-redirect',
+      'policy:',
+      '  failOn: warning',
+      '  newOnly: false',
+    ].join('\n'),
+  },
+  'team': {
+    label: 'Team',
+    overlay: [
+      'staticRules:',
+      '  - hardcoded-secrets',
+      '  - npm-audit',
+      '  - sql-injection',
+      '  - missing-auth',
+      'policy:',
+      '  failOn: critical',
+      '  newOnly: false',
+    ].join('\n'),
+  },
+  'solo': {
+    label: 'Solo Dev',
+    overlay: [
+      'staticRules:',
+      '  - hardcoded-secrets',
+      '  - npm-audit',
+      'policy:',
+      '  failOn: critical',
+      '  newOnly: false',
+    ].join('\n'),
+  },
+};
+
 export interface SetupOptions {
   cwd?: string;
   force?: boolean;
   skipHook?: boolean;
+  profile?: ProfileName;
 }
 
 function presetSearchPaths(name: string, cwd: string): string[] {
@@ -80,6 +126,20 @@ export async function runSetup(options: SetupOptions = {}): Promise<void> {
 
   let presetContent = await fsAsync.readFile(presetConfigPath, 'utf8');
   presetContent = presetContent.trimEnd() + `\ntestCommand: "${detection.testCommand}"\n`;
+
+  // Apply profile overlay if specified
+  if (options.profile) {
+    const profile = PROFILES[options.profile];
+    if (profile) {
+      console.log(`  ${PASS}  Profile:      ${profile.label}`);
+      // Profile overlay replaces staticRules + policy sections from preset
+      presetContent = presetContent
+        .replace(/^staticRules:.*?(?=^\w|\z)/ms, '')
+        .replace(/^policy:.*?(?=^\w|\z)/ms, '');
+      presetContent = presetContent.trimEnd() + `\n${profile.overlay}\n`;
+    }
+  }
+
   await fsAsync.writeFile(dest, presetContent, 'utf8');
 
   console.log(`\n${BOLD('Config written to guardrail.config.yaml:')}\n`);

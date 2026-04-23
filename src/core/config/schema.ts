@@ -73,7 +73,15 @@ export const GUARDRAIL_CONFIG_SCHEMA = {
       },
       additionalProperties: false,
     },
-    cost: { type: 'object' },
+    cost: {
+      type: 'object',
+      properties: {
+        maxPerRun: { type: 'number' },
+        estimateBeforeRun: { type: 'boolean' },
+        pricing: { type: 'object' },
+      },
+      additionalProperties: false,
+    },
     cache: { type: 'object' },
     persistence: { type: 'object' },
     concurrency: { type: 'object' },

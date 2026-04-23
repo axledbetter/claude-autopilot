@@ -44,7 +44,14 @@ export interface GuardrailConfig {
     /** Path to baseline file relative to cwd. Default: .guardrail-baseline.json */
     baselinePath?: string;
   };
-  cost?: Record<string, unknown>;
+  cost?: {
+    /** Abort review phase if estimated spend exceeds this amount (USD). */
+    maxPerRun?: number;
+    /** Print token estimate before starting LLM review. Default: false. */
+    estimateBeforeRun?: boolean;
+    /** Per-model token price overrides (input/output per 1M tokens). */
+    pricing?: Record<string, { inputPer1M: number; outputPer1M: number }>;
+  };
   cache?: Record<string, unknown>;
   persistence?: Record<string, unknown>;
   concurrency?: Record<string, unknown>;

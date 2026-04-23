@@ -55,7 +55,8 @@ export async function runGuardrail(input: RunInput): Promise<RunResult> {
 
   // Review phase (optional — only when engine is provided)
   if (input.reviewEngine) {
-    const budgetUSD = (input.config.cost as { budgetUSD?: number } | undefined)?.budgetUSD;
+    const costCfg = input.config.cost as { maxPerRun?: number; budgetUSD?: number } | undefined;
+    const budgetUSD = costCfg?.maxPerRun ?? costCfg?.budgetUSD;
     const reviewResult = await runReviewPhase({
       touchedFiles: input.touchedFiles,
       engine: input.reviewEngine,
