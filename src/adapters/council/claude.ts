@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { GuardrailError } from '../../core/errors.ts';
+import { classifyError } from '../review-engine/prompt-builder.ts';
 import type { CouncilAdapter } from './types.ts';
 
 const SYSTEM_PROMPT = `You are a technical advisor reviewing a software design decision. Evaluate the provided context and question critically. Be direct and specific. Surface tradeoffs, risks, and your recommendation.`;
@@ -24,9 +25,11 @@ export function makeClaudeCouncilAdapter(model: string, label: string): CouncilA
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        const code = classifyError(message);
         throw new GuardrailError(`Claude council call failed: ${message}`, {
-          code: 'transient_network',
+          code,
           provider: 'claude',
+          retryable: code === 'rate_limit',
         });
       }
       return response.content

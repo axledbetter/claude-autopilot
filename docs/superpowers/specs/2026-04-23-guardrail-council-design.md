@@ -72,7 +72,7 @@ council:
 ### Validation rules (Zod)
 - `models` must have at least 2 entries
 - `label` must be unique across `models`
-- `synthesizer.label` must be unique (not a duplicate of a models entry)
+- `synthesizer.label` can reuse a models label (the synthesizer is often the same model configured in models)
 - `min_successful_responses` ≥ 1 and ≤ `models.length`
 - `timeout_ms` ≥ 5000
 - Unknown adapter names rejected at parse time
