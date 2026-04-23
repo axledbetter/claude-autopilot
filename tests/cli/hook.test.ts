@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { runHook } from '../../src/cli/hook.ts';
+import { runHook, GUARDRAIL_MARKER } from '../../src/cli/hook.ts';
 
 let tmpDir: string;
 let gitDir: string;
@@ -27,12 +27,13 @@ describe('autopilot hook', () => {
     const hookPath = path.join(hooksDir, 'pre-push');
     assert.ok(fs.existsSync(hookPath), 'hook file should exist');
     const content = fs.readFileSync(hookPath, 'utf8');
-    assert.ok(content.includes('autoregress'), 'hook should reference autoregress');
+    assert.ok(content.includes(GUARDRAIL_MARKER), 'hook should include guardrail marker');
+    assert.ok(content.includes('guardrail run'), 'hook should reference guardrail run');
     const mode = fs.statSync(hookPath).mode;
     assert.ok((mode & 0o111) !== 0, 'hook should be executable');
   });
 
-  it('install: exits 1 if hook already exists (no --force)', async () => {
+  it('install: exits 1 if non-guardrail hook already exists (no --force)', async () => {
     const hookPath = path.join(hooksDir, 'pre-push');
     fs.writeFileSync(hookPath, '#!/bin/sh\necho existing\n', 'utf8');
     const code = await runHook('install', { cwd: tmpDir });
@@ -46,14 +47,17 @@ describe('autopilot hook', () => {
     const code = await runHook('install', { cwd: tmpDir, force: true });
     assert.equal(code, 0);
     const content = fs.readFileSync(hookPath, 'utf8');
-    assert.ok(content.includes('autoregress'));
+    assert.ok(content.includes(GUARDRAIL_MARKER));
   });
 
-  it('uninstall: removes hook file', async () => {
-    const hookPath = path.join(hooksDir, 'pre-push');
-    fs.writeFileSync(hookPath, '#!/bin/sh\n# autopilot pre-push hook\n', 'utf8');
+  it('uninstall: removes guardrail-managed hook files', async () => {
+    // Install first so we have guardrail-managed hooks
+    await runHook('install', { cwd: tmpDir });
+    const preCommitPath = path.join(hooksDir, 'pre-commit');
+    const prePushPath = path.join(hooksDir, 'pre-push');
     const code = await runHook('uninstall', { cwd: tmpDir });
     assert.equal(code, 0);
-    assert.ok(!fs.existsSync(hookPath), 'hook file should be removed');
+    assert.ok(!fs.existsSync(preCommitPath), 'pre-commit hook should be removed');
+    assert.ok(!fs.existsSync(prePushPath), 'pre-push hook should be removed');
   });
 });
