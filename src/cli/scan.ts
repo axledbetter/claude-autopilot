@@ -60,7 +60,7 @@ export interface ScanCommandOptions {
   targets?: string[];   // explicit paths/dirs to scan
   all?: boolean;        // scan entire codebase
   ask?: string;         // targeted question to inject into review prompt
-  focus?: 'security' | 'logic' | 'performance' | 'all';
+  focus?: 'security' | 'logic' | 'performance' | 'brand' | 'all';
   dryRun?: boolean;
 }
 

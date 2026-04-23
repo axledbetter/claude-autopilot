@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import { GUARDRAIL_CONFIG_SCHEMA } from '../src/core/config/schema.ts';
 import { extractTailwindColors } from '../src/core/static-rules/tailwind-extractor.ts';
 import { brandTokensRule } from '../src/core/static-rules/rules/brand-tokens.ts';
+import { listAvailableRules } from '../src/core/static-rules/registry.ts';
 
 const ajv = new Ajv();
 const validate = ajv.compile(GUARDRAIL_CONFIG_SCHEMA);
@@ -210,5 +211,11 @@ describe('brand-tokens rule', () => {
     const findings = await brandTokensRule.check([f], { brand: { colors: ['#f97316'] } });
     assert.equal(findings.length, 0);
     fs.rmSync(dir, { recursive: true });
+  });
+});
+
+describe('registry', () => {
+  it('brand-tokens is registered', () => {
+    assert.ok(listAvailableRules().includes('brand-tokens'));
   });
 });

@@ -156,7 +156,7 @@ switch (subcommand) {
     const config = flag('config');
     const ask = flag('ask');
     const focusArg = flag('focus');
-    if (focusArg && !['security', 'logic', 'performance', 'all'].includes(focusArg)) {
+    if (focusArg && !['security', 'logic', 'performance', 'brand', 'all'].includes(focusArg)) {
       console.error(`\x1b[31m[guardrail] --focus must be "security", "logic", "performance", or "all"\x1b[0m`);
       process.exit(1);
     }
@@ -169,7 +169,7 @@ switch (subcommand) {
       targets: targets.length > 0 ? targets : undefined,
       all,
       ask,
-      focus: focusArg as 'security' | 'logic' | 'performance' | 'all' | undefined,
+      focus: focusArg as 'security' | 'logic' | 'performance' | 'brand' | 'all' | undefined,
       dryRun,
     });
     process.exit(code);

@@ -15,6 +15,8 @@ const BUILTIN: Record<string, () => Promise<StaticRule>> = {
   'missing-auth':       () => import('./rules/missing-auth.ts').then(m => m.missingAuthRule),
   'ssrf':               () => import('./rules/ssrf.ts').then(m => m.ssrfRule),
   'insecure-redirect':  () => import('./rules/insecure-redirect.ts').then(m => m.insecureRedirectRule),
+  // Brand rules
+  'brand-tokens':       () => import('./rules/brand-tokens.ts').then(m => m.brandTokensRule),
 };
 
 // Preset-specific rules registered by name
