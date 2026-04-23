@@ -1,6 +1,6 @@
 import type { Finding } from '../core/findings/types.ts';
 import * as fs from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
 
 export interface PrDescOptions {
   base?: string;
@@ -158,10 +158,11 @@ async function createPr(title: string, body: string, yes: boolean): Promise<PrDe
     });
     if (!answer.toLowerCase().startsWith('y')) return { title, body };
   }
-  const prUrl = execSync(
-    `gh pr create --title ${JSON.stringify(title)} --body ${JSON.stringify(body)}`,
-    { encoding: 'utf8' },
-  ).trim();
+  const result = spawnSync('gh', ['pr', 'create', '--title', title, '--body', body], { encoding: 'utf8' });
+  if (result.status !== 0) {
+    throw new Error(`gh pr create failed: ${result.stderr?.trim() || result.error?.message || 'unknown error'}`);
+  }
+  const prUrl = result.stdout.trim();
   process.stdout.write(`\nPR created: ${prUrl}\n`);
   return { title, body, prUrl };
 }
