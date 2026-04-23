@@ -59,6 +59,19 @@ describe('parseCouncilConfig', () => {
     );
   });
 
+  it('CC4b: throws on unknown adapter name in synthesizer', () => {
+    assert.throws(
+      () => parseCouncilConfig({
+        models: [
+          { adapter: 'claude', model: 'x', label: 'A' },
+          { adapter: 'openai', model: 'y', label: 'B' },
+        ],
+        synthesizer: { adapter: 'gemini', model: 'z', label: 'S' },
+      }),
+      (e: unknown) => { assert.ok(e instanceof GuardrailError); return true; }
+    );
+  });
+
   it('CC5: throws when min_successful_responses > models.length', () => {
     assert.throws(
       () => parseCouncilConfig({ ...validRaw, min_successful_responses: 5 }),
