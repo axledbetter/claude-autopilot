@@ -64,12 +64,17 @@ export async function runCouncil(
     'Based on these responses, provide a synthesis: areas of agreement, key disagreements, and your final recommendation.',
   ].join('\n\n');
 
-  const synthStart = Date.now();
-  try {
-    const synthText = await synthesizer.consult(synthesisPrompt, synthesisCtx);
-    const synthesis = { label: synthesizer.label, text: synthText, latencyMs: Date.now() - synthStart };
+  // Synthesizer shares the same per-call timeout as model calls so a hung
+  // synthesizer API doesn't block the whole command indefinitely.
+  const synthResponse = await consultWithTimeout(
+    synthesizer,
+    synthesisPrompt,
+    synthesisCtx,
+    config.timeoutMs,
+  );
+  if (synthResponse.status === 'ok' && synthResponse.text) {
+    const synthesis = { label: synthesizer.label, text: synthResponse.text, latencyMs: synthResponse.latencyMs };
     return { schema_version: 1, run_id, status: 'success', prompt, responses, synthesis };
-  } catch {
-    return { schema_version: 1, run_id, status: 'partial', prompt, responses };
   }
+  return { schema_version: 1, run_id, status: 'partial', prompt, responses };
 }
