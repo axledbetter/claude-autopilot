@@ -113,6 +113,22 @@ describe('extractFromSql — additional coverage', () => {
     assert.equal(entities[0]!.table, 'status_enum');
     assert.equal(entities[0]!.operation, 'create_type');
   });
+
+  it('does NOT emit phantom column for ADD CONSTRAINT', async () => {
+    const { extractFromSql } = await import('../src/core/schema-alignment/extractor/sql.ts');
+    const sql = 'ALTER TABLE users ADD CONSTRAINT fk_account FOREIGN KEY (account_id) REFERENCES accounts(id);';
+    const entities = extractFromSql(sql);
+    const cols = entities.filter(e => e.operation === 'add_column');
+    assert.equal(cols.length, 0, `expected no add_column entities, got: ${JSON.stringify(cols)}`);
+  });
+
+  it('does NOT emit phantom column for DROP CONSTRAINT/INDEX', async () => {
+    const { extractFromSql } = await import('../src/core/schema-alignment/extractor/sql.ts');
+    const sql = 'ALTER TABLE users DROP CONSTRAINT fk_account; ALTER TABLE users DROP INDEX idx_email;';
+    const entities = extractFromSql(sql);
+    const drops = entities.filter(e => e.operation === 'drop_column');
+    assert.equal(drops.length, 0, `expected no drop_column entities, got: ${JSON.stringify(drops)}`);
+  });
 });
 
 describe('extractFromPrisma', () => {

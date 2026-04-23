@@ -79,9 +79,10 @@ async function runAllChecks(
   config?: GuardrailConfig,
   engine?: ReviewEngine,
 ): Promise<Finding[]> {
-  const ruleConfig: Record<string, unknown> = config
-    ? { ...(config as unknown as Record<string, unknown>), _engine: engine }
-    : {};
+  const ruleConfig: Record<string, unknown> = {
+    ...(config ? (config as unknown as Record<string, unknown>) : {}),
+    _engine: engine,
+  };
   const all: Finding[] = [];
   for (const rule of rules) all.push(...(await rule.check(files, ruleConfig)));
   return all;

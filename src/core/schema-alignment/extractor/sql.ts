@@ -10,6 +10,12 @@ function unquote(s: string | undefined): string {
 const ID = /(?:"([^"]+)"|`([^`]+)`|(\w+))/;
 const SCHEMA_OPT = /(?:\w+\.)?/;
 
+// Keywords that can follow ADD/DROP but are NOT columns
+const NON_COLUMN_KEYWORDS = new Set([
+  'CONSTRAINT', 'INDEX', 'PRIMARY', 'FOREIGN', 'UNIQUE', 'CHECK',
+  'KEY', 'EXCLUDE', 'REFERENCES',
+]);
+
 export function extractFromSql(content: string): SchemaEntity[] {
   // Strip comments before processing
   const normalized = content
@@ -37,7 +43,10 @@ export function extractFromSql(content: string): SchemaEntity[] {
   for (const m of normalized.matchAll(addColRe)) {
     const table = unquote(m[1] ?? m[2] ?? m[3]);
     const column = unquote(m[4] ?? m[5] ?? m[6]);
-    if (table && column) entities.push({ table, column, operation: 'add_column' });
+    if (!table || !column) continue;
+    // Skip non-column ADD operations (CONSTRAINT, INDEX, PRIMARY KEY, FOREIGN KEY, UNIQUE, CHECK)
+    if (NON_COLUMN_KEYWORDS.has(column.toUpperCase())) continue;
+    entities.push({ table, column, operation: 'add_column' });
   }
 
   // ALTER TABLE [schema.]name DROP [COLUMN] [IF EXISTS] col
@@ -48,7 +57,10 @@ export function extractFromSql(content: string): SchemaEntity[] {
   for (const m of normalized.matchAll(dropColRe)) {
     const table = unquote(m[1] ?? m[2] ?? m[3]);
     const column = unquote(m[4] ?? m[5] ?? m[6]);
-    if (table && column) entities.push({ table, column, operation: 'drop_column' });
+    if (!table || !column) continue;
+    // Skip non-column DROP operations (CONSTRAINT, INDEX, PRIMARY KEY, FOREIGN KEY)
+    if (NON_COLUMN_KEYWORDS.has(column.toUpperCase())) continue;
+    entities.push({ table, column, operation: 'drop_column' });
   }
 
   // ALTER TABLE [schema.]name RENAME [COLUMN] old TO new

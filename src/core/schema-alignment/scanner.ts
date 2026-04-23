@@ -31,10 +31,27 @@ const CODE_EXTS = new Set([
   '.vue', '.svelte', '.astro', '.py', '.rb', '.go', '.rs',
 ]);
 
-function searchLayer(roots: string[], pattern: RegExp, cwd: string): Evidence | null {
+function resolveRoots(roots: string[], cwd: string): string[] {
+  return roots.map(r => path.isAbsolute(r) ? r : path.join(cwd, r));
+}
+
+function isUnder(filePath: string, dir: string): boolean {
+  const rel = path.relative(dir, filePath);
+  return !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+function searchLayer(
+  roots: string[],
+  pattern: RegExp,
+  cwd: string,
+  excludedDirs: string[] = [],
+): Evidence | null {
   for (const root of roots) {
     const dir = path.isAbsolute(root) ? root : path.join(cwd, root);
     for (const filePath of walkFiles(dir)) {
+      // Skip files that belong to an excluded layer's root (avoids UI root
+      // `app/` reporting API evidence from `app/api/`, etc.)
+      if (excludedDirs.some(excl => isUnder(filePath, excl))) continue;
       let content: string;
       try { content = fs.readFileSync(filePath, 'utf8'); } catch { continue; }
       const lines = content.split('\n');
@@ -67,11 +84,11 @@ export function scanLayers(
     api: config?.layerRoots?.api ?? DEFAULT_ROOTS.api,
     ui: config?.layerRoots?.ui ?? DEFAULT_ROOTS.ui,
   };
+  const resolvedTypeRoots = resolveRoots(roots.types, cwd);
+  const resolvedApiRoots = resolveRoots(roots.api, cwd);
 
   return entities.map(entity => {
     const isDestructive = entity.operation === 'drop_column' || entity.operation === 'rename_column';
-    // For destructive: search for the old/dropped name (finding it = stale reference)
-    // For add/create: search for the new name (not finding it = missing update)
     const searchName = isDestructive
       ? (entity.oldName ?? entity.column ?? entity.table)
       : (entity.column ?? entity.table);
@@ -81,8 +98,10 @@ export function scanLayers(
     return {
       entity,
       typeLayer: searchLayer(roots.types, pattern, cwd),
-      apiLayer: searchLayer(roots.api, pattern, cwd),
-      uiLayer: searchLayer(roots.ui, pattern, cwd),
+      // API search excludes type roots (prevents lib/ from picking up lib/types/ matches)
+      apiLayer: searchLayer(roots.api, pattern, cwd, resolvedTypeRoots),
+      // UI search excludes both type and API roots (prevents app/ from picking up app/api/)
+      uiLayer: searchLayer(roots.ui, pattern, cwd, [...resolvedTypeRoots, ...resolvedApiRoots]),
     };
   });
 }

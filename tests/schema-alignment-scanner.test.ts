@@ -68,6 +68,21 @@ describe('scanLayers', () => {
     fs.rmSync(dir, { recursive: true });
   });
 
+  it('UI layer excludes files under API/type roots (overlap prevention)', async () => {
+    const { scanLayers } = await import('../src/core/schema-alignment/scanner.ts');
+    const dir = makeTmpProject();
+    // Put the reference ONLY under app/api/ — UI search over app/ must NOT find it
+    fs.writeFileSync(path.join(dir, 'app', 'api', 'handler.ts'), 'export const h = { status: "ok" };');
+
+    const results = scanLayers(
+      [{ table: 'users', column: 'status', operation: 'add_column' }],
+      dir,
+    );
+    assert.ok(results[0]!.apiLayer !== null, 'expected API evidence');
+    assert.equal(results[0]!.uiLayer, null, 'UI layer should NOT pick up app/api/ file');
+    fs.rmSync(dir, { recursive: true });
+  });
+
   it('respects layerRoots config override', async () => {
     const { scanLayers } = await import('../src/core/schema-alignment/scanner.ts');
     const dir = makeTmpProject();
