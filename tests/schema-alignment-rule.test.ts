@@ -101,6 +101,44 @@ describe('schema-alignment rule', () => {
     }
   });
 
+  it('LLM finding falls back to migration sourceFile (not table name) when model omits file', async () => {
+    const { schemaAlignmentRule } = await import('../src/core/static-rules/rules/schema-alignment.ts');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-rule-'));
+    fs.mkdirSync(path.join(dir, 'data', 'deltas'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'types'));
+    const migFile = path.join(dir, 'data', 'deltas', '20260423_add.sql');
+    fs.writeFileSync(migFile, 'ALTER TABLE users ADD COLUMN status text;');
+    fs.writeFileSync(path.join(dir, 'types', 'user.ts'), 'export interface User { id: string; }');
+
+    // Model response WITHOUT a `file` field — fallback must be the migration, not "users"
+    const mockJson = JSON.stringify([{
+      table: 'users',
+      column: 'status',
+      operation: 'add_column',
+      layer: 'type',
+      message: 'status field missing from User type',
+      severity: 'warning',
+      confidence: 'high',
+    }]);
+    const mockEngine = {
+      label: 'mock',
+      review: async () => ({ findings: [], rawOutput: mockJson }),
+      estimateTokens: (s: string) => s.length,
+    };
+
+    const origCwd = process.cwd();
+    process.chdir(dir);
+    try {
+      const findings = await schemaAlignmentRule.check([migFile], { _engine: mockEngine });
+      assert.equal(findings.length, 1);
+      assert.notEqual(findings[0]!.file, 'users');
+      assert.ok(findings[0]!.file.endsWith('.sql'), `expected SQL migration path, got: ${findings[0]!.file}`);
+    } finally {
+      process.chdir(origCwd);
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
   it('falls back to structural findings when LLM returns empty', async () => {
     const { schemaAlignmentRule } = await import('../src/core/static-rules/rules/schema-alignment.ts');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-rule-'));

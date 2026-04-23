@@ -12,13 +12,15 @@ function isDestructive(entity: { operation: string }): boolean {
   return entity.operation === 'drop_column' || entity.operation === 'rename_column';
 }
 
-function toFinding(af: AlignmentFinding): Finding {
+function toFinding(af: AlignmentFinding, fallbackFile: string): Finding {
   return {
     id: `schema-alignment:${af.entity.table}:${af.entity.column ?? ''}:${af.layer}`,
     source: 'static-rules',
     severity: af.severity === 'error' ? 'critical' : 'warning',
     category: 'schema-alignment',
-    file: af.file ?? af.entity.table,
+    // LLM may supply an explicit `file`; otherwise fall back to the migration
+    // file that triggered the check. Never use the table name as a path.
+    file: af.file ?? fallbackFile,
     message: af.message,
     suggestion: `Update the ${af.layer} layer to reflect the schema change in "${af.entity.column ?? af.entity.table}"`,
     protectedPath: false,
@@ -115,7 +117,14 @@ export const schemaAlignmentRule: StaticRule = {
       const llmFindings = await runLlmCheck(migrationFiles, gapResults.map(g => g.result), engine);
       // Fall back to structural findings if the LLM returned nothing parseable —
       // avoids silently dropping real gaps when the model is down or returns prose.
-      return llmFindings.length > 0 ? llmFindings.map(toFinding) : structural;
+      if (llmFindings.length > 0) {
+        // Build table → sourceFile index so each LLM finding can be attributed
+        // back to its originating migration when the model didn't return a file.
+        const tableToSource = new Map<string, string>();
+        for (const { entity, sourceFile } of allEntities) tableToSource.set(entity.table, sourceFile);
+        return llmFindings.map(af => toFinding(af, tableToSource.get(af.entity.table) ?? migrationFiles[0]!));
+      }
+      return structural;
     }
 
     return structural;
