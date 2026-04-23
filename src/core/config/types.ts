@@ -52,6 +52,16 @@ export interface GuardrailConfig {
     /** Per-model token price overrides (input/output per 1M tokens). */
     pricing?: Record<string, { inputPer1M: number; outputPer1M: number }>;
   };
+  brand?: {
+    /** Path to tailwind.config.{ts,js} — auto-extracts theme.colors as canonical palette */
+    colorsFrom?: string;
+    /** Explicit canonical color values (hex/rgb/hsl). Merged with colorsFrom. */
+    colors?: string[];
+    /** Canonical font family names */
+    fonts?: string[];
+    /** Path to design system component library (informational, for future LLM review) */
+    componentLibrary?: string | { tokens?: string; guide?: string };
+  };
   cache?: Record<string, unknown>;
   persistence?: Record<string, unknown>;
   concurrency?: Record<string, unknown>;

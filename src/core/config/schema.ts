@@ -82,6 +82,28 @@ export const GUARDRAIL_CONFIG_SCHEMA = {
       },
       additionalProperties: false,
     },
+    brand: {
+      type: 'object',
+      properties: {
+        colorsFrom: { type: 'string' },
+        colors: { type: 'array', items: { type: 'string' } },
+        fonts: { type: 'array', items: { type: 'string' } },
+        componentLibrary: {
+          oneOf: [
+            { type: 'string' },
+            {
+              type: 'object',
+              properties: {
+                tokens: { type: 'string' },
+                guide: { type: 'string' },
+              },
+              additionalProperties: false,
+            },
+          ],
+        },
+      },
+      additionalProperties: false,
+    },
     cache: { type: 'object' },
     persistence: { type: 'object' },
     concurrency: { type: 'object' },

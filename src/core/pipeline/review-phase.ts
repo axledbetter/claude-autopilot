@@ -3,6 +3,7 @@ import type { Finding } from '../findings/types.ts';
 import type { GuardrailConfig } from '../config/types.ts';
 import { buildReviewChunks, type ReviewChunk } from '../chunking/index.ts';
 import { GuardrailError } from '../errors.ts';
+import { hasFrontendFiles, loadDesignContext } from '../ui/design-context-loader.ts';
 
 export interface ReviewPhaseResult {
   phase: 'review';
@@ -20,6 +21,7 @@ export interface ReviewPhaseInput {
   config: GuardrailConfig;
   cwd?: string;
   gitSummary?: string;
+  designSchema?: string;
   budgetRemainingUSD?: number;
   base?: string;
 }
@@ -47,7 +49,7 @@ async function reviewChunkWithRetry(chunk: ReviewChunk, input: ReviewPhaseInput)
       const output = await input.engine.review({
         content: chunk.content,
         kind: chunk.kind,
-        context: { stack: input.config.stack, cwd: input.cwd, gitSummary: input.gitSummary },
+        context: { stack: input.config.stack, cwd: input.cwd, gitSummary: input.gitSummary, designSchema: input.designSchema },
       });
       return {
         findings: output.findings,
@@ -95,18 +97,28 @@ export async function runReviewPhase(input: ReviewPhaseInput): Promise<ReviewPha
     return { phase: 'review', status: 'skip', findings: [], durationMs: Date.now() - start };
   }
 
+  let designSchema: string | undefined;
+  if (hasFrontendFiles(input.touchedFiles) && input.config.brand?.componentLibrary) {
+    const loaded = loadDesignContext(
+      input.config.brand.componentLibrary,
+      input.cwd ?? process.cwd(),
+    );
+    if (loaded) designSchema = loaded;
+  }
+  const enrichedInput: ReviewPhaseInput = designSchema ? { ...input, designSchema } : input;
+
   const chunks = await buildReviewChunks({
-    touchedFiles: input.touchedFiles,
-    strategy: input.config.reviewStrategy ?? 'auto',
-    chunking: input.config.chunking,
-    engine: input.engine,
-    cwd: input.cwd,
-    protectedPaths: input.config.protectedPaths,
-    base: input.base,
+    touchedFiles: enrichedInput.touchedFiles,
+    strategy: enrichedInput.config.reviewStrategy ?? 'auto',
+    chunking: enrichedInput.config.chunking,
+    engine: enrichedInput.engine,
+    cwd: enrichedInput.cwd,
+    protectedPaths: enrichedInput.config.protectedPaths,
+    base: enrichedInput.base,
   });
 
-  const parallelism = input.config.chunking?.parallelism ?? 3;
-  const budgetUSD = input.budgetRemainingUSD;
+  const parallelism = enrichedInput.config.chunking?.parallelism ?? 3;
+  const budgetUSD = enrichedInput.budgetRemainingUSD;
 
   // For budget tracking we still need to enforce it — run serially if budget set,
   // parallel otherwise (budget check between serial chunks is the safe path).
@@ -117,7 +129,7 @@ export async function runReviewPhase(input: ReviewPhaseInput): Promise<ReviewPha
     let budgetExceeded = false;
     for (const chunk of chunks) {
       if (spent >= budgetUSD) { budgetExceeded = true; break; }
-      const r = await reviewChunkWithRetry(chunk, input);
+      const r = await reviewChunkWithRetry(chunk, enrichedInput);
       spent += r.costUSD;
       chunkResults.push(r);
     }
@@ -137,7 +149,7 @@ export async function runReviewPhase(input: ReviewPhaseInput): Promise<ReviewPha
       });
     }
   } else {
-    chunkResults = await pMap(chunks, chunk => reviewChunkWithRetry(chunk, input), parallelism);
+    chunkResults = await pMap(chunks, chunk => reviewChunkWithRetry(chunk, enrichedInput), parallelism);
   }
 
   let totalInputTokens = 0;

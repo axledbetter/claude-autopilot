@@ -60,7 +60,7 @@ export interface ScanCommandOptions {
   targets?: string[];   // explicit paths/dirs to scan
   all?: boolean;        // scan entire codebase
   ask?: string;         // targeted question to inject into review prompt
-  focus?: 'security' | 'logic' | 'performance' | 'all';
+  focus?: 'security' | 'logic' | 'performance' | 'brand' | 'all';
   dryRun?: boolean;
 }
 
@@ -70,7 +70,7 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
 
   let config: GuardrailConfig = { configVersion: 1 };
   if (fs.existsSync(configPath)) {
-    const loaded = loadConfig(configPath);
+    const loaded = await loadConfig(configPath);
     if (loaded) config = loaded;
   }
 

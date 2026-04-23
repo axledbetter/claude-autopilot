@@ -183,7 +183,7 @@ describe('run pipeline — scenarios', () => {
     const engine = makeEngine([], 0.01);
     const result = await runGuardrail({
       touchedFiles: ['__mock_file_s12__.ts'],
-      config: { configVersion: 1, testCommand: null, cost: { budgetUSD: 0 } },
+      config: { configVersion: 1, testCommand: null, cost: { maxPerRun: 0 } },
       reviewEngine: engine,
     });
     const budgetFinding = result.allFindings.find(f => f.id === 'budget-exceeded');
