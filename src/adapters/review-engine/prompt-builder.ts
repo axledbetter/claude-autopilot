@@ -13,7 +13,7 @@ export function buildSystemPrompt(input: ReviewInput, template: string): string 
 }
 
 export function classifyError(message: string): 'auth' | 'rate_limit' | 'transient_network' {
-  if (/unauthorized|401|invalid\.api\.key|authentication|api\.key|403/i.test(message)) return 'auth';
+  if (/unauthorized|401|invalid.api.key|authentication|api.key|403/i.test(message)) return 'auth';
   if (/rate.limit|429|overloaded|quota/i.test(message)) return 'rate_limit';
   return 'transient_network';
 }

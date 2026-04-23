@@ -180,7 +180,7 @@ Write a snapshot test file. Requirements:
    // @source-commit: {sourceCommit}
    // @generator-version: {version}
 2. Import the module's exported functions under test
-3. Import { normalizeSnapshot } from '../../src/snapshots/serializer.ts'
+3. Import { normalizeSnapshot } from '../../scripts/snapshots/serializer.ts'
 4. Import fs from 'node:fs', describe/it from 'node:test', assert from 'node:assert/strict'
 5. Baseline loading pattern (use slug {slug}):
    const SLUG = '{slug}';
