@@ -23,6 +23,7 @@ import { runIgnore } from './ignore-helper.ts';
 import { runPr } from './pr.ts';
 import { runBaseline } from './baseline.ts';
 import { runTriage } from './triage.ts';
+import { runLsp } from './lsp.ts';
 
 const args = process.argv.slice(2);
 
@@ -36,7 +37,7 @@ if (args[0] === '--version' || args[0] === '-v') {
   process.exit(0);
 }
 
-const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
+const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity'];
 
 // Bare invocation — no subcommand, no flags → show welcome guide
@@ -105,6 +106,7 @@ Commands:
   init         Scaffold guardrail.config.yaml from a preset
   doctor       Check prerequisites (alias: preflight)
   autoregress  Snapshot regression tests (run|diff|update|generate)
+  lsp          Language server — publishes findings as LSP diagnostics (stdin/stdout)
 
 Options (run):
   --base <ref>         Git base ref for diff (default: HEAD~1)
@@ -340,6 +342,11 @@ switch (subcommand) {
     const rest = args.slice(2);
     const code = await runTriage(sub, rest);
     process.exit(code);
+    break;
+  }
+
+  case 'lsp': {
+    await runLsp({ cwd: process.cwd() });
     break;
   }
 
