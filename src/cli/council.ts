@@ -85,7 +85,7 @@ export async function runCouncilCmd(opts: {
 
   // When no-synthesize, clear the empty synthesis object
   if (opts.noSynthesize && result.synthesis?.text === '') {
-    delete (result as Record<string, unknown>)['synthesis'];
+    delete (result as unknown as Record<string, unknown>)['synthesis'];
   }
 
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
