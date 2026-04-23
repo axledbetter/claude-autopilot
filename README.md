@@ -178,6 +178,33 @@ Requires `gh` CLI authenticated.
 npx guardrail costs                        # all-time + 7-day summary + last 10 runs
 ```
 
+### `guardrail worker` — persistent review daemon
+
+Run a local HTTP daemon so multiple terminals dispatch review chunks to one shared LLM connection:
+
+```bash
+guardrail worker start          # start daemon in background, print port
+guardrail worker stop           # kill daemon
+guardrail worker status         # show pid, port, queue depth, jobs processed
+guardrail run --use-worker      # dispatch review chunks to running worker
+```
+
+The daemon writes `.guardrail-cache/worker.lock` and serves `POST /review`, `GET /status`, `POST /stop` on a random localhost port. Stateless per-request — no shared review state. Falls back to inline if worker is unreachable.
+
+### `guardrail test-gen` — generate missing tests
+
+Detect exported functions with no test coverage and generate test files via LLM:
+
+```bash
+guardrail test-gen                    # analyze git-changed files
+guardrail test-gen src/auth/login.ts  # target specific file
+guardrail test-gen --dry-run          # show gaps without generating
+guardrail test-gen --verify           # run generated tests, revert if they fail
+guardrail test-gen --base main        # diff against branch
+```
+
+Scans exports with regex, checks whether any test file imports or references each export, and generates tests using the project's detected test framework (`jest`, `vitest`, or `node:test`). With `--verify`, runs `testCommand` after writing each test and reverts if it fails.
+
 ### `guardrail watch` — dev loop
 
 ```bash
