@@ -64,6 +64,15 @@ export const GUARDRAIL_CONFIG_SCHEMA = {
       },
       additionalProperties: false,
     },
+    policy: {
+      type: 'object',
+      properties: {
+        failOn: { enum: ['critical', 'warning', 'note', 'none'] },
+        newOnly: { type: 'boolean' },
+        baselinePath: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
     cost: { type: 'object' },
     cache: { type: 'object' },
     persistence: { type: 'object' },

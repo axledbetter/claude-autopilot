@@ -18,6 +18,13 @@ staticRules:
   - npm-audit
   - package-lock-sync
   - supabase-rls-bypass
+  - sql-injection
+  - missing-auth
+  - ssrf
+  - insecure-redirect
+policy:
+  failOn: critical
+  newOnly: false
 thresholds:
   bugbotAutoFix: 85
   bugbotProposePatch: 60

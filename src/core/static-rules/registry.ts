@@ -3,13 +3,18 @@ import type { StaticRuleReference } from '../config/types.ts';
 
 // Built-in cross-stack rules
 const BUILTIN: Record<string, () => Promise<StaticRule>> = {
-  'hardcoded-secrets': () => import('./rules/hardcoded-secrets.ts').then(m => m.hardcodedSecretsRule),
-  'npm-audit':         () => import('./rules/npm-audit.ts').then(m => m.npmAuditRule),
-  'package-lock-sync': () => import('./rules/package-lock-sync.ts').then(m => m.packageLockSyncRule),
-  'console-log':       () => import('./rules/console-log.ts').then(m => m.consoleLogRule),
-  'todo-fixme':        () => import('./rules/todo-fixme.ts').then(m => m.todoFixmeRule),
-  'large-file':        () => import('./rules/large-file.ts').then(m => m.largeFileRule),
-  'missing-tests':     () => import('./rules/missing-tests.ts').then(m => m.missingTestsRule),
+  'hardcoded-secrets':  () => import('./rules/hardcoded-secrets.ts').then(m => m.hardcodedSecretsRule),
+  'npm-audit':          () => import('./rules/npm-audit.ts').then(m => m.npmAuditRule),
+  'package-lock-sync':  () => import('./rules/package-lock-sync.ts').then(m => m.packageLockSyncRule),
+  'console-log':        () => import('./rules/console-log.ts').then(m => m.consoleLogRule),
+  'todo-fixme':         () => import('./rules/todo-fixme.ts').then(m => m.todoFixmeRule),
+  'large-file':         () => import('./rules/large-file.ts').then(m => m.largeFileRule),
+  'missing-tests':      () => import('./rules/missing-tests.ts').then(m => m.missingTestsRule),
+  // Security rules
+  'sql-injection':      () => import('./rules/sql-injection.ts').then(m => m.sqlInjectionRule),
+  'missing-auth':       () => import('./rules/missing-auth.ts').then(m => m.missingAuthRule),
+  'ssrf':               () => import('./rules/ssrf.ts').then(m => m.ssrfRule),
+  'insecure-redirect':  () => import('./rules/insecure-redirect.ts').then(m => m.insecureRedirectRule),
 };
 
 // Preset-specific rules registered by name

@@ -3,7 +3,33 @@ import type { StaticRule } from '../../phases/static-rules.ts';
 import type { Finding } from '../../findings/types.ts';
 
 const SECRET_PATTERNS: { regex: RegExp; label: string }[] = [
+  // Cloud provider keys
   { regex: /\bAKIA[0-9A-Z]{16}\b/, label: 'AWS Access Key ID' },
+  { regex: /\b(?:aws|AWS)_?(?:secret|SECRET)_?(?:key|KEY|access|ACCESS)\s*[:=]\s*['"][A-Za-z0-9/+]{40}['"]/, label: 'AWS Secret Access Key' },
+
+  // LLM / AI providers
+  { regex: /\bsk-ant-[a-zA-Z0-9\-_]{20,}\b/, label: 'Anthropic API key' },
+  { regex: /\bsk-[a-zA-Z0-9]{20,}\b(?!.*placeholder)/, label: 'OpenAI API key' },
+  { regex: /\bgsk_[a-zA-Z0-9]{20,}\b/, label: 'Groq API key' },
+
+  // Payment
+  { regex: /\bsk_live_[a-zA-Z0-9]{24,}\b/, label: 'Stripe secret key (live)' },
+  { regex: /\brk_live_[a-zA-Z0-9]{24,}\b/, label: 'Stripe restricted key (live)' },
+
+  // Source control / CI
+  { regex: /\bghp_[a-zA-Z0-9]{36}\b/, label: 'GitHub personal access token' },
+  { regex: /\bghs_[a-zA-Z0-9]{36}\b/, label: 'GitHub Actions token' },
+  { regex: /\bgithub_pat_[a-zA-Z0-9_]{82}\b/, label: 'GitHub fine-grained PAT' },
+
+  // Communication
+  { regex: /\bSG\.[a-zA-Z0-9\-_]{22,}\.[a-zA-Z0-9\-_]{43,}\b/, label: 'SendGrid API key' },
+  { regex: /\bAC[a-f0-9]{32}\b/, label: 'Twilio Account SID' },
+
+  // Database / BaaS
+  { regex: /\bservice_role\b.*\beyJ[a-zA-Z0-9._-]{100,}\b/, label: 'Supabase service role JWT' },
+  { regex: /\beyJ[a-zA-Z0-9._-]{150,}\b/, label: 'Long JWT (possible service key)' },
+
+  // Generic patterns
   { regex: /(?:^|[^a-z])(?:password|passwd|pwd)\s*[:=]\s*['"](?!\/)[^'"]{6,}['"]/, label: 'Hardcoded password' },
   { regex: /(?:api_key|apikey|api-key)\s*[:=]\s*['"][^'"]{8,}['"]/, label: 'Hardcoded API key' },
   { regex: /(?:secret|secret_key|secretkey)\s*[:=]\s*['"][^'"]{8,}['"]/, label: 'Hardcoded secret' },
@@ -13,7 +39,7 @@ const SECRET_PATTERNS: { regex: RegExp; label: string }[] = [
 ];
 
 // Patterns that indicate a placeholder, not a real secret
-const PLACEHOLDER = /(?:your[-_]?|xxx|placeholder|example|test|fake|dummy|changeme|<[^>]+>)/i;
+const PLACEHOLDER = /(?:your[-_]?|xxx|placeholder|example|test|fake|dummy|changeme|<[^>]+>|process\.env|import\.meta\.env|\$\{)/i;
 const SKIP_EXTS = new Set(['.md', '.txt', '.yaml', '.yml', '.json', '.lock', '.snap']);
 const TEST_PATH = /(?:__tests__|\.test\.|\.spec\.|\/test\/|\/tests\/)/;
 

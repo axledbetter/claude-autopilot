@@ -42,8 +42,17 @@ import { detectPrNumber, formatComment, postPrComment } from './pr-comment.ts';
 import { postReviewComments } from './pr-review-comments.ts';
 import { loadIgnoreRules, parseConfigIgnore, applyIgnoreRules } from '../core/ignore/index.ts';
 import { loadCachedFindings, saveCachedFindings, filterNewFindings } from '../core/persist/findings-cache.ts';
+import { loadBaseline, filterBaselined } from '../core/persist/baseline.ts';
 import { appendCostLog } from '../core/persist/cost-log.ts';
 import { postCommitStatus, resolveCommitSha } from '../adapters/vcs-host/commit-status.ts';
+
+function computeExitCode(findings: { severity: string }[], failOn: string): number {
+  if (failOn === 'none') return 0;
+  const fail = failOn === 'warning' ? ['critical', 'warning']
+    : failOn === 'note' ? ['critical', 'warning', 'note']
+    : ['critical'];
+  return findings.some(f => fail.includes(f.severity)) ? 1 : 0;
+}
 
 function readToolVersion(): string {
   const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
@@ -72,6 +81,8 @@ export interface RunCommandOptions {
   dryRun?: boolean;     // skip review, print what would run
   diff?: boolean;           // use diff strategy (send git hunks instead of full files)
   delta?: boolean;          // only report findings not present in last run's baseline
+  newOnly?: boolean;        // only report findings not in committed .guardrail-baseline.json
+  failOn?: 'critical' | 'warning' | 'note' | 'none'; // severity threshold for exit 1
   inlineComments?: boolean; // post per-line review comments on the PR diff
   format?: 'text' | 'sarif';
   outputPath?: string;
@@ -225,7 +236,7 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     }
   }
 
-  // Delta mode: filter to only new findings vs last run's baseline, then persist
+  // Delta mode: filter to only new findings vs last run's cache, then persist
   if (options.delta) {
     const cached = loadCachedFindings(cwd);
     const before = result.allFindings.length;
@@ -238,7 +249,28 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
       console.log(fmt('dim', `  [run] ${existing} pre-existing finding${existing !== 1 ? 's' : ''} hidden (--delta mode)`));
     }
   }
-  // Always persist the unfiltered findings as the new baseline
+
+  // --new-only / policy.newOnly: filter against committed .guardrail-baseline.json
+  const policy = config.policy ?? {};
+  const newOnly = options.newOnly ?? policy.newOnly ?? false;
+  if (newOnly) {
+    const baseline = loadBaseline(cwd, policy.baselinePath);
+    if (baseline) {
+      const { newFindings, baselinedCount } = filterBaselined(result.allFindings, baseline);
+      result.allFindings = newFindings;
+      for (const phase of result.phases) {
+        phase.findings = filterBaselined(phase.findings, baseline).newFindings;
+      }
+      if (baselinedCount > 0) {
+        console.log(fmt('dim', `  [run] ${baselinedCount} baselined finding${baselinedCount !== 1 ? 's' : ''} suppressed (--new-only)`));
+      }
+    } else {
+      console.log(fmt('yellow', '  [run] --new-only: no .guardrail-baseline.json found — showing all findings'));
+      console.log(fmt('dim',    '         Run `guardrail baseline create` after first scan to pin the baseline'));
+    }
+  }
+
+  // Always persist the unfiltered findings as the run cache
   saveCachedFindings(cwd, result.allFindings);
 
   // Append to per-run cost log
@@ -335,16 +367,20 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     postCommitStatus({ sha: commitSha, state, description: desc, cwd });
   }
 
-  // Final verdict
+  // Final verdict — apply policy.failOn threshold
+  const failOn = options.failOn ?? policy.failOn ?? 'critical';
+  const exitCode = computeExitCode(result.allFindings, failOn);
+
   console.log('');
-  if (result.status === 'pass') {
+  if (exitCode === 0 && result.status !== 'pass') {
+    const reason = failOn === 'none' ? ' (policy: fail-on=none)' : ` (policy: fail-on=${failOn})`;
+    console.log(fmt('yellow', `[run] ! Passed with findings${reason}\n`));
+  } else if (result.status === 'pass') {
     console.log(fmt('green', '[run] ✓ All phases passed\n'));
-    return 0;
   } else if (result.status === 'warn') {
     console.log(fmt('yellow', '[run] ! Passed with warnings\n'));
-    return 0;
   } else {
     console.log(fmt('red', '[run] ✗ Pipeline failed — see findings above\n'));
-    return 1;
   }
+  return exitCode;
 }

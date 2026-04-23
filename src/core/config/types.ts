@@ -36,6 +36,14 @@ export interface GuardrailConfig {
     parallelism?: number;
     rateLimitBackoff?: 'exp' | 'linear' | 'none';
   };
+  policy?: {
+    /** Severity threshold for exit code 1. Default: 'critical'. Use 'none' to always pass. */
+    failOn?: 'critical' | 'warning' | 'note' | 'none';
+    /** Only report findings not present in the committed baseline. Default: false. */
+    newOnly?: boolean;
+    /** Path to baseline file relative to cwd. Default: .guardrail-baseline.json */
+    baselinePath?: string;
+  };
   cost?: Record<string, unknown>;
   cache?: Record<string, unknown>;
   persistence?: Record<string, unknown>;

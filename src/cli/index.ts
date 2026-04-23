@@ -21,6 +21,7 @@ import { runReport } from './report.ts';
 import { runExplain } from './explain.ts';
 import { runIgnore } from './ignore-helper.ts';
 import { runPr } from './pr.ts';
+import { runBaseline } from './baseline.ts';
 
 const args = process.argv.slice(2);
 
@@ -34,8 +35,8 @@ if (args[0] === '--version' || args[0] === '-v') {
   process.exit(0);
 }
 
-const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
-const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus'];
+const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
+const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note'];
 
 // Bare invocation — no subcommand, no flags → show welcome guide
 if (args.length === 0) {
@@ -225,6 +226,13 @@ switch (subcommand) {
       process.exit(1);
     }
 
+    const failOnArg = flag('fail-on');
+    if (failOnArg && !['critical', 'warning', 'note', 'none'].includes(failOnArg)) {
+      console.error(`\x1b[31m[guardrail] --fail-on must be "critical", "warning", "note", or "none"\x1b[0m`);
+      process.exit(1);
+    }
+    const newOnly = boolFlag('new-only');
+
     const code = await runCommand({
       base,
       configPath: config,
@@ -232,6 +240,8 @@ switch (subcommand) {
       dryRun,
       diff,
       delta,
+      newOnly,
+      failOn: failOnArg as 'critical' | 'warning' | 'note' | 'none' | undefined,
       inlineComments,
       postComments,
       format: formatArg as 'text' | 'sarif' | undefined,
@@ -248,6 +258,8 @@ switch (subcommand) {
     const noPostComments = boolFlag('no-post-comments');
     const noInlineComments = boolFlag('no-inline-comments');
     const diff = boolFlag('diff');
+    const newOnly = boolFlag('new-only');
+    const failOnArg = flag('fail-on');
     const code = await runCi({
       configPath: config,
       base,
@@ -255,7 +267,19 @@ switch (subcommand) {
       postComments: noPostComments ? false : undefined,
       inlineComments: noInlineComments ? false : undefined,
       diff,
+      newOnly,
+      failOn: failOnArg as 'critical' | 'warning' | 'note' | 'none' | undefined,
     });
+    process.exit(code);
+    break;
+  }
+
+  case 'baseline': {
+    const { runBaseline: rb } = await import('./baseline.ts');
+    const sub = args[1] ?? 'show';
+    const note = flag('note');
+    const config = flag('config');
+    const code = await rb(sub, { cwd: process.cwd(), note, baselinePath: config });
     process.exit(code);
     break;
   }

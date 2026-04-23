@@ -8,18 +8,19 @@ export interface CiCommandOptions {
   sarifOutput?: string;
   diff?: boolean;
   inlineComments?: boolean;
+  newOnly?: boolean;
+  failOn?: 'critical' | 'warning' | 'note' | 'none';
 }
 
 /**
- * `autopilot ci` — opinionated single-command CI entrypoint.
- *
- * Equivalent to:
- *   autopilot run --base <ref> --post-comments --format sarif --output <path>
+ * `guardrail ci` — opinionated single-command CI entrypoint.
  *
  * Defaults:
- *   base       GITHUB_BASE_REF → HEAD~1
- *   output     guardrail.sarif
- *   post-comments  true (skip if no PR detected — run.ts handles gracefully)
+ *   base          GITHUB_BASE_REF → HEAD~1
+ *   output        guardrail.sarif
+ *   post-comments true
+ *   fail-on       critical (or policy.failOn from config)
+ *   new-only      false (or policy.newOnly from config)
  */
 export async function runCi(options: CiCommandOptions = {}): Promise<number> {
   const base = options.base
@@ -38,5 +39,7 @@ export async function runCi(options: CiCommandOptions = {}): Promise<number> {
     outputPath: sarifOutput,
     diff: options.diff,
     inlineComments: options.inlineComments ?? true,
+    newOnly: options.newOnly,
+    failOn: options.failOn,
   });
 }
