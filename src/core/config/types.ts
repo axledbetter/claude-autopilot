@@ -1,3 +1,5 @@
+import type { SchemaAlignmentConfig } from '../schema-alignment/types.ts';
+
 export interface AdapterReference {
   adapter: string;
   options?: Record<string, unknown>;
@@ -62,6 +64,7 @@ export interface GuardrailConfig {
     /** Path to design system component library (informational, for future LLM review) */
     componentLibrary?: string | { tokens?: string; guide?: string };
   };
+  'schema-alignment'?: SchemaAlignmentConfig;
   cache?: Record<string, unknown>;
   persistence?: Record<string, unknown>;
   concurrency?: Record<string, unknown>;

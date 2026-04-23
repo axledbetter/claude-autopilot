@@ -1,4 +1,6 @@
 import type { Finding, FixAttempt, FixStatus } from '../findings/types.ts';
+import type { GuardrailConfig } from '../config/types.ts';
+import type { ReviewEngine } from '../../adapters/review-engine/types.ts';
 import { dedupFindings, findingContentKey } from '../findings/dedup.ts';
 
 export interface StaticRule {
@@ -11,6 +13,8 @@ export interface StaticRule {
 export interface StaticRulesPhaseInput {
   touchedFiles: string[];
   rules: StaticRule[];
+  config?: GuardrailConfig;
+  engine?: ReviewEngine;
 }
 
 export interface StaticRulesPhaseResult {
@@ -24,7 +28,7 @@ export interface StaticRulesPhaseResult {
 export async function runStaticRulesPhase(input: StaticRulesPhaseInput): Promise<StaticRulesPhaseResult> {
   const start = Date.now();
 
-  const preFixFindings = dedupFindings(await runAllChecks(input.rules, input.touchedFiles));
+  const preFixFindings = dedupFindings(await runAllChecks(input.rules, input.touchedFiles, input.config, input.engine));
 
   const fixAttempts: FixAttempt[] = [];
   let anyFixApplied = false;
@@ -52,7 +56,7 @@ export async function runStaticRulesPhase(input: StaticRulesPhaseInput): Promise
   // findings always returns preFixFindings so callers have a complete record;
   // fixAttempts + re-check set-difference tells them what was resolved.
   const postFixFindings = anyFixApplied
-    ? dedupFindings(await runAllChecks(input.rules, input.touchedFiles))
+    ? dedupFindings(await runAllChecks(input.rules, input.touchedFiles, input.config, input.engine))
     : preFixFindings;
 
   const postFixKeys = new Set(postFixFindings.map(findingContentKey));
@@ -69,9 +73,17 @@ export async function runStaticRulesPhase(input: StaticRulesPhaseInput): Promise
   return { phase: 'static-rules', status, findings: preFixFindings, fixAttempts, durationMs: Date.now() - start };
 }
 
-async function runAllChecks(rules: StaticRule[], files: string[]): Promise<Finding[]> {
+async function runAllChecks(
+  rules: StaticRule[],
+  files: string[],
+  config?: GuardrailConfig,
+  engine?: ReviewEngine,
+): Promise<Finding[]> {
+  const ruleConfig: Record<string, unknown> = config
+    ? { ...(config as unknown as Record<string, unknown>), _engine: engine }
+    : {};
   const all: Finding[] = [];
-  for (const rule of rules) all.push(...(await rule.check(files)));
+  for (const rule of rules) all.push(...(await rule.check(files, ruleConfig)));
   return all;
 }
 

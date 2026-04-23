@@ -17,6 +17,8 @@ const BUILTIN: Record<string, () => Promise<StaticRule>> = {
   'insecure-redirect':  () => import('./rules/insecure-redirect.ts').then(m => m.insecureRedirectRule),
   // Brand rules
   'brand-tokens':       () => import('./rules/brand-tokens.ts').then(m => m.brandTokensRule),
+  // Schema alignment
+  'schema-alignment':   () => import('./rules/schema-alignment.ts').then(m => m.schemaAlignmentRule),
 };
 
 // Preset-specific rules registered by name
