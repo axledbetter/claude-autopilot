@@ -1,3 +1,5 @@
+// adapter is a closed union — extending to a new provider requires an intentional
+// code change in config.ts and cli/council.ts
 export interface CouncilModelEntry {
   adapter: 'claude' | 'openai';
   model: string;
@@ -32,7 +34,9 @@ export interface SynthesisResponse {
 export type CouncilStatus = 'success' | 'partial' | 'failed';
 
 export interface CouncilResult {
+  // snake_case: wire-format field, consistent with MCP handler schema_version convention
   schema_version: 1;
+  // snake_case: wire-format field
   run_id: string;
   status: CouncilStatus;
   prompt: string;
