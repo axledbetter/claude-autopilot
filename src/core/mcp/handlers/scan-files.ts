@@ -45,7 +45,15 @@ export async function handleScanFiles(
     const relKey = path.relative(workspace, f);
     fileChecksums[relKey] = checksumFile(f);
   }
-  saveRun(workspace, run_id, result.findings, fileChecksums);
+  // Normalize finding.file to relative paths so downstream lookups against
+  // fileChecksums (keyed by relative paths) work regardless of whether the
+  // review engine echoed absolute or relative paths.
+  const normalizedFindings = result.findings.map(f => {
+    if (!f.file) return f;
+    const rel = path.isAbsolute(f.file) ? path.relative(workspace, f.file) : f.file;
+    return rel === f.file ? f : { ...f, file: rel };
+  });
+  saveRun(workspace, run_id, normalizedFindings, fileChecksums);
 
   const critCount = result.findings.filter(f => f.severity === 'critical').length;
   const warnCount = result.findings.filter(f => f.severity === 'warning').length;
@@ -53,5 +61,5 @@ export async function handleScanFiles(
     ? 'No findings.'
     : `${result.findings.length} finding${result.findings.length !== 1 ? 's' : ''}: ${critCount} critical, ${warnCount} warning.`;
 
-  return { schema_version: 1, run_id, findings: result.findings, human_summary };
+  return { schema_version: 1, run_id, findings: normalizedFindings, human_summary };
 }

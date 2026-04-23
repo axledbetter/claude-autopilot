@@ -48,9 +48,10 @@ export async function handleFixFinding(
   // Validate finding.file against workspace boundary (run records could be tampered)
   const absFile = assertInWorkspace(workspace, finding.file);
 
-  // For dry-run we still do a best-effort checksum check and generate outside
-  // the lock (read-only path). Real apply revalidates inside the lock.
-  const savedChecksum = record.fileChecksums[finding.file] ?? '';
+  // Look up checksum under both the raw finding.file and its relative form,
+  // so the drift check works whether older runs stored absolute or relative keys.
+  const relKey = path.relative(workspace, absFile);
+  const savedChecksum = record.fileChecksums[finding.file] ?? record.fileChecksums[relKey] ?? '';
 
   // Dry-run path: generate fix, return patch, no mutations
   if (input.dry_run) {
