@@ -46,6 +46,9 @@ describe('handleFixFinding', () => {
     );
     assert.equal(result.status, 'skipped');
     assert.ok(typeof result.patch === 'string');
+    // MCP responses must be ANSI-free so machine clients (Claude Code, Cursor)
+    // can parse the diff cleanly.
+    assert.ok(!/\x1b\[/.test(result.patch ?? ''), 'patch must not contain ANSI escapes');
     assert.deepEqual(result.appliedFiles, []);
     fs.rmSync(tmp, { recursive: true });
   });

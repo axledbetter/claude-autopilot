@@ -16,7 +16,24 @@ function runsDir(cwd: string): string {
   return path.join(cwd, RUNS_DIR);
 }
 
+// Reject any run_id that isn't a safe filename component — path separators,
+// relative segments, hidden files, or empty strings.
+// run_ids are generated server-side as UUIDs (crypto.randomUUID) so strict
+// validation here is safe. MCP clients that fabricate run_ids get a clear
+// rejection instead of silently reading outside RUNS_DIR.
+const VALID_RUN_ID = /^[A-Za-z0-9_-]+$/;
+
+function assertValidRunId(runId: string): void {
+  if (!runId || typeof runId !== 'string' || !VALID_RUN_ID.test(runId)) {
+    throw Object.assign(
+      new Error(`invalid run_id: "${runId}" (expected alphanumeric + dash/underscore)`),
+      { code: 'invalid_run_id' },
+    );
+  }
+}
+
 function runFilePath(cwd: string, runId: string): string {
+  assertValidRunId(runId);
   return path.join(runsDir(cwd), `${runId}.json`);
 }
 

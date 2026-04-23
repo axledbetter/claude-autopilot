@@ -47,33 +47,52 @@ export async function handleFixFinding(
 
   // Validate finding.file against workspace boundary (run records could be tampered)
   const absFile = assertInWorkspace(workspace, finding.file);
-  const currentChecksum = checksumFile(absFile);
+
+  // For dry-run we still do a best-effort checksum check and generate outside
+  // the lock (read-only path). Real apply revalidates inside the lock.
   const savedChecksum = record.fileChecksums[finding.file] ?? '';
-  if (savedChecksum && currentChecksum !== savedChecksum) {
-    return { schema_version: 1, status: 'human_required', reason: 'file_changed', appliedFiles: [] };
-  }
 
-  // Generate the fix
-  const genResult = await generateFix(finding, engine, workspace);
-
-  if (genResult.status !== 'ok') {
-    return { schema_version: 1, status: 'human_required', reason: genResult.reason, appliedFiles: [] };
-  }
-
-  const patch = buildUnifiedDiff(
-    genResult.originalLines!,
-    genResult.replacementLines!,
-    finding.file,
-    genResult.startLine!,
-  );
-
-  // Dry run — return patch without applying
+  // Dry-run path: generate fix, return patch, no mutations
   if (input.dry_run) {
+    const currentChecksum = checksumFile(absFile);
+    if (savedChecksum && currentChecksum !== savedChecksum) {
+      return { schema_version: 1, status: 'human_required', reason: 'file_changed', appliedFiles: [] };
+    }
+    const genResult = await generateFix(finding, engine, workspace);
+    if (genResult.status !== 'ok') {
+      return { schema_version: 1, status: 'human_required', reason: genResult.reason, appliedFiles: [] };
+    }
+    const patch = buildUnifiedDiff(
+      genResult.originalLines!,
+      genResult.replacementLines!,
+      finding.file,
+      genResult.startLine!,
+      { color: false }, // MCP clients parse patch text — no ANSI
+    );
     return { schema_version: 1, status: 'skipped', reason: 'dry_run', patch, appliedFiles: [] };
   }
 
-  // Apply within write lock
+  // Apply path: checksum validation + fix generation run INSIDE the lock to
+  // prevent TOCTOU between two concurrent fix_finding calls on the same file.
   return withWriteLock(workspace, async () => {
+    const currentChecksum = checksumFile(absFile);
+    if (savedChecksum && currentChecksum !== savedChecksum) {
+      return { schema_version: 1 as const, status: 'human_required' as const, reason: 'file_changed', appliedFiles: [] };
+    }
+
+    const genResult = await generateFix(finding, engine, workspace);
+    if (genResult.status !== 'ok') {
+      return { schema_version: 1 as const, status: 'human_required' as const, reason: genResult.reason, appliedFiles: [] };
+    }
+
+    const patch = buildUnifiedDiff(
+      genResult.originalLines!,
+      genResult.replacementLines!,
+      finding.file,
+      genResult.startLine!,
+      { color: false },
+    );
+
     const originalContent = fs.readFileSync(absFile, 'utf8');
     const allLines = originalContent.split('\n');
     const newLines = [

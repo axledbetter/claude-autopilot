@@ -61,4 +61,22 @@ describe('run-store', () => {
     assert.ok(fs.existsSync(path.join(runDir, 'new-run.json')));
     fs.rmSync(tmp, { recursive: true });
   });
+
+  it('rejects run_id with path traversal', () => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'run-store-traversal-'));
+    assert.throws(() => saveRun(tmp, '../escape', [FINDING], {}), /invalid_run_id|expected alphanumeric/);
+    assert.throws(() => loadRun(tmp, '../../etc/passwd'), /invalid_run_id|expected alphanumeric/);
+    assert.throws(() => loadRun(tmp, 'foo/bar'), /invalid_run_id|expected alphanumeric/);
+    assert.throws(() => loadRun(tmp, ''), /invalid_run_id|expected alphanumeric/);
+    fs.rmSync(tmp, { recursive: true });
+  });
+
+  it('accepts UUID-style run_ids', () => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'run-store-uuid-'));
+    const uuid = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+    saveRun(tmp, uuid, [FINDING], {});
+    const loaded = loadRun(tmp, uuid);
+    assert.ok(loaded, 'UUID-style run_id should load successfully');
+    fs.rmSync(tmp, { recursive: true });
+  });
 });

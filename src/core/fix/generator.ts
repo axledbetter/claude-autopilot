@@ -42,12 +42,20 @@ export function validateReplacement(original: string[], replacement: string[], _
   return null;
 }
 
-export function buildUnifiedDiff(original: string[], replacement: string[], filePath: string, startLine: number): string {
+export function buildUnifiedDiff(
+  original: string[],
+  replacement: string[],
+  filePath: string,
+  startLine: number,
+  opts: { color?: boolean } = {},
+): string {
+  // Colors default on for CLI ergonomics; MCP callers pass color:false so ANSI
+  // escapes don't leak into JSON responses that machine clients must parse.
+  const useColor = opts.color !== false;
   const C = {
-    reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
-    green: '\x1b[32m', yellow: '\x1b[33m', red: '\x1b[31m', cyan: '\x1b[36m',
+    reset: '\x1b[0m', green: '\x1b[32m', red: '\x1b[31m',
   };
-  const fmt = (c: keyof typeof C, t: string) => `${C[c]}${t}${C.reset}`;
+  const fmt = (c: keyof typeof C, t: string) => useColor ? `${C[c]}${t}${C.reset}` : t;
   const lines: string[] = [`--- ${filePath}`, `+++ ${filePath} (proposed fix)`, `@@ -${startLine},${original.length} +${startLine},${replacement.length} @@`];
   for (const l of original) lines.push(fmt('red', `- ${l}`));
   for (const l of replacement) lines.push(fmt('green', `+ ${l}`));
@@ -55,6 +63,15 @@ export function buildUnifiedDiff(original: string[], replacement: string[], file
 }
 
 export async function generateFix(finding: Finding, engine: ReviewEngine, cwd: string): Promise<GenerateResult> {
+  // MCP handlers can pass through findings loaded from disk — validate required
+  // fields rather than trusting the CLI pre-filter path.
+  if (!finding.file || typeof finding.file !== 'string') {
+    return { status: 'cannot_fix', reason: 'finding.file missing' };
+  }
+  if (typeof finding.line !== 'number' || !Number.isFinite(finding.line) || finding.line < 1) {
+    return { status: 'cannot_fix', reason: 'finding.line missing or invalid' };
+  }
+
   const absPath = path.resolve(cwd, finding.file);
   let fileLines: string[];
   try {
@@ -63,7 +80,7 @@ export async function generateFix(finding: Finding, engine: ReviewEngine, cwd: s
     return { status: 'cannot_fix', reason: 'file not readable' };
   }
 
-  const lineIdx = finding.line! - 1;
+  const lineIdx = finding.line - 1;
   if (lineIdx < 0 || lineIdx >= fileLines.length) {
     return { status: 'cannot_fix', reason: 'line out of range' };
   }
