@@ -13,7 +13,7 @@ Static analysis catches style. Guardrail catches things that break in production
 - **Race conditions** — unguarded shared state, missing locks, TOCTOU
 - **Security misconfig** — CORS wildcards, missing rate limits, exposed internals
 
-Plus static rules for hygiene: npm audit, console.log, TODO/FIXME, large files, missing tests, package-lock drift.
+Plus built-in static rules that run before the LLM: `hardcoded-secrets`, `npm-audit`, `sql-injection`, `missing-auth`, `ssrf`, `insecure-redirect`, `console-log`, `todo-fixme`, `large-file`, `missing-tests`, `package-lock-sync`.
 
 ## Install
 
@@ -50,6 +50,8 @@ cp node_modules/@delegance/guardrail/skills/guardrail.md .claude/skills/
 
 Claude agents will automatically invoke guardrail before PRs, interpret findings, and auto-fix blocking issues.
 
+---
+
 ## Commands
 
 ### `guardrail run` — review git-changed files
@@ -58,10 +60,14 @@ Claude agents will automatically invoke guardrail before PRs, interpret findings
 npx guardrail run                          # diff against HEAD~1
 npx guardrail run --base main              # diff against a branch
 npx guardrail run --diff                   # send hunks only (~70% fewer tokens)
-npx guardrail run --delta                  # only report new findings since last run
+npx guardrail run --delta                  # only report findings new since last run
+npx guardrail run --new-only               # only report findings not in committed baseline
+npx guardrail run --fail-on warning        # exit 1 on warnings too (default: critical only)
+npx guardrail run --fail-on none           # never exit 1 — soft mode for onboarding
 npx guardrail run --post-comments          # post summary comment on open PR
 npx guardrail run --inline-comments        # post per-line inline PR annotations
 npx guardrail run --format sarif --output guardrail.sarif
+npx guardrail run --format junit --output results.xml   # JUnit XML for Jenkins/GitLab CI
 ```
 
 ### `guardrail scan` — review any path
@@ -76,6 +82,45 @@ npx guardrail scan --focus logic           # logic bugs only
 ```
 
 `scan` doesn't require git changes — point it at anything.
+
+### `guardrail fix` — auto-fix cached findings
+
+```bash
+npx guardrail fix                          # fix critical findings (interactive)
+npx guardrail fix --severity all           # fix everything
+npx guardrail fix --yes                    # apply all fixes without prompting
+npx guardrail fix --dry-run                # list what would be fixed, no LLM needed
+```
+
+When `testCommand` is set in config, each fix is **verified**: the patch is applied, tests run, and the fix is **automatically reverted** if tests fail. Use `--no-verify` to skip test verification.
+
+### `guardrail baseline` — commit a finding snapshot
+
+Pin the current findings so future runs only surface *new* issues:
+
+```bash
+npx guardrail baseline create              # create initial baseline
+npx guardrail baseline update              # overwrite with current findings
+npx guardrail baseline show                # print all pinned entries
+npx guardrail baseline diff                # what's new vs baseline, what's resolved
+npx guardrail baseline clear               # remove baseline file
+npx guardrail baseline create --note "post-audit clean state"
+```
+
+After creating: `git add .guardrail-baseline.json && git commit` to share with the team. Then run with `--new-only` to suppress baselined findings in CI.
+
+### `guardrail triage` — mark findings as accepted or false positives
+
+```bash
+npx guardrail triage <finding-id> false-positive
+npx guardrail triage <finding-id> accepted-risk --reason "mitigated by WAF"
+npx guardrail triage <finding-id> accepted-risk --expires 30   # auto-expire in 30 days
+npx guardrail triage list                  # show all triaged findings
+npx guardrail triage clear <finding-id>    # remove a triage entry
+npx guardrail triage clear --expired       # prune expired entries
+```
+
+Triaged findings are suppressed automatically on every subsequent run. Commit `.guardrail-triage.json` to share decisions with the team. Finding IDs appear in `guardrail report` output.
 
 ### `guardrail report` — markdown report from cached findings
 
@@ -94,17 +139,17 @@ npx guardrail explain src/auth/login.ts:42 # explain by file:line
 npx guardrail explain hardcoded-secrets    # explain by rule id
 ```
 
-Sends the surrounding code + finding details to the LLM for a full explanation: root cause, remediation steps, before/after example, and when to suppress.
+Returns five structured sections: **What this is**, **Why it's dangerous**, **How to fix it**, **Before/after example**, **When to suppress**.
 
-### `guardrail ignore` — suppress findings interactively
+### `guardrail ignore` — suppress findings permanently
 
 ```bash
 npx guardrail ignore                       # step through cached findings, add rules
-npx guardrail ignore --all                 # suppress all findings (rule+path scope)
+npx guardrail ignore --all                 # suppress all (rule+path scope)
 npx guardrail ignore --dry-run             # preview rules without writing
 ```
 
-Writes entries to `.guardrail-ignore`. For each finding, choose: suppress by path, by rule+path, or by rule everywhere.
+Writes entries to `.guardrail-ignore`. Scoped to path or rule+path — more targeted than triage.
 
 ### `guardrail ci` — opinionated CI entrypoint
 
@@ -112,26 +157,19 @@ Writes entries to `.guardrail-ignore`. For each finding, choose: suppress by pat
 npx guardrail ci          # base=GITHUB_BASE_REF, posts PR comment, writes SARIF
 npx guardrail ci --base develop
 npx guardrail ci --no-post-comments
+npx guardrail ci --fail-on warning
 ```
 
 ### `guardrail pr` — review a pull request by number
 
 ```bash
-npx guardrail pr 42                # review PR #42, post inline + summary comments
-npx guardrail pr                   # auto-detect PR from current branch
-npx guardrail pr 42 --no-inline-comments   # summary comment only
-npx guardrail pr 42 --no-post-comments     # print results locally, no GitHub comments
+npx guardrail pr 42                        # review PR #42 with inline + summary comments
+npx guardrail pr                           # auto-detect PR from current branch
+npx guardrail pr 42 --no-inline-comments
+npx guardrail pr 42 --no-post-comments
 ```
 
-Fetches the PR base ref, runs the full pipeline against the diff, and posts inline annotations + a summary comment on the PR. Requires `gh` CLI authenticated.
-
-### `guardrail fix` — auto-fix cached findings
-
-```bash
-npx guardrail fix                          # fix critical findings
-npx guardrail fix --severity all           # fix everything
-npx guardrail fix --dry-run                # preview changes
-```
+Requires `gh` CLI authenticated.
 
 ### `guardrail costs` — usage summary
 
@@ -146,13 +184,7 @@ npx guardrail watch
 npx guardrail watch --debounce 500
 ```
 
-### `guardrail costs` — usage summary
-
-```bash
-npx guardrail costs                        # all-time + 7-day summary + last 10 runs
-```
-
-### `guardrail autoregress` — snapshot regression
+### `guardrail autoregress` — snapshot regression tests
 
 ```bash
 npx guardrail autoregress generate   # generate baselines for changed files
@@ -165,11 +197,16 @@ npx guardrail autoregress update     # overwrite baselines after intentional cha
 ### `guardrail setup` / `guardrail doctor` / `guardrail hook`
 
 ```bash
-npx guardrail setup            # auto-detect stack, write config, install hook
-npx guardrail doctor           # check prerequisites
-npx guardrail hook install     # install pre-push git hook
+npx guardrail setup                        # auto-detect stack, write config, install hook
+npx guardrail setup --profile security-strict   # apply a security-focused config bundle
+npx guardrail setup --profile team              # standard team config
+npx guardrail setup --profile solo             # minimal solo-dev config
+npx guardrail doctor                       # check prerequisites
+npx guardrail hook install                 # install pre-push git hook
 npx guardrail hook uninstall
 ```
+
+---
 
 ## Config (`guardrail.config.yaml`)
 
@@ -177,26 +214,51 @@ npx guardrail hook uninstall
 configVersion: 1
 reviewEngine:
   adapter: auto        # auto-selects best available key at runtime
-testCommand: npm test  # null to disable
+testCommand: npm test  # null to disable; used by `fix` verified mode
+
 protectedPaths:
   - data/deltas/**
   - .github/workflows/**
+
 staticRules:
-  - hardcoded-secrets
+  - hardcoded-secrets   # Anthropic, OpenAI, Stripe, GitHub, Supabase, Twilio, SendGrid
   - npm-audit
+  - sql-injection       # template literals / concatenation in SQL context
+  - missing-auth        # Next.js/pages API routes with POST/PUT/DELETE, no auth pattern
+  - ssrf                # HTTP calls with user-controlled URL
+  - insecure-redirect   # redirect() with user-controlled target
   - console-log
   - todo-fixme
   - large-file
   - missing-tests
+  - package-lock-sync
+
+policy:
+  failOn: critical      # critical (default) | warning | note | none
+  newOnly: false        # true = suppress findings present in .guardrail-baseline.json
+
+cost:
+  maxPerRun: 0.50       # abort review phase if spend exceeds $0.50
+  estimateBeforeRun: false  # print token estimate before LLM calls
+
 ignore:
   - src/legacy/**                              # suppress all findings in path
   - { rule: console-log, path: scripts/** }    # suppress specific rule in path
+
 chunking:
-  rateLimitBackoff: exp    # exp (default) | linear | none — retry strategy on 429
-  parallelism: 3           # concurrent chunk reviews
+  rateLimitBackoff: exp    # exp (default) | linear | none
+  parallelism: 3
 ```
 
-**Monorepo:** `guardrail run` auto-detects npm/yarn/pnpm workspaces, Turborepo, and Nx. Detected workspaces are logged during auto-detection and scoped test commands are applied per-package.
+### Setup Profiles
+
+`guardrail setup --profile <name>` overlays a pre-baked rule + policy configuration on top of the detected stack preset:
+
+| Profile | Rules | `failOn` | Best for |
+|---|---|---|---|
+| `security-strict` | All security rules + hygiene | `warning` | Security audits, regulated environments |
+| `team` | Core security + hygiene | `critical` | Standard CI/CD on shared branches |
+| `solo` | Hygiene only | `critical` | Solo projects, low-noise baseline |
 
 ### Review Engine Adapters
 
@@ -229,6 +291,8 @@ reviewEngine:
     baseUrl: http://localhost:11434/v1
 ```
 
+---
+
 ## GitHub Actions
 
 ```yaml
@@ -236,23 +300,48 @@ reviewEngine:
   with:
     anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
     # Optional:
-    # post-comments: 'true'       # post/update PR summary comment (default true)
-    # inline-comments: 'false'    # post per-line PR annotations (default false)
-    # base-ref: 'main'            # base branch to diff against
+    # post-comments: 'true'
+    # inline-comments: 'false'
+    # base-ref: 'main'
     # sarif-output: 'guardrail.sarif'
-    # version: 'latest'           # pin to a specific @delegance/guardrail version
+    # version: 'latest'
 ```
 
 Runs the pipeline, uploads SARIF to GitHub Code Scanning, annotates the PR diff inline.
 
+---
+
+## Typical Team Workflow
+
+```bash
+# 1. First run — establish a baseline so CI only fails on new issues
+npx guardrail run --base main
+npx guardrail baseline create --note "post-v2 audit"
+git add .guardrail-baseline.json && git commit -m "chore: guardrail baseline"
+
+# 2. CI — only new findings block the build
+npx guardrail ci --new-only --fail-on critical
+
+# 3. Triage false positives once, never see them again
+npx guardrail triage sql-injection:src/db/raw.ts:47 false-positive --reason "internal admin only"
+git add .guardrail-triage.json && git commit -m "chore: triage false positive"
+
+# 4. Auto-fix and verify
+npx guardrail fix --yes   # applies patches + runs tests, reverts on failure
+```
+
+---
+
 ## Interpreting Results
 
-**Exit 0** — pass or warnings only. Safe to merge.
-**Exit 1** — critical findings. Fix before merging.
+**Exit 0** — pass or warnings only (at current `policy.failOn` threshold). Safe to merge.  
+**Exit 1** — findings at or above threshold. Fix before merging.
 
 Findings: `critical` blocks merge · `warning` should fix · `note` informational.
 
-PR comments show: status badge, phase table, critical/warning findings, cost footer. Re-runs update the existing comment.
+PR comments show: status badge, phase table, critical/warning findings with inline links, cost footer. Re-runs update the existing comment in place.
+
+---
 
 ## Architecture
 
@@ -264,6 +353,8 @@ Four pluggable adapter points:
 | `vcs-host` | `github` | PR comments + SARIF |
 | `migration-runner` | `supabase` | DB migrations |
 | `review-bot-parser` | `cursor` | Parse review bot comments |
+
+**Monorepo:** Auto-detects npm/yarn/pnpm workspaces, Turborepo, and Nx.
 
 ## License
 
