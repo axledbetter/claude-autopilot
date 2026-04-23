@@ -53,6 +53,54 @@ describe('schema-alignment rule', () => {
     assert.ok(listAvailableRules().includes('schema-alignment'), 'schema-alignment not in registry');
   });
 
+  it('structural finding file points to the migration file, not the table name', async () => {
+    const { schemaAlignmentRule } = await import('../src/core/static-rules/rules/schema-alignment.ts');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-rule-'));
+    fs.mkdirSync(path.join(dir, 'data', 'deltas'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'types'));
+    const migFile = path.join(dir, 'data', 'deltas', '20260423_add_status.sql');
+    fs.writeFileSync(migFile, 'ALTER TABLE users ADD COLUMN status text;');
+    fs.writeFileSync(path.join(dir, 'types', 'user.ts'), 'export interface User { id: string; }');
+
+    const origCwd = process.cwd();
+    process.chdir(dir);
+    try {
+      const findings = await schemaAlignmentRule.check([migFile]);
+      assert.ok(findings.length > 0);
+      for (const f of findings) {
+        assert.notEqual(f.file, 'users', `finding.file should not be a table name, got: ${f.file}`);
+        assert.ok(f.file.endsWith('.sql') || f.file.includes('/'), `finding.file should look like a path, got: ${f.file}`);
+      }
+    } finally {
+      process.chdir(origCwd);
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  it('destructive finding file points to the stale-reference evidence file', async () => {
+    const { schemaAlignmentRule } = await import('../src/core/static-rules/rules/schema-alignment.ts');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-rule-'));
+    fs.mkdirSync(path.join(dir, 'data', 'deltas'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'types'));
+    const migFile = path.join(dir, 'data', 'deltas', '20260423_drop.sql');
+    fs.writeFileSync(migFile, 'ALTER TABLE users DROP COLUMN legacy_field;');
+    const typeFile = path.join(dir, 'types', 'user.ts');
+    fs.writeFileSync(typeFile, 'export interface User { legacy_field: string; }');
+
+    const origCwd = process.cwd();
+    process.chdir(dir);
+    try {
+      const findings = await schemaAlignmentRule.check([migFile]);
+      const typeFinding = findings.find(f => f.message.includes('type layer'));
+      assert.ok(typeFinding, 'expected type-layer finding');
+      assert.ok(typeFinding!.file.endsWith('user.ts'), `expected type-layer finding.file to be user.ts, got: ${typeFinding!.file}`);
+      assert.equal(typeFinding!.line, 1, 'expected line number from evidence');
+    } finally {
+      process.chdir(origCwd);
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
   it('falls back to structural findings when LLM returns empty', async () => {
     const { schemaAlignmentRule } = await import('../src/core/static-rules/rules/schema-alignment.ts');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-rule-'));

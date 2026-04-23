@@ -1,7 +1,7 @@
 // src/core/static-rules/rules/schema-alignment.ts
 import type { StaticRule } from '../../phases/static-rules.ts';
 import type { Finding } from '../../findings/types.ts';
-import type { SchemaAlignmentConfig, LayerScanResult, AlignmentFinding } from '../../schema-alignment/types.ts';
+import type { SchemaAlignmentConfig, LayerScanResult, AlignmentFinding, Evidence, SchemaEntity } from '../../schema-alignment/types.ts';
 import type { ReviewEngine } from '../../../adapters/review-engine/types.ts';
 import { detect } from '../../schema-alignment/detector.ts';
 import { extract } from '../../schema-alignment/extractor/index.ts';
@@ -26,19 +26,33 @@ function toFinding(af: AlignmentFinding): Finding {
   };
 }
 
-function structuralFinding(result: LayerScanResult, layer: 'type' | 'api' | 'ui', defaultSev: 'warning' | 'error'): Finding {
+function layerEvidence(result: LayerScanResult, layer: 'type' | 'api' | 'ui'): Evidence | null {
+  return layer === 'type' ? result.typeLayer : layer === 'api' ? result.apiLayer : result.uiLayer;
+}
+
+function structuralFinding(
+  result: LayerScanResult,
+  layer: 'type' | 'api' | 'ui',
+  defaultSev: 'warning' | 'error',
+  sourceFile: string,
+): Finding {
   const destructive = isDestructive(result.entity);
   const name = result.entity.column ?? result.entity.table;
   const message = destructive
     ? `Stale reference to dropped/renamed "${name}" still present in ${layer} layer after schema change`
     : `No reference to "${name}" found in ${layer} layer — update may be missing after schema change`;
   const severity: Finding['severity'] = destructive ? 'critical' : (defaultSev === 'error' ? 'critical' : 'warning');
+  // Destructive findings have Evidence (the stale reference's actual file);
+  // non-destructive findings don't have a layer file (that's the gap), so point
+  // back to the migration that caused the change.
+  const evidence = destructive ? layerEvidence(result, layer) : null;
   return {
     id: `schema-alignment:${result.entity.table}:${result.entity.column ?? ''}:${layer}`,
     source: 'static-rules',
     severity,
     category: 'schema-alignment',
-    file: result.entity.table,
+    file: evidence?.file ?? sourceFile,
+    line: evidence?.line,
     message,
     suggestion: `Check the ${layer} layer for references to "${name}"`,
     protectedPath: false,
@@ -58,14 +72,21 @@ export const schemaAlignmentRule: StaticRule = {
     const migrationFiles = detect(touchedFiles, saConfig);
     if (migrationFiles.length === 0) return [];
 
-    const allEntities = migrationFiles.flatMap(f => extract(f));
+    // Preserve source migration file for each entity so findings can point back
+    // to the SQL/Prisma file that caused the change.
+    type EntityWithSource = { entity: SchemaEntity; sourceFile: string };
+    const allEntities: EntityWithSource[] = migrationFiles.flatMap(f =>
+      extract(f).map(entity => ({ entity, sourceFile: f })),
+    );
     if (allEntities.length === 0) return [];
 
-    const scanResults = scanLayers(allEntities, cwd, saConfig);
+    const scanResults = scanLayers(allEntities.map(e => e.entity), cwd, saConfig);
+    // Index source files back onto scan results (scanLayers preserves order)
+    const resultsWithSource = scanResults.map((r, i) => ({ result: r, sourceFile: allEntities[i]!.sourceFile }));
 
     // For destructive ops: gap = evidence WAS found (stale ref remains)
     // For add/create: gap = evidence NOT found (layer not updated)
-    const gapResults = scanResults.filter(r => {
+    const gapResults = resultsWithSource.filter(({ result: r }) => {
       if (isDestructive(r.entity)) return r.typeLayer !== null || r.apiLayer !== null || r.uiLayer !== null;
       return r.typeLayer === null || r.apiLayer === null || r.uiLayer === null;
     });
@@ -78,20 +99,20 @@ export const schemaAlignmentRule: StaticRule = {
 
     // Structural mode — always compute these so we can fall back if LLM path yields nothing
     const structural: Finding[] = [];
-    for (const r of gapResults) {
+    for (const { result: r, sourceFile } of gapResults) {
       if (isDestructive(r.entity)) {
-        if (r.typeLayer) structural.push(structuralFinding(r, 'type', defaultSev));
-        if (r.apiLayer) structural.push(structuralFinding(r, 'api', defaultSev));
-        if (r.uiLayer) structural.push(structuralFinding(r, 'ui', defaultSev));
+        if (r.typeLayer) structural.push(structuralFinding(r, 'type', defaultSev, sourceFile));
+        if (r.apiLayer) structural.push(structuralFinding(r, 'api', defaultSev, sourceFile));
+        if (r.uiLayer) structural.push(structuralFinding(r, 'ui', defaultSev, sourceFile));
       } else {
-        if (!r.typeLayer) structural.push(structuralFinding(r, 'type', defaultSev));
-        if (!r.apiLayer) structural.push(structuralFinding(r, 'api', defaultSev));
-        if (!r.uiLayer) structural.push(structuralFinding(r, 'ui', defaultSev));
+        if (!r.typeLayer) structural.push(structuralFinding(r, 'type', defaultSev, sourceFile));
+        if (!r.apiLayer) structural.push(structuralFinding(r, 'api', defaultSev, sourceFile));
+        if (!r.uiLayer) structural.push(structuralFinding(r, 'ui', defaultSev, sourceFile));
       }
     }
 
     if (llmEnabled && engine) {
-      const llmFindings = await runLlmCheck(migrationFiles, gapResults, engine);
+      const llmFindings = await runLlmCheck(migrationFiles, gapResults.map(g => g.result), engine);
       // Fall back to structural findings if the LLM returned nothing parseable —
       // avoids silently dropping real gaps when the model is down or returns prose.
       return llmFindings.length > 0 ? llmFindings.map(toFinding) : structural;

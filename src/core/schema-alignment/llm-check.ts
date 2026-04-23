@@ -50,7 +50,7 @@ export async function runLlmCheck(
     `The structural scan found these potential alignment gaps:\n${entitySummary || '(none)'}`,
     '',
     'For each gap, determine if it is a real problem. Return findings as a JSON array:',
-    '[{ "table": "name", "column": "name_or_null", "operation": "add_column", "layer": "type", "message": "explanation", "severity": "warning", "confidence": "high" }]',
+    '[{ "table": "name", "column": "name_or_null", "operation": "add_column", "layer": "type", "file": "path/to/relevant/file.ts (optional)", "message": "explanation", "severity": "warning", "confidence": "high" }]',
     'Return only valid JSON, no prose.',
   ].join('\n');
 
@@ -69,6 +69,7 @@ export async function runLlmCheck(
     const parsed = JSON.parse(jsonMatch[0]) as Array<{
       table: string; column?: string; operation: string;
       layer: string; message: string; severity: string; confidence: string;
+      file?: string;
     }>;
     return parsed
       .filter(item => item.table && item.layer && item.message)
@@ -80,6 +81,7 @@ export async function runLlmCheck(
         },
         layer: item.layer as AlignmentFinding['layer'],
         message: item.message,
+        file: item.file,
         severity: (item.severity === 'error' ? 'error' : 'warning') as AlignmentFinding['severity'],
         confidence: (['high', 'medium', 'low'].includes(item.confidence) ? item.confidence : 'medium') as AlignmentFinding['confidence'],
       }));
