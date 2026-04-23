@@ -460,6 +460,7 @@ switch (subcommand) {
       noSynthesize,
     });
     process.exit(code);
+    break;
   }
 
   case 'mcp': {
