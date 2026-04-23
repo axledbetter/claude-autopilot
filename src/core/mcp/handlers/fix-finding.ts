@@ -1,7 +1,7 @@
 // src/core/mcp/handlers/fix-finding.ts
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { resolveWorkspace } from '../workspace.ts';
+import { resolveWorkspace, assertInWorkspace } from '../workspace.ts';
 import { loadRun, checksumFile } from '../run-store.ts';
 import { withWriteLock } from '../concurrency.ts';
 import { generateFix, buildUnifiedDiff } from '../../fix/generator.ts';
@@ -45,8 +45,8 @@ export async function handleFixFinding(
     return { schema_version: 1, status: 'human_required', reason: 'protected_path', appliedFiles: [] };
   }
 
-  // Checksum drift check
-  const absFile = path.resolve(workspace, finding.file);
+  // Validate finding.file against workspace boundary (run records could be tampered)
+  const absFile = assertInWorkspace(workspace, finding.file);
   const currentChecksum = checksumFile(absFile);
   const savedChecksum = record.fileChecksums[finding.file] ?? '';
   if (savedChecksum && currentChecksum !== savedChecksum) {
@@ -89,9 +89,9 @@ export async function handleFixFinding(
     // Test verification
     if (config.testCommand) {
       const { spawnSync } = await import('node:child_process');
-      const testResult = spawnSync(config.testCommand, {
+      const testResult = spawnSync('/bin/sh', ['-c', config.testCommand], {
         cwd: workspace,
-        shell: true,
+        shell: false,
         timeout: 120_000,
         encoding: 'utf8',
       });

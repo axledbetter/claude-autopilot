@@ -1,4 +1,5 @@
 import * as crypto from 'node:crypto';
+import * as path from 'node:path';
 import { resolveWorkspace, assertInWorkspace } from '../workspace.ts';
 import { saveRun, checksumFile, pruneOldRuns } from '../run-store.ts';
 import { runReviewPhase } from '../../pipeline/review-phase.ts';
@@ -40,7 +41,9 @@ export async function handleScanFiles(
   const run_id = crypto.randomUUID();
   const fileChecksums: Record<string, string> = {};
   for (const f of resolvedFiles) {
-    fileChecksums[f] = checksumFile(f);
+    // Store relative key so fix_finding's finding.file lookup matches
+    const relKey = path.relative(workspace, f);
+    fileChecksums[relKey] = checksumFile(f);
   }
   saveRun(workspace, run_id, result.findings, fileChecksums);
 

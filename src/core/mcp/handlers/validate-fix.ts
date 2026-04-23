@@ -22,9 +22,9 @@ export async function handleValidateFix(
 
   return withWriteLock(workspace, async () => {
     const start = Date.now();
-    const result = spawnSync(config.testCommand!, {
+    const result = spawnSync('/bin/sh', ['-c', config.testCommand!], {
       cwd: workspace,
-      shell: true,
+      shell: false,
       timeout: 120_000,
       encoding: 'utf8',
     });
