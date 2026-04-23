@@ -3,6 +3,7 @@ import { parseReviewOutput } from './parse-output.ts';
 import { GuardrailError } from '../../core/errors.ts';
 import type { Capabilities } from '../base.ts';
 import type { ReviewEngine, ReviewInput, ReviewOutput } from './types.ts';
+import { buildSystemPrompt, classifyError } from './prompt-builder.ts';
 
 const MAX_OUTPUT_TOKENS = 4096;
 
@@ -62,10 +63,7 @@ export const openaiCompatibleAdapter: ReviewEngine = {
       );
     }
 
-    const stack = input.context?.stack ?? 'A web application — stack details unspecified.';
-    const gitCtx = input.context?.gitSummary ? `\n\nChange context: ${input.context.gitSummary}` : '';
-    const designBlock = input.context?.designSchema ? `\n\n${input.context.designSchema}` : '';
-    const systemPrompt = SYSTEM_PROMPT_TEMPLATE.replace('{STACK}', stack).replace('{GIT_CONTEXT}', gitCtx).replace('{DESIGN_SCHEMA}', designBlock);
+    const systemPrompt = buildSystemPrompt(input, SYSTEM_PROMPT_TEMPLATE);
     const client = new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
 
     let response: OpenAI.Chat.ChatCompletion;
@@ -80,12 +78,11 @@ export const openaiCompatibleAdapter: ReviewEngine = {
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const isRateLimit = /rate.limit|429/i.test(message);
-      const isAuth = /unauthorized|401|invalid.api.key/i.test(message);
+      const code = classifyError(message);
       throw new GuardrailError(`openai-compatible review call failed: ${message}`, {
-        code: isAuth ? 'auth' : isRateLimit ? 'rate_limit' : 'transient_network',
+        code,
         provider: 'openai-compatible',
-        retryable: isRateLimit,
+        retryable: code === 'rate_limit',
       });
     }
 
