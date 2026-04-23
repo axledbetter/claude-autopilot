@@ -6,16 +6,18 @@ export const GUARDRAIL_MARKER = '# guardrail-managed';
 const PRE_COMMIT_TEMPLATE = `#!/bin/sh
 ${GUARDRAIL_MARKER}
 # guardrail pre-commit hook — runs static rules only (<1s, no LLM)
-STAGED=$(git diff --cached --name-only --diff-filter=ACM | tr '\\n' ' ')
+# --files accepts comma-separated paths; quoting prevents shell word-splitting
+STAGED=$(git diff --cached --name-only --diff-filter=ACM | tr '\\n' ',')
+STAGED=\${STAGED%,}
 if [ -z "$STAGED" ]; then exit 0; fi
-npx guardrail run --static-only --files $STAGED
+npx guardrail run --static-only --files "$STAGED"
 `;
 
 const PRE_PUSH_TEMPLATE = `#!/bin/sh
 ${GUARDRAIL_MARKER}
 # guardrail pre-push hook — full LLM review against upstream
 BASE=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || echo "HEAD~1")
-npx guardrail run --base $BASE
+npx guardrail run --base "$BASE"
 `;
 
 function findGitDir(cwd: string): string | null {
