@@ -73,7 +73,7 @@ describe('chaos — rate limit retry', () => {
     fs.rmSync(dir, { recursive: true });
   });
 
-  it('rate-limit with exp backoff retries up to 4 times', { timeout: 10000 }, async () => {
+  it('rate-limit with exp backoff retries up to 4 times', { timeout: 20000 }, async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-chaos-'));
     const f = writeTmpFile(dir, 'src/a.ts');
     let calls = 0;

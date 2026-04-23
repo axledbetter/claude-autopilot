@@ -19,6 +19,7 @@ export interface RunInput {
   cwd?: string;
   gitSummary?: string;
   base?: string;
+  skipReview?: boolean;
 }
 
 export interface RunResult {
@@ -42,6 +43,19 @@ export async function runGuardrail(input: RunInput): Promise<RunResult> {
     });
     phases.push(result);
     if (result.status === 'fail') return finalize(phases, start, totalCostUSD);
+  }
+
+  // skipReview short-circuit: skip tests and review phases entirely
+  if (input.skipReview) {
+    const allFindings = phases.flatMap(p => p.findings ?? []);
+    const hasCritical = allFindings.some(f => f.severity === 'critical');
+    return {
+      status: hasCritical ? 'fail' : 'pass',
+      phases,
+      allFindings,
+      totalCostUSD: undefined,
+      durationMs: Date.now() - start,
+    };
   }
 
   // Tests phase — fail fast on test failure
