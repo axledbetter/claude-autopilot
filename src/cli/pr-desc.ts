@@ -41,7 +41,7 @@ export function summarizeFindings(findings: Finding[], max = 10): string {
 
 export function parseDescription(raw: string): { title: string; body: string } {
   const titleMatch = raw.match(/^Title:\s*(.+)$/m);
-  const title = titleMatch ? titleMatch[1].trim() : 'chore: update';
+  const title = titleMatch ? titleMatch[1]!.trim() : 'chore: update';
   const sepIdx = raw.indexOf('\n\n---\n');
   const body = sepIdx !== -1 ? raw.slice(sepIdx + 5).trim() : raw.replace(/^Title:.*\n?/m, '').trim();
   return { title, body };
@@ -59,7 +59,7 @@ export async function runPrDesc(options: PrDescOptions): Promise<PrDescResult> {
   const findings = options._cachedFindings ?? loadCachedFindings();
   const prompt = buildPrompt(branchName, truncateDiff(diff), summarizeFindings(findings));
 
-  const engine = options._reviewEngine ?? (await resolveEngine());
+  const engine = options._reviewEngine ?? (await resolveEngine() as unknown as { review(input: { content: string; kind: string }): Promise<{ rawOutput: string }> });
   const { rawOutput } = await engine.review({ content: prompt, kind: 'pr-diff' });
   const { title, body } = parseDescription(rawOutput);
 
@@ -135,10 +135,18 @@ ${findingsSummary}`;
 }
 
 async function resolveEngine() {
-  const { loadAdapter } = await import('../adapters/review-engine/loader.ts');
+  const { loadAdapter } = await import('../adapters/loader.ts');
   const { loadConfig } = await import('../core/config/loader.ts');
-  const cfg = await loadConfig(undefined);
-  return loadAdapter(cfg.reviewEngine);
+  const configPath = process.env.GUARDRAIL_CONFIG ?? 'guardrail.config.yaml';
+  let engineRef = 'auto';
+  try {
+    const cfg = await loadConfig(configPath);
+    const rev = (cfg as { reviewEngine?: unknown }).reviewEngine;
+    if (rev) engineRef = typeof rev === 'string' ? rev : (rev as { adapter: string }).adapter;
+  } catch {
+    // no config file — fall back to auto
+  }
+  return loadAdapter({ point: 'review-engine', ref: engineRef });
 }
 
 async function createPr(title: string, body: string, yes: boolean): Promise<PrDescResult> {
@@ -146,7 +154,7 @@ async function createPr(title: string, body: string, yes: boolean): Promise<PrDe
     process.stdout.write('\nCreate PR with this description? [y/N] ');
     const answer = await new Promise<string>(resolve => {
       process.stdin.setEncoding('utf8');
-      process.stdin.once('data', (chunk: string) => resolve(chunk.split('\n')[0]));
+      process.stdin.once('data', (chunk: string) => resolve(chunk.split('\n')[0] ?? ''));
     });
     if (!answer.toLowerCase().startsWith('y')) return { title, body };
   }
