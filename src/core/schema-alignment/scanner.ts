@@ -11,11 +11,25 @@ const DEFAULT_ROOTS = {
 function* walkFiles(dir: string): Generator<string> {
   if (!fs.existsSync(dir)) return;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) yield* walkFiles(full);
-    else if (entry.isFile()) yield full;
+    if (entry.isDirectory()) {
+      if (IGNORED_DIRS.has(entry.name)) continue;
+      yield* walkFiles(path.join(dir, entry.name));
+    } else if (entry.isFile()) {
+      const ext = path.extname(entry.name).toLowerCase();
+      if (CODE_EXTS.has(ext)) yield path.join(dir, entry.name);
+    }
   }
 }
+
+const IGNORED_DIRS = new Set([
+  'node_modules', '.next', 'dist', 'build', 'coverage', '.git',
+  '.turbo', '.cache', '.vercel', 'out', '.nuxt', 'target',
+]);
+
+const CODE_EXTS = new Set([
+  '.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs',
+  '.vue', '.svelte', '.astro', '.py', '.rb', '.go', '.rs',
+]);
 
 function searchLayer(roots: string[], pattern: RegExp, cwd: string): Evidence | null {
   for (const root of roots) {

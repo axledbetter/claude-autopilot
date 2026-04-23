@@ -25,7 +25,7 @@ src/core/schema-alignment/
 | File | Change |
 |------|--------|
 | `src/core/static-rules/registry.ts` | Add `'schema-alignment'` entry (builtin) |
-| `src/core/config/types.ts` | Add `schemaAlignment?: SchemaAlignmentConfig` to `GuardrailConfig` |
+| `src/core/config/types.ts` | Add `'schema-alignment'?: SchemaAlignmentConfig` to `GuardrailConfig` (kebab-case to match YAML key) |
 
 ## Detection
 
@@ -162,10 +162,10 @@ Validation rules (Zod):
 
 ```
 check(touchedFiles, config):
-  1. detector.detect(touchedFiles, config.schemaAlignment) → migrationFiles
+  1. detector.detect(touchedFiles, config['schema-alignment']) → migrationFiles
   2. if migrationFiles.length === 0: return []
   3. for each migrationFile: extractor.extract(migrationFile) → entities[]
-  4. scanner.scanLayers(entities, cwd, config.schemaAlignment) → scanResults[]
+  4. scanner.scanLayers(entities, cwd, config['schema-alignment']) → scanResults[]
   5. gapResults = scanResults.filter(r => r.typeLayer === null || r.apiLayer === null || r.uiLayer === null)
   6. if gapResults.length === 0: return []  // structurally clean
   7. if llmCheck: llmCheck.run(migrationFiles, gapResults, engine) → llmFindings[]

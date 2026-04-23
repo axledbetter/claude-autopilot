@@ -31,7 +31,7 @@ export function extractFromSql(content: string): SchemaEntity[] {
 
   // ALTER TABLE [schema.]name ADD [COLUMN] [IF NOT EXISTS] col
   const addColRe = new RegExp(
-    `ALTER\\s+TABLE\\s+${SCHEMA_OPT.source}${ID.source}\\s+ADD\\s+(?:COLUMN\\s+)?(?:IF\\s+NOT\\s+EXISTS\\s+)?${ID.source}`,
+    `ALTER\\s+TABLE\\s+(?:ONLY\\s+)?${SCHEMA_OPT.source}${ID.source}\\s+ADD\\s+(?:COLUMN\\s+)?(?:IF\\s+NOT\\s+EXISTS\\s+)?${ID.source}`,
     'gi',
   );
   for (const m of normalized.matchAll(addColRe)) {
@@ -42,7 +42,7 @@ export function extractFromSql(content: string): SchemaEntity[] {
 
   // ALTER TABLE [schema.]name DROP [COLUMN] [IF EXISTS] col
   const dropColRe = new RegExp(
-    `ALTER\\s+TABLE\\s+${SCHEMA_OPT.source}${ID.source}\\s+DROP\\s+(?:COLUMN\\s+)?(?:IF\\s+EXISTS\\s+)?${ID.source}`,
+    `ALTER\\s+TABLE\\s+(?:ONLY\\s+)?${SCHEMA_OPT.source}${ID.source}\\s+DROP\\s+(?:COLUMN\\s+)?(?:IF\\s+EXISTS\\s+)?${ID.source}`,
     'gi',
   );
   for (const m of normalized.matchAll(dropColRe)) {
@@ -53,7 +53,7 @@ export function extractFromSql(content: string): SchemaEntity[] {
 
   // ALTER TABLE [schema.]name RENAME [COLUMN] old TO new
   const renameColRe = new RegExp(
-    `ALTER\\s+TABLE\\s+${SCHEMA_OPT.source}${ID.source}\\s+RENAME\\s+(?:COLUMN\\s+)?${ID.source}\\s+TO\\s+${ID.source}`,
+    `ALTER\\s+TABLE\\s+(?:ONLY\\s+)?${SCHEMA_OPT.source}${ID.source}\\s+RENAME\\s+(?:COLUMN\\s+)?${ID.source}\\s+TO\\s+${ID.source}`,
     'gi',
   );
   for (const m of normalized.matchAll(renameColRe)) {
@@ -69,6 +69,16 @@ export function extractFromSql(content: string): SchemaEntity[] {
     'gi',
   );
   for (const m of normalized.matchAll(createTypeRe)) {
+    const table = unquote(m[1] ?? m[2] ?? m[3]);
+    if (table) entities.push({ table, operation: 'create_type' });
+  }
+
+  // ALTER TYPE [schema.]name ADD VALUE ...
+  const alterTypeRe = new RegExp(
+    `ALTER\\s+TYPE\\s+${SCHEMA_OPT.source}${ID.source}\\s+ADD\\s+VALUE`,
+    'gi',
+  );
+  for (const m of normalized.matchAll(alterTypeRe)) {
     const table = unquote(m[1] ?? m[2] ?? m[3]);
     if (table) entities.push({ table, operation: 'create_type' });
   }

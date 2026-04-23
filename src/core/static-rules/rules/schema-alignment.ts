@@ -76,24 +76,27 @@ export const schemaAlignmentRule: StaticRule = {
     const llmEnabled = saConfig?.llmCheck !== false;
     const engine = config['_engine'] as ReviewEngine | undefined;
 
-    if (llmEnabled && engine) {
-      const llmFindings = await runLlmCheck(migrationFiles, gapResults, engine);
-      return llmFindings.map(toFinding);
-    }
-
-    // Structural mode
-    const findings: Finding[] = [];
+    // Structural mode — always compute these so we can fall back if LLM path yields nothing
+    const structural: Finding[] = [];
     for (const r of gapResults) {
       if (isDestructive(r.entity)) {
-        if (r.typeLayer) findings.push(structuralFinding(r, 'type', defaultSev));
-        if (r.apiLayer) findings.push(structuralFinding(r, 'api', defaultSev));
-        if (r.uiLayer) findings.push(structuralFinding(r, 'ui', defaultSev));
+        if (r.typeLayer) structural.push(structuralFinding(r, 'type', defaultSev));
+        if (r.apiLayer) structural.push(structuralFinding(r, 'api', defaultSev));
+        if (r.uiLayer) structural.push(structuralFinding(r, 'ui', defaultSev));
       } else {
-        if (!r.typeLayer) findings.push(structuralFinding(r, 'type', defaultSev));
-        if (!r.apiLayer) findings.push(structuralFinding(r, 'api', defaultSev));
-        if (!r.uiLayer) findings.push(structuralFinding(r, 'ui', defaultSev));
+        if (!r.typeLayer) structural.push(structuralFinding(r, 'type', defaultSev));
+        if (!r.apiLayer) structural.push(structuralFinding(r, 'api', defaultSev));
+        if (!r.uiLayer) structural.push(structuralFinding(r, 'ui', defaultSev));
       }
     }
-    return findings;
+
+    if (llmEnabled && engine) {
+      const llmFindings = await runLlmCheck(migrationFiles, gapResults, engine);
+      // Fall back to structural findings if the LLM returned nothing parseable —
+      // avoids silently dropping real gaps when the model is down or returns prose.
+      return llmFindings.length > 0 ? llmFindings.map(toFinding) : structural;
+    }
+
+    return structural;
   },
 };

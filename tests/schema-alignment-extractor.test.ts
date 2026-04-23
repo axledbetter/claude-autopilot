@@ -95,6 +95,26 @@ describe('extractFromSql', () => {
   });
 });
 
+describe('extractFromSql — additional coverage', () => {
+  it('handles ALTER TABLE ONLY variant', async () => {
+    const { extractFromSql } = await import('../src/core/schema-alignment/extractor/sql.ts');
+    const sql = 'ALTER TABLE ONLY users ADD COLUMN status text;';
+    const entities = extractFromSql(sql);
+    assert.equal(entities[0]!.table, 'users');
+    assert.equal(entities[0]!.column, 'status');
+    assert.equal(entities[0]!.operation, 'add_column');
+  });
+
+  it('extracts ALTER TYPE ADD VALUE', async () => {
+    const { extractFromSql } = await import('../src/core/schema-alignment/extractor/sql.ts');
+    const sql = "ALTER TYPE status_enum ADD VALUE 'archived';";
+    const entities = extractFromSql(sql);
+    assert.equal(entities.length, 1);
+    assert.equal(entities[0]!.table, 'status_enum');
+    assert.equal(entities[0]!.operation, 'create_type');
+  });
+});
+
 describe('extractFromPrisma', () => {
   it('extracts model name as create_table and fields as add_column', async () => {
     const { extractFromPrisma } = await import('../src/core/schema-alignment/extractor/prisma.ts');
