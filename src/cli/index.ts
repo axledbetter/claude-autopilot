@@ -312,7 +312,11 @@ switch (subcommand) {
     const { runHook } = await import('./hook.ts');
     const hookSub = args[1] ?? 'status';
     const force = boolFlag('force');
-    const code = await runHook(hookSub, { force });
+    const code = await runHook(hookSub, {
+      force,
+      preCommitOnly: args.includes('--pre-commit-only'),
+      prePushOnly: args.includes('--pre-push-only'),
+    });
     process.exit(code);
     break;
   }
