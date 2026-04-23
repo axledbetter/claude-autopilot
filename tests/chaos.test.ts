@@ -73,7 +73,7 @@ describe('chaos — rate limit retry', () => {
     fs.rmSync(dir, { recursive: true });
   });
 
-  it('rate-limit with exp backoff retries up to 4 times', async () => {
+  it('rate-limit with exp backoff retries up to 4 times', { timeout: 10000 }, async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-chaos-'));
     const f = writeTmpFile(dir, 'src/a.ts');
     let calls = 0;
@@ -88,7 +88,7 @@ describe('chaos — rate limit retry', () => {
     );
     assert.equal(calls, 4, 'exp strategy = 3 retries = 4 total attempts');
     fs.rmSync(dir, { recursive: true });
-  }, { timeout: 10000 });
+  });
 });
 
 describe('chaos — empty engine output', () => {

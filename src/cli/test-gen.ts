@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { loadConfig } from '../core/config/loader.ts';
 import { loadAdapter } from '../adapters/loader.ts';
+import type { ReviewEngine } from '../adapters/review-engine/types.ts';
 import { findCoverageGaps } from '../core/test-gen/coverage-analyzer.ts';
 import { detectTestFramework } from '../core/test-gen/framework-detector.ts';
 import { writeGeneratedTest, buildGenerationPrompt } from '../core/test-gen/test-writer.ts';
@@ -25,7 +26,7 @@ export async function runTestGen(options: TestGenOptions = {}): Promise<number> 
   let config = { configVersion: 1 as const, testCommand: null as string | null };
   if (fs.existsSync(configPath)) {
     try {
-      const loaded = loadConfig(configPath);
+      const loaded = await loadConfig(configPath);
       if (loaded) config = loaded as typeof config;
     } catch {
       // proceed with defaults if config fails to load
@@ -88,8 +89,7 @@ export async function runTestGen(options: TestGenOptions = {}): Promise<number> 
 
     process.stdout.write(`  Generating ${path.relative(cwd, gap.testFile)}... `);
     try {
-      const result = await (engine as { review(input: { content: string; kind: string; context?: object }): Promise<{ rawOutput: string }> })
-        .review({ content: prompt, kind: 'spec', context: { cwd } });
+      const result = await (engine as unknown as ReviewEngine).review({ content: prompt, kind: 'spec', context: { cwd } });
 
       // Extract code block if wrapped in markdown
       let code = result.rawOutput.trim();

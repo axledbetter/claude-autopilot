@@ -70,7 +70,7 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
 
   let config: GuardrailConfig = { configVersion: 1 };
   if (fs.existsSync(configPath)) {
-    const loaded = loadConfig(configPath);
+    const loaded = await loadConfig(configPath);
     if (loaded) config = loaded;
   }
 

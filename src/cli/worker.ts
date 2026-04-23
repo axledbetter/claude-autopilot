@@ -2,6 +2,7 @@ import { readLock, writeLock, deleteLock, isWorkerAlive } from '../core/worker/l
 import { stopWorker, getWorkerStatus } from '../core/worker/client.ts';
 import { startWorkerServer } from '../core/worker/server.ts';
 import { loadConfig } from '../core/config/loader.ts';
+import type { ReviewEngine } from '../adapters/review-engine/types.ts';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 
@@ -33,7 +34,7 @@ async function workerStart(cwd: string, configPath: string): Promise<number> {
 
   let config = { configVersion: 1 as const };
   if (fs.existsSync(configPath)) {
-    const loaded = loadConfig(configPath);
+    const loaded = await loadConfig(configPath);
     if (loaded) config = loaded;
   }
 
@@ -56,8 +57,8 @@ async function workerStart(cwd: string, configPath: string): Promise<number> {
   const server = await startWorkerServer({
     cwd,
     onReview: async (files, cfg) => {
-      const result = await runReviewPhase({ touchedFiles: files, config: cfg, engine });
-      return { findings: result.findings, usage: result.usage };
+      const result = await runReviewPhase({ touchedFiles: files, config: cfg, engine: engine as unknown as ReviewEngine });
+      return { findings: result.findings, usage: result.costUSD !== undefined ? { costUSD: result.costUSD } : undefined };
     },
   });
 
