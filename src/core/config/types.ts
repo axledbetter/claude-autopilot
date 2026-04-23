@@ -60,7 +60,7 @@ export interface GuardrailConfig {
     /** Canonical font family names */
     fonts?: string[];
     /** Path to design system component library (informational, for future LLM review) */
-    componentLibrary?: string;
+    componentLibrary?: string | { tokens?: string; guide?: string };
   };
   cache?: Record<string, unknown>;
   persistence?: Record<string, unknown>;

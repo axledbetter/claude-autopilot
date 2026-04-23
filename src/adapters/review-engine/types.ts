@@ -4,7 +4,7 @@ import type { Finding } from '../../core/findings/types.ts';
 export interface ReviewInput {
   content: string;
   kind: 'spec' | 'pr-diff' | 'file-batch';
-  context?: { spec?: string; plan?: string; stack?: string; cwd?: string; gitSummary?: string };
+  context?: { spec?: string; plan?: string; stack?: string; cwd?: string; gitSummary?: string; designSchema?: string };
 }
 
 export interface ReviewOutput {
