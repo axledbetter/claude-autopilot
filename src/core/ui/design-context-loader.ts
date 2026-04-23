@@ -25,6 +25,15 @@ function safeResolve(cwd: string, configured: string): string | null {
   const resolved = path.resolve(cwd, configured);
   const cwdWithSep = cwd.endsWith(path.sep) ? cwd : cwd + path.sep;
   if (!resolved.startsWith(cwdWithSep) && resolved !== cwd) return null;
+  // Resolve symlinks to prevent symlink traversal outside workspace
+  try {
+    const realCwd = fs.realpathSync(cwd);
+    const realResolved = fs.realpathSync(resolved);
+    const realCwdWithSep = realCwd.endsWith(path.sep) ? realCwd : realCwd + path.sep;
+    if (!realResolved.startsWith(realCwdWithSep) && realResolved !== realCwd) return null;
+  } catch {
+    return null;
+  }
   return resolved;
 }
 
