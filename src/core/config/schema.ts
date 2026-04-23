@@ -104,6 +104,25 @@ export const GUARDRAIL_CONFIG_SCHEMA = {
       },
       additionalProperties: false,
     },
+    'schema-alignment': {
+      type: 'object',
+      properties: {
+        enabled: { type: 'boolean' },
+        migrationGlobs: { type: 'array', items: { type: 'string', minLength: 1 } },
+        layerRoots: {
+          type: 'object',
+          properties: {
+            types: { type: 'array', items: { type: 'string' }, minItems: 1 },
+            api: { type: 'array', items: { type: 'string' }, minItems: 1 },
+            ui: { type: 'array', items: { type: 'string' }, minItems: 1 },
+          },
+          additionalProperties: false,
+        },
+        llmCheck: { type: 'boolean' },
+        severity: { enum: ['warning', 'error'] },
+      },
+      additionalProperties: false,
+    },
     cache: { type: 'object' },
     persistence: { type: 'object' },
     concurrency: { type: 'object' },

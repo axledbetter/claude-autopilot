@@ -40,6 +40,8 @@ export async function runGuardrail(input: RunInput): Promise<RunResult> {
     const result = await runStaticRulesPhase({
       touchedFiles: input.touchedFiles,
       rules: input.staticRules,
+      config: input.config,
+      engine: input.reviewEngine,
     });
     phases.push(result);
     if (result.status === 'fail') return finalize(phases, start, totalCostUSD);
