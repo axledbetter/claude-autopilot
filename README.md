@@ -13,7 +13,7 @@ Static analysis catches style. Guardrail catches things that break in production
 - **Race conditions** — unguarded shared state, missing locks, TOCTOU
 - **Security misconfig** — CORS wildcards, missing rate limits, exposed internals
 
-Plus built-in static rules that run before the LLM: `hardcoded-secrets`, `npm-audit`, `sql-injection`, `missing-auth`, `ssrf`, `insecure-redirect`, `console-log`, `todo-fixme`, `large-file`, `missing-tests`, `package-lock-sync`.
+Plus built-in static rules that run before the LLM: `hardcoded-secrets`, `npm-audit`, `sql-injection`, `missing-auth`, `ssrf`, `insecure-redirect`, `console-log`, `todo-fixme`, `large-file`, `missing-tests`, `package-lock-sync`, `brand-tokens`.
 
 ## Install
 
@@ -79,6 +79,7 @@ npx guardrail scan --all                   # scan entire codebase
 npx guardrail scan --ask "is there SQL injection risk?" src/db/
 npx guardrail scan --focus security        # security findings only
 npx guardrail scan --focus logic           # logic bugs only
+npx guardrail scan --focus brand           # brand consistency only
 ```
 
 `scan` doesn't require git changes — point it at anything.
@@ -232,6 +233,17 @@ staticRules:
   - large-file
   - missing-tests
   - package-lock-sync
+  - brand-tokens        # opt-in: requires brand: block below
+
+# Brand token enforcement (opt-in — omit to disable)
+brand:
+  colorsFrom: tailwind.config.ts   # auto-extract theme.colors as canonical palette
+  colors:                          # explicit palette entries (merged with colorsFrom)
+    - '#f97316'
+    - '#1a1f3a'
+  fonts:
+    - 'Inter'
+    - 'Geist'
 
 policy:
   failOn: critical      # critical (default) | warning | note | none
