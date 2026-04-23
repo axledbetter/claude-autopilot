@@ -1,4 +1,4 @@
-// @snapshot-for: src/snapshots/serializer.ts
+// @snapshot-for: scripts/snapshots/serializer.ts
 // @generated-at: 2026-04-21T17:42:06.431Z
 // @source-commit: d207869
 // @generator-version: 1.0.0-alpha.6
@@ -8,7 +8,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
-import { normalizeSnapshot } from '../../src/snapshots/serializer.ts';
+import { normalizeSnapshot } from '../../scripts/snapshots/serializer.ts';
 
 const SLUG = 'src-snapshots-serializer';
 const baselineRaw = process.env.CAPTURE_BASELINE === '1' ? '{}' : fs.readFileSync(fileURLToPath(new URL('./baselines/src-snapshots-serializer.json', import.meta.url)), 'utf8');

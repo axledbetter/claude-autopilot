@@ -3,6 +3,7 @@ import { parseReviewOutput } from './parse-output.ts';
 import { GuardrailError } from '../../core/errors.ts';
 import type { Capabilities } from '../base.ts';
 import type { ReviewEngine, ReviewInput, ReviewOutput } from './types.ts';
+import { buildSystemPrompt, classifyError } from './prompt-builder.ts';
 
 const DEFAULT_MODEL = 'gemini-2.5-pro-preview-05-06';
 const MAX_OUTPUT_TOKENS = 4096;
@@ -63,10 +64,7 @@ export const geminiAdapter: ReviewEngine = {
     }
 
     const model = (input.context as Record<string, unknown> | undefined)?.['model'] as string | undefined ?? DEFAULT_MODEL;
-    const stack = input.context?.stack ?? 'A web application — stack details unspecified.';
-    const gitCtx = input.context?.gitSummary ? `\n\nChange context: ${input.context.gitSummary}` : '';
-    const designBlock = input.context?.designSchema ? `\n\n${input.context.designSchema}` : '';
-    const prompt = PROMPT_TEMPLATE.replace('{STACK}', stack).replace('{GIT_CONTEXT}', gitCtx).replace('{DESIGN_SCHEMA}', designBlock).replace('{CONTENT}', input.content);
+    const prompt = buildSystemPrompt(input, PROMPT_TEMPLATE).replace('{CONTENT}', input.content);
 
     const genAI = new GoogleGenerativeAI(apiKey);
     const genModel = genAI.getGenerativeModel({
@@ -79,12 +77,11 @@ export const geminiAdapter: ReviewEngine = {
       result = await genModel.generateContent(prompt);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const isRateLimit = /rate.limit|429|quota/i.test(message);
-      const isAuth = /api.key|unauthorized|403/i.test(message);
+      const code = classifyError(message);
       throw new GuardrailError(`Gemini review call failed: ${message}`, {
-        code: isAuth ? 'auth' : isRateLimit ? 'rate_limit' : 'transient_network',
+        code,
         provider: 'gemini',
-        retryable: isRateLimit,
+        retryable: code === 'rate_limit',
       });
     }
 

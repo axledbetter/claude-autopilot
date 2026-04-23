@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeSnapshot } from '../../src/snapshots/serializer.ts';
+import { normalizeSnapshot } from '../../scripts/snapshots/serializer.ts';
 
 describe('normalizeSnapshot', () => {
   it('AR1: sorts object keys alphabetically (recursive)', () => {

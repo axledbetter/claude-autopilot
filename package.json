@@ -35,6 +35,7 @@
     "skills/",
     "scripts/test-runner.mjs",
     "scripts/autoregress.ts",
+    "scripts/snapshots/",
     "tests/snapshots/",
     "CHANGELOG.md"
   ],

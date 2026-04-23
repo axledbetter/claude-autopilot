@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 
 import { normalizeSarifUri, toSarif } from '../../src/formatters/sarif.ts';
-import { normalizeSnapshot } from '../../src/snapshots/serializer.ts';
+import { normalizeSnapshot } from '../../scripts/snapshots/serializer.ts';
 
 const SLUG = 'src-formatters-sarif';
 const baselineRaw =

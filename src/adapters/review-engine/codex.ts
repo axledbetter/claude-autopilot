@@ -3,6 +3,7 @@ import { parseReviewOutput } from './parse-output.ts';
 import { GuardrailError } from '../../core/errors.ts';
 import type { Capabilities } from '../base.ts';
 import type { ReviewEngine, ReviewInput, ReviewOutput } from './types.ts';
+import { buildSystemPrompt, classifyError } from './prompt-builder.ts';
 
 const DEFAULT_MODEL = process.env.CODEX_MODEL ?? 'gpt-5.3-codex';
 const MAX_OUTPUT_TOKENS = 4096;
@@ -48,10 +49,7 @@ export const codexAdapter: ReviewEngine = {
     if (!apiKey) {
       throw new GuardrailError('OPENAI_API_KEY not set', { code: 'auth', provider: 'codex' });
     }
-    const stack = input.context?.stack ?? 'A web application — stack details unspecified.';
-    const gitCtx = input.context?.gitSummary ? `\n\nChange context: ${input.context.gitSummary}` : '';
-    const designBlock = input.context?.designSchema ? `\n\n${input.context.designSchema}` : '';
-    const systemPrompt = SYSTEM_PROMPT_TEMPLATE.replace('{STACK}', stack).replace('{GIT_CONTEXT}', gitCtx).replace('{DESIGN_SCHEMA}', designBlock);
+    const systemPrompt = buildSystemPrompt(input, SYSTEM_PROMPT_TEMPLATE);
 
     const client = new OpenAI({ apiKey });
     let response;
@@ -64,12 +62,11 @@ export const codexAdapter: ReviewEngine = {
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const isRateLimit = /rate.limit|429/i.test(message);
-      const isAuth = /unauthorized|401|invalid.api.key/i.test(message);
+      const code = classifyError(message);
       throw new GuardrailError(`Codex review call failed: ${message}`, {
-        code: isAuth ? 'auth' : isRateLimit ? 'rate_limit' : 'transient_network',
+        code,
         provider: 'codex',
-        retryable: isRateLimit,
+        retryable: code === 'rate_limit',
       });
     }
 
