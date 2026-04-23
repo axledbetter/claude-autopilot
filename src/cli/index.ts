@@ -41,7 +41,7 @@ if (args[0] === '--version' || args[0] === '-v') {
 }
 
 const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'help', '--help', '-h'] as const;
-const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity'];
+const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity', 'prompt', 'context-file'];
 
 // Bare invocation — no subcommand, no flags → show welcome guide
 if (args.length === 0) {

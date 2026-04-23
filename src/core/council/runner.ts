@@ -10,12 +10,13 @@ async function consultWithTimeout(
   timeoutMs: number,
 ): Promise<ModelResponse> {
   const start = Date.now();
+  let timer: NodeJS.Timeout | undefined;
   try {
     const text = await Promise.race([
       adapter.consult(prompt, context),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('timeout')), timeoutMs)
-      ),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
+      }),
     ]);
     return { label: adapter.label, status: 'ok', text, latencyMs: Date.now() - start };
   } catch (err) {
@@ -23,6 +24,11 @@ async function consultWithTimeout(
     return message === 'timeout'
       ? { label: adapter.label, status: 'timeout', error: 'timed out', latencyMs: Date.now() - start }
       : { label: adapter.label, status: 'error', error: message, latencyMs: Date.now() - start };
+  } finally {
+    // Always clear the timer to avoid keeping the event loop alive after the
+    // adapter resolves/rejects. Long-running hosts (MCP server) would accumulate
+    // dangling timers for the full timeoutMs otherwise.
+    if (timer) clearTimeout(timer);
   }
 }
 

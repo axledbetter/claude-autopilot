@@ -92,4 +92,18 @@ describe('runCouncil', () => {
     const result = await runCouncil(baseConfig, adapters, synthesizer, 'q', 'ctx');
     assert.ok(result.responses.every(r => r.latencyMs >= 50));
   });
+
+  it('R7: successful adapter clears timeout timer (does not keep event loop alive)', async () => {
+    // If the timer were not cleared, this test would hang for the full timeoutMs
+    // after the adapter resolves. node:test has a default 30s timeout; if we
+    // measure wall clock against timeoutMs, the fix shows up as "done quickly"
+    // rather than "done in ≥ timeoutMs".
+    const longTimeoutConfig = { ...baseConfig, timeoutMs: 10000 };
+    const adapters = [makeAdapter('A', 'fast', 10), makeAdapter('B', 'fast', 10)];
+    const synthesizer = makeAdapter('Synth', 's');
+    const start = Date.now();
+    await runCouncil(longTimeoutConfig, adapters, synthesizer, 'q', 'ctx');
+    // Total elapsed should be ~10ms, not anywhere near 10s
+    assert.ok(Date.now() - start < 1000, 'expected fast completion without waiting for timer');
+  });
 });
