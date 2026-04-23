@@ -39,7 +39,7 @@ if (args[0] === '--version' || args[0] === '-v') {
   process.exit(0);
 }
 
-const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'test-gen', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
+const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity'];
 
 // Bare invocation — no subcommand, no flags → show welcome guide
@@ -60,6 +60,7 @@ if (args.length === 0) {
   \x1b[36mnpx guardrail scan src/auth/\x1b[0m           Scan any path (no git required)
   \x1b[36mnpx guardrail scan --ask "SQL injection?" src/db/\x1b[0m
   \x1b[36mnpx guardrail fix\x1b[0m                      Auto-fix cached findings
+  \x1b[36mnpx guardrail pr-desc\x1b[0m                  Generate PR description from current diff
 
 \x1b[1mSetup:\x1b[0m
 
@@ -370,6 +371,21 @@ switch (subcommand) {
       verify,
     });
     process.exit(code);
+    break;
+  }
+
+  case 'pr-desc': {
+    const { runPrDesc } = await import('./pr-desc.ts');
+    const baseIdx = args.indexOf('--base');
+    const base = baseIdx !== -1 ? args[baseIdx + 1] : undefined;
+    const outputIdx = args.indexOf('--output');
+    const output = outputIdx !== -1 ? args[outputIdx + 1] : undefined;
+    await runPrDesc({
+      base,
+      post: args.includes('--post'),
+      yes: args.includes('--yes'),
+      output,
+    });
     break;
   }
 
