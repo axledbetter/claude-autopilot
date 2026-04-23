@@ -24,6 +24,8 @@ import { runPr } from './pr.ts';
 import { runBaseline } from './baseline.ts';
 import { runTriage } from './triage.ts';
 import { runLsp } from './lsp.ts';
+import { runWorker } from './worker.ts';
+import { runTestGen } from './test-gen.ts';
 
 const args = process.argv.slice(2);
 
@@ -37,7 +39,7 @@ if (args[0] === '--version' || args[0] === '-v') {
   process.exit(0);
 }
 
-const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
+const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'test-gen', 'doctor', 'preflight', 'setup', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity'];
 
 // Bare invocation — no subcommand, no flags → show welcome guide
@@ -107,6 +109,8 @@ Commands:
   doctor       Check prerequisites (alias: preflight)
   autoregress  Snapshot regression tests (run|diff|update|generate)
   lsp          Language server — publishes findings as LSP diagnostics (stdin/stdout)
+  worker       Persistent review daemon for multi-terminal parallel usage (start|stop|status)
+  test-gen     Detect uncovered exports and generate test cases using the LLM
 
 Options (run):
   --base <ref>         Git base ref for diff (default: HEAD~1)
@@ -345,6 +349,24 @@ switch (subcommand) {
     break;
   }
 
+  case 'test-gen': {
+    const config = flag('config');
+    const base = flag('base');
+    const dryRun = boolFlag('dry-run');
+    const verify = boolFlag('verify');
+    const targets = args.slice(1).filter(a => !a.startsWith('--') && a !== config && a !== base);
+    const code = await runTestGen({
+      cwd: process.cwd(),
+      configPath: config,
+      targets: targets.length > 0 ? targets : undefined,
+      base,
+      dryRun,
+      verify,
+    });
+    process.exit(code);
+    break;
+  }
+
   case 'lsp': {
     await runLsp({ cwd: process.cwd() });
     break;
@@ -390,6 +412,14 @@ switch (subcommand) {
       process.exit(1);
     }
     await runSetup({ force, profile: profileArg as 'security-strict' | 'team' | 'solo' | undefined });
+    break;
+  }
+
+  case 'worker': {
+    const sub = args[1];
+    const config = flag('config');
+    const code = await runWorker(sub, { cwd: process.cwd(), configPath: config });
+    process.exit(code);
     break;
   }
 
