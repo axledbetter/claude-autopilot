@@ -28,17 +28,33 @@ const DEPRECATION_NOTICE =
   'Silence: set CLAUDE_AUTOPILOT_DEPRECATION=never\n';
 
 function resolveClaudeAutopilotBin() {
-  // Strategy 1: node's module resolver via createRequire. Works under npm, pnpm,
-  // yarn Plug-n-Play, yarn classic hoisted, Deno's npm compat, etc.
+  const req = createRequire(import.meta.url);
+
+  // Strategy 1: resolve the entrypoint directly. Works when the main package
+  // declares `./bin/claude-autopilot.js` in its `exports` field. (As of v5.0.0-alpha.3+,
+  // it does.) Skipped silently under older versions that lack the export.
   try {
-    const req = createRequire(import.meta.url);
     return req.resolve('@delegance/claude-autopilot/bin/claude-autopilot.js');
   } catch {
     /* fall through */
   }
 
-  // Strategy 2: relative probe of sibling node_modules layouts (npm v3+ flat tree,
-  // or when the tombstone is installed globally next to the real package).
+  // Strategy 2: resolve the main package's package.json (always exposed by
+  // node's resolver even when `exports` is restrictive) and derive the bin
+  // path from it. Works under npm, pnpm, yarn classic hoisted, yarn PnP,
+  // Deno's npm compat layer.
+  try {
+    const pkgJson = req.resolve('@delegance/claude-autopilot/package.json');
+    const pkgDir = path.dirname(pkgJson);
+    const candidate = path.join(pkgDir, 'bin', 'claude-autopilot.js');
+    if (fs.existsSync(candidate)) return candidate;
+  } catch {
+    /* fall through */
+  }
+
+  // Strategy 3: relative probe of sibling node_modules layouts (when the
+  // tombstone is installed globally next to the real package without either
+  // being resolvable via the module graph).
   const candidates = [
     path.resolve(__dirname, '..', 'node_modules', '@delegance', 'claude-autopilot', 'bin', 'claude-autopilot.js'),
     path.resolve(__dirname, '..', '..', '@delegance', 'claude-autopilot', 'bin', 'claude-autopilot.js'),
@@ -48,9 +64,7 @@ function resolveClaudeAutopilotBin() {
     if (fs.existsSync(candidate)) return candidate;
   }
 
-  // Strategy 3: PATH lookup of the co-installed bin. This works when user did
-  // `npm install -g @delegance/guardrail` AND has @delegance/claude-autopilot
-  // installed globally alongside (or on $PATH via nvm/fnm managed shims).
+  // Strategy 4: PATH lookup of the co-installed bin.
   return null;
 }
 

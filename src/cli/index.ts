@@ -600,7 +600,8 @@ switch (subcommand) {
     // Code skill (superpowers:brainstorming → autopilot), not a standalone CLI.
     // The welcome screen advertises `claude-autopilot brainstorm "..."` as the
     // primary quickstart, so users WILL land here. Give them clear instructions
-    // instead of a generic "Unknown subcommand" rejection.
+    // instead of a generic "Unknown subcommand" rejection. Only reference CLI
+    // subcommands that actually route (verified by the welcome regression test).
     console.log(`
 \x1b[1m[brainstorm]\x1b[0m The pipeline entry point is a Claude Code skill, not a CLI subcommand.
 
@@ -608,12 +609,13 @@ Invoke it from Claude Code:
 
   \x1b[36m/brainstorm\x1b[0m                         Interactive spec writing
   \x1b[36m/autopilot\x1b[0m                          Full pipeline from an approved spec
+  \x1b[36m/migrate\x1b[0m                            Database migration phase (stack-dependent)
 
-From the terminal, the CLI subset exposes only the individual phases:
+From the terminal, the CLI subset exposes only the individual review-phase subcommands:
 
   \x1b[36mclaude-autopilot run --base main\x1b[0m    Just the review phase
-  \x1b[36mclaude-autopilot migrate\x1b[0m            Migration phase (stack-dependent)
   \x1b[36mclaude-autopilot doctor\x1b[0m             Check prerequisites (incl. superpowers plugin)
+  \x1b[36mclaude-autopilot migrate-v4\x1b[0m         Codemod for v4 → v5 repo migration (not a pipeline phase)
 
 Full pipeline docs: https://github.com/axledbetter/claude-autopilot#the-pipeline-phase-by-phase
 `);

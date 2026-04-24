@@ -63,6 +63,18 @@ const INCLUDE_FILENAMES = new Set([
   '.pre-commit-config.yaml', '.pre-commit-hooks.yaml', '.husky',
 ]);
 
+// Lockfiles are explicitly skipped — text substitution would corrupt their
+// internal structure (resolved URLs, integrity hashes, peer-dep graphs).
+// Users regenerate them via `npm install` after the migrate completes.
+const SKIP_FILENAMES = new Set([
+  'package-lock.json',
+  'npm-shrinkwrap.json',
+  'pnpm-lock.yaml',
+  'yarn.lock',
+  'bun.lockb',
+  'bun.lock',
+]);
+
 const SKIP_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', '.next', '.nuxt', 'out',
   'coverage', '__pycache__', '.venv', 'venv', '.turbo',
@@ -180,6 +192,7 @@ function applyTextReplacements(content: string): { updated: string; count: numbe
 
 function shouldProcessFile(filePath: string): boolean {
   const base = path.basename(filePath);
+  if (SKIP_FILENAMES.has(base)) return false;
   const ext = path.extname(filePath);
   if (INCLUDE_FILENAMES.has(base)) return true;
   if (INCLUDE_EXTENSIONS.has(ext)) return true;

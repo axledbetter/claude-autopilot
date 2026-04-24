@@ -30,7 +30,10 @@
   "exports": {
     ".": {
       "types": "./src/index.ts"
-    }
+    },
+    "./bin/claude-autopilot.js": "./bin/claude-autopilot.js",
+    "./bin/guardrail.js": "./bin/guardrail.js",
+    "./package.json": "./package.json"
   },
   "files": [
     "bin/",

@@ -242,6 +242,42 @@ describe('migrate-v4 codemod', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it('skips lockfiles (package-lock.json, pnpm-lock.yaml, yarn.lock, bun.lock) even when they contain guardrail refs', async () => {
+    const runMigrateV4 = await loadMigrateV4();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-m4-lockfiles-'));
+    const lockfileWithRef = JSON.stringify({
+      packages: {
+        'node_modules/@delegance/guardrail': { version: '4.3.1', resolved: 'https://...' },
+      },
+    }, null, 2);
+    fs.writeFileSync(path.join(dir, 'package-lock.json'), lockfileWithRef);
+    fs.writeFileSync(path.join(dir, 'npm-shrinkwrap.json'), lockfileWithRef);
+    fs.writeFileSync(path.join(dir, 'pnpm-lock.yaml'), "packages:\n  '@delegance/guardrail@4.3.1': {}\n");
+    fs.writeFileSync(path.join(dir, 'yarn.lock'), '@delegance/guardrail@^4.3.1:\n  version "4.3.1"\n');
+    fs.writeFileSync(path.join(dir, 'bun.lock'), '{"@delegance/guardrail": "4.3.1"}');
+
+    // Also drop a package.json that DOES get migrated, so we know the codemod
+    // actually ran and didn't trivially no-op.
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+      dependencies: { '@delegance/guardrail': '^4.3.1' },
+    }));
+
+    await runMigrateV4({ cwd: dir, write: true });
+
+    // package.json IS migrated
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    assert.ok(pkg.dependencies['@delegance/claude-autopilot'], 'sanity check: package.json was migrated');
+
+    // Every lockfile is untouched — rewriting them would corrupt resolved URLs,
+    // integrity hashes, or peer graphs. Regenerate via `npm install` instead.
+    for (const name of ['package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lock']) {
+      const after = fs.readFileSync(path.join(dir, name), 'utf8');
+      assert.match(after, /@delegance\/guardrail/, `${name} must NOT be mutated — lockfile corruption risk`);
+    }
+
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it('does not touch node_modules or dist', async () => {
     const runMigrateV4 = await loadMigrateV4();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-m4-skip-'));

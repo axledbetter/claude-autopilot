@@ -73,25 +73,34 @@ describe('welcome screen (bare invocation)', () => {
     // Regression guard — welcome screen must not advertise nonexistent subcommands.
     // Alpha.3 surfaced this when `brainstorm` was promoted to the top-billing
     // quickstart but wasn't in SUBCOMMANDS, so users would hit "Unknown subcommand".
-    const welcome = runCli([]).stdout;
+    assertAllSuggestedSubcommandsRoute(runCli([]).stdout, 'welcome screen');
+  });
 
-    const suggested = new Set<string>();
-    for (const m of welcome.matchAll(/claude-autopilot\s+([\w-]+)/g)) {
-      const sub = m[1]!;
-      if (!sub.startsWith('-')) suggested.add(sub);
-    }
-
-    assert.ok(suggested.size > 0, 'welcome screen must advertise at least one subcommand');
-
-    // Each advertised subcommand must route without "Unknown subcommand" error
-    for (const sub of suggested) {
-      const r = runCli([sub, '--help']);
-      const combined = r.stdout + r.stderr;
-      assert.ok(
-        !new RegExp(`Unknown subcommand: "${sub}"`, 'i').test(combined),
-        `welcome advertises \`claude-autopilot ${sub}\` but dispatcher rejects it. ` +
-        `Either add a handler or stop advertising it.\nOutput:\n${combined.slice(0, 300)}`,
-      );
-    }
+  it('WS7: every command shown in the `brainstorm` handler output actually routes', () => {
+    // Same regression guard applied to the brainstorm help output. The fix for
+    // WS6 accidentally introduced `claude-autopilot migrate` in this text —
+    // `migrate` is a Claude Code skill, not a CLI subcommand. This test locks
+    // the door against that class of recursive bug.
+    assertAllSuggestedSubcommandsRoute(runCli(['brainstorm']).stdout, 'brainstorm handler');
   });
 });
+
+function assertAllSuggestedSubcommandsRoute(output: string, source: string): void {
+  const suggested = new Set<string>();
+  for (const m of output.matchAll(/claude-autopilot\s+([\w-]+)/g)) {
+    const sub = m[1]!;
+    if (!sub.startsWith('-')) suggested.add(sub);
+  }
+
+  assert.ok(suggested.size > 0, `${source} must advertise at least one subcommand`);
+
+  for (const sub of suggested) {
+    const r = runCli([sub, '--help']);
+    const combined = r.stdout + r.stderr;
+    assert.ok(
+      !new RegExp(`Unknown subcommand: "${sub}"`, 'i').test(combined),
+      `${source} advertises \`claude-autopilot ${sub}\` but dispatcher rejects it. ` +
+      `Either add a handler or stop advertising it.\nOutput:\n${combined.slice(0, 300)}`,
+    );
+  }
+}
