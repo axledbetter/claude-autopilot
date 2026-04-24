@@ -72,9 +72,19 @@ const SKIP_DIRS = new Set([
 const VERBS = 'run|scan|ci|setup|doctor|init|fix|baseline|explain|ignore|costs|watch|hook|autoregress|triage|pr-desc|council|report|test-gen|mcp|lsp|worker|pr|preflight';
 
 const TEXT_REPLACEMENTS: Replacement[] = [
-  // Package name in any context
+  // Package name with version suffix (`@delegance/guardrail@^4`, `@delegance/guardrail@4.3.1`)
+  // MUST run before the bare-name rule. Replaces the entire spec with
+  // `@delegance/claude-autopilot@alpha` — the old `^4` / `4.3.1` ranges don't
+  // resolve against the new package (it starts at 5.0.0).
   {
-    pattern: /@delegance\/guardrail/g,
+    pattern: /@delegance\/guardrail@[^\s"'`,)\]}]+/g,
+    replace: () => '@delegance/claude-autopilot@alpha',
+    description: '@delegance/guardrail@<version> → @delegance/claude-autopilot@alpha',
+  },
+  // Bare package name (no version suffix) — used in imports, package.json keys,
+  // prose references. Preserves surrounding context.
+  {
+    pattern: /@delegance\/guardrail\b/g,
     replace: () => '@delegance/claude-autopilot',
     description: '@delegance/guardrail → @delegance/claude-autopilot',
   },
@@ -124,8 +134,18 @@ function migratePackageJson(content: string): { updated: string; count: number }
       const oldRange = deps['@delegance/guardrail']!;
       const m = oldRange.match(/^(\^|~|>=|<=|>|<|=)?/);
       const operator = (m && m[1]) ?? '';
-      deps['@delegance/claude-autopilot'] = `${operator}5.0.0-alpha`;
-      delete deps['@delegance/guardrail'];
+      // Rebuild the deps object preserving key order — substitute the old key
+      // in place with the new one. Straight `delete` + reassign would append
+      // the renamed dep at the end of its section, producing noisy diffs.
+      const rebuilt: Record<string, string> = {};
+      for (const [key, value] of Object.entries(deps)) {
+        if (key === '@delegance/guardrail') {
+          rebuilt['@delegance/claude-autopilot'] = `${operator}5.0.0-alpha`;
+        } else {
+          rebuilt[key] = value;
+        }
+      }
+      pkg[section] = rebuilt;
       count++;
     }
   }
@@ -191,14 +211,14 @@ function sha256(content: string): string {
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
-function processFile(file: string): { replacements: number; updated: string; preview: string[] } {
+function processFile(file: string): { replacements: number; original: string; updated: string; preview: string[] } {
   const original = fs.readFileSync(file, 'utf8');
   const { updated, count } = path.basename(file) === 'package.json'
     ? migratePackageJson(original)
     : applyTextReplacements(original);
-  if (count === 0) return { replacements: 0, updated: original, preview: [] };
+  if (count === 0) return { replacements: 0, original, updated: original, preview: [] };
   const preview = diffPreview(original, updated);
-  return { replacements: count, updated, preview };
+  return { replacements: count, original, updated, preview };
 }
 
 function diffPreview(before: string, after: string): string[] {
@@ -229,7 +249,7 @@ export async function runMigrateV4(options: MigrateV4Options = {}): Promise<numb
   const manifest: ManifestEntry[] = [];
 
   for (const file of files) {
-    const { replacements, updated, preview } = processFile(file);
+    const { replacements, original, updated, preview } = processFile(file);
     if (replacements === 0) continue;
     results.push({
       path: file,
@@ -240,7 +260,9 @@ export async function runMigrateV4(options: MigrateV4Options = {}): Promise<numb
     totalReplacements += replacements;
 
     if (options.write) {
-      const original = fs.readFileSync(file, 'utf8');
+      // Reuse `original` from processFile — avoids a second read + prevents any
+      // chance of `beforeSha256` diverging from what the transformation actually
+      // consumed if the file changed mid-scan.
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const backupPath = `${file}.v4-backup.${timestamp}`;
       fs.writeFileSync(backupPath, original);

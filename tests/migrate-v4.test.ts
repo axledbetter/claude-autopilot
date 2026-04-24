@@ -170,6 +170,51 @@ describe('migrate-v4 codemod', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it('rewrites @delegance/guardrail@<version> to @alpha (not preserving stale range)', async () => {
+    const runMigrateV4 = await loadMigrateV4();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-m4-ver-'));
+    fs.writeFileSync(path.join(dir, 'Dockerfile'), [
+      'FROM node:22-alpine',
+      'RUN npm install -g @delegance/guardrail@^4',
+      'RUN npm install @delegance/guardrail@4.3.1',
+      'RUN npm install @delegance/guardrail@~4.2',
+      '',
+    ].join('\n'));
+
+    await runMigrateV4({ cwd: dir, write: true });
+    const docker = fs.readFileSync(path.join(dir, 'Dockerfile'), 'utf8');
+
+    // Every version form must rewrite to @alpha — stale ^4/4.3.1/~4.2 ranges
+    // don't resolve against @delegance/claude-autopilot (starts at 5.x).
+    assert.match(docker, /@delegance\/claude-autopilot@alpha/);
+    assert.doesNotMatch(docker, /@delegance\/claude-autopilot@(?!alpha)/);
+    assert.doesNotMatch(docker, /@delegance\/guardrail/);
+
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('preserves key ordering in package.json dependency sections', async () => {
+    const runMigrateV4 = await loadMigrateV4();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-m4-order-'));
+    // Original order: alpha, guardrail, zebra — renamed guardrail should stay
+    // at index 1, not end up after zebra.
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+      dependencies: {
+        'alpha': '^1',
+        '@delegance/guardrail': '^4.3.1',
+        'zebra': '^1',
+      },
+    }, null, 2));
+
+    await runMigrateV4({ cwd: dir, write: true });
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    const keys = Object.keys(pkg.dependencies);
+    assert.deepEqual(keys, ['alpha', '@delegance/claude-autopilot', 'zebra'],
+      'renamed dep must stay at its original position, not append to end');
+
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it('rewrites npx / pnpm dlx / yarn dlx / bunx wrappers', async () => {
     const runMigrateV4 = await loadMigrateV4();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-m4-wrap-'));

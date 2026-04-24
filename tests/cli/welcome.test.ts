@@ -68,4 +68,30 @@ describe('welcome screen (bare invocation)', () => {
     const r = runCli([], { ANTHROPIC_API_KEY: 'test-key' });
     assert.ok(r.stdout.includes('detected'), `stdout: ${r.stdout}`);
   });
+
+  it('WS6: every command shown in the welcome quickstart actually routes', () => {
+    // Regression guard — welcome screen must not advertise nonexistent subcommands.
+    // Alpha.3 surfaced this when `brainstorm` was promoted to the top-billing
+    // quickstart but wasn't in SUBCOMMANDS, so users would hit "Unknown subcommand".
+    const welcome = runCli([]).stdout;
+
+    const suggested = new Set<string>();
+    for (const m of welcome.matchAll(/claude-autopilot\s+([\w-]+)/g)) {
+      const sub = m[1]!;
+      if (!sub.startsWith('-')) suggested.add(sub);
+    }
+
+    assert.ok(suggested.size > 0, 'welcome screen must advertise at least one subcommand');
+
+    // Each advertised subcommand must route without "Unknown subcommand" error
+    for (const sub of suggested) {
+      const r = runCli([sub, '--help']);
+      const combined = r.stdout + r.stderr;
+      assert.ok(
+        !new RegExp(`Unknown subcommand: "${sub}"`, 'i').test(combined),
+        `welcome advertises \`claude-autopilot ${sub}\` but dispatcher rejects it. ` +
+        `Either add a handler or stop advertising it.\nOutput:\n${combined.slice(0, 300)}`,
+      );
+    }
+  });
 });

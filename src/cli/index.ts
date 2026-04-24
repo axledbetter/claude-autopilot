@@ -141,7 +141,7 @@ These are aliases for the flat subcommands; they still work without the 'advance
   args.shift(); // drop 'advanced'
 }
 
-const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'help', '--help', '-h'] as const;
+const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'brainstorm', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity', 'prompt', 'context-file', 'path'];
 
 // Bare invocation — no subcommand, no flags → show welcome guide
@@ -592,6 +592,32 @@ switch (subcommand) {
       undo: boolFlag('undo'),
     });
     process.exit(code);
+    break;
+  }
+
+  case 'brainstorm': {
+    // `brainstorm` is the front of the pipeline and is implemented as a Claude
+    // Code skill (superpowers:brainstorming → autopilot), not a standalone CLI.
+    // The welcome screen advertises `claude-autopilot brainstorm "..."` as the
+    // primary quickstart, so users WILL land here. Give them clear instructions
+    // instead of a generic "Unknown subcommand" rejection.
+    console.log(`
+\x1b[1m[brainstorm]\x1b[0m The pipeline entry point is a Claude Code skill, not a CLI subcommand.
+
+Invoke it from Claude Code:
+
+  \x1b[36m/brainstorm\x1b[0m                         Interactive spec writing
+  \x1b[36m/autopilot\x1b[0m                          Full pipeline from an approved spec
+
+From the terminal, the CLI subset exposes only the individual phases:
+
+  \x1b[36mclaude-autopilot run --base main\x1b[0m    Just the review phase
+  \x1b[36mclaude-autopilot migrate\x1b[0m            Migration phase (stack-dependent)
+  \x1b[36mclaude-autopilot doctor\x1b[0m             Check prerequisites (incl. superpowers plugin)
+
+Full pipeline docs: https://github.com/axledbetter/claude-autopilot#the-pipeline-phase-by-phase
+`);
+    process.exit(0);
     break;
   }
 
