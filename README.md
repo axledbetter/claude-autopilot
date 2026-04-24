@@ -39,11 +39,11 @@ The architectural differences that matter most in practice:
 ## 30-second quickstart
 
 ```bash
-# Install
-npm install -g @delegance/claude-autopilot
+# Install (alpha channel — use @alpha through the v5 alpha cycle)
+npm install -g @delegance/claude-autopilot@alpha
 
 # One-shot setup — detects stack, writes config, installs skills, sets hooks
-npx claude-autopilot init
+npx claude-autopilot@alpha init
 
 # Ship a feature end-to-end
 claude-autopilot brainstorm "add rate limiting to the public API"
@@ -98,13 +98,18 @@ claude-autopilot fix --verify                    # LLM patch + test gate + rever
 ## Install & requirements
 
 ```bash
-npm install -g @delegance/claude-autopilot
+# v5 alpha — current release channel
+npm install -g @delegance/claude-autopilot@alpha
+
+# When 5.0.0 GA ships, the `latest` tag will advance and you can drop the @alpha:
+# npm install -g @delegance/claude-autopilot
 ```
 
 - Node 22+
 - `gh` CLI (for PR phases)
 - One of: `ANTHROPIC_API_KEY` (recommended), `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `GROQ_API_KEY`
 - Claude Code CLI (for skill-based phases — pipeline falls back to direct CLI invocations without it, but loses interactive checkpoints)
+- `superpowers` Claude Code plugin (required for pipeline phases — `claude-autopilot doctor` will remediation-hint if missing)
 
 ---
 

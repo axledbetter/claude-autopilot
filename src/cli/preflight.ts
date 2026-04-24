@@ -22,6 +22,64 @@ export interface DoctorResult {
   warnings: number;
 }
 
+/**
+ * Checks that the superpowers plugin skills required by the pipeline are resolvable
+ * from the usual Claude Code plugin paths. Returns skill names that weren't found.
+ */
+const REQUIRED_SUPERPOWERS_SKILLS = [
+  'writing-plans',
+  'using-git-worktrees',
+  'subagent-driven-development',
+] as const;
+
+function skillRoots(): string[] {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  const cwd = process.cwd();
+  const roots: string[] = [];
+  // Project-local plugin install
+  roots.push(path.join(cwd, '.claude', 'plugins'));
+  // User-global plugin install
+  if (home) roots.push(path.join(home, '.claude', 'plugins'));
+  return roots.filter(p => fs.existsSync(p));
+}
+
+export function findMissingSuperpowersSkills(): string[] {
+  const missing: string[] = [];
+  const roots = skillRoots();
+  for (const skill of REQUIRED_SUPERPOWERS_SKILLS) {
+    const found = roots.some(root => recursiveSkillSearch(root, skill));
+    if (!found) missing.push(skill);
+  }
+  return missing;
+}
+
+// Walks up to 8 levels deep looking for `skills/<skill>/SKILL.md` or `skills/<skill>.md`.
+// Plugin paths vary: marketplace cache, cache/temp_git_*, installed_plugins, etc.
+function recursiveSkillSearch(dir: string, skill: string, depth = 0): boolean {
+  if (depth > 8) return false;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  // Shortcut: if current dir has a `skills/` child, check it directly first
+  const skillsDir = entries.find(e => e.isDirectory() && e.name === 'skills');
+  if (skillsDir) {
+    const dirPath = path.join(dir, 'skills', skill, 'SKILL.md');
+    const filePath = path.join(dir, 'skills', `${skill}.md`);
+    if (fs.existsSync(dirPath) || fs.existsSync(filePath)) return true;
+  }
+  // Recurse into non-skills dirs (bounded depth prevents pathological traversal)
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith('.')) continue;
+    if (entry.name === 'node_modules') continue;
+    if (recursiveSkillSearch(path.join(dir, entry.name), skill, depth + 1)) return true;
+  }
+  return false;
+}
+
 export async function runDoctor(): Promise<DoctorResult> {
   const checks: Check[] = [];
 
@@ -106,6 +164,19 @@ export async function runDoctor(): Promise<DoctorResult> {
       : undefined,
   });
 
+  // 9. Superpowers plugin — required for pipeline phases, optional for review-only use
+  const missingSkills = findMissingSuperpowersSkills();
+  const allSkillsFound = missingSkills.length === 0;
+  checks.push({
+    name: `Superpowers plugin${allSkillsFound ? '' : ` (missing: ${missingSkills.join(', ')})`}`,
+    // Treat as warn, not fail — users who only run `claude-autopilot run` (review phase)
+    // don't need superpowers. Pipeline invocations (`autopilot` skill) will hard-fail at
+    // their own entry point.
+    result: allSkillsFound ? 'pass' : 'warn',
+    message: !allSkillsFound
+      ? 'Install: `claude plugin install superpowers` (required for pipeline phases — brainstorm/plan/implement)'
+      : undefined,
+  });
 
   // Print results
   console.log('\n\x1b[1m[doctor] Guardrail prerequisite check\x1b[0m\n');

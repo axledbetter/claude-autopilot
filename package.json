@@ -1,6 +1,6 @@
 {
   "name": "@delegance/claude-autopilot",
-  "version": "5.0.0-alpha.1",
+  "version": "5.0.0-alpha.2",
   "type": "module",
   "description": "Autonomous development pipeline for Claude Code: brainstorm → spec → plan → implement → migrate → validate → PR → review → merge. Multi-model, local-first, every phase a skill you can intervene in.",
   "keywords": [
@@ -64,5 +64,13 @@
     "@types/js-yaml": "^4",
     "@types/node": "^25",
     "typescript": "^6"
+  },
+  "peerDependencies": {
+    "superpowers": "*"
+  },
+  "peerDependenciesMeta": {
+    "superpowers": {
+      "optional": true
+    }
   }
 }

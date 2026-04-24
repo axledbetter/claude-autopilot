@@ -1,5 +1,28 @@
 # Changelog
 
+## [5.0.0-alpha.2] — 2026-04-24
+
+### Added
+- **v4 compatibility golden-test matrix** at `tests/v4-compat/` — 20 pinned invocations covering version/help, subcommand routing for all v4 names, deterministic reads (doctor, costs, baseline, explain), flag parsing (`--base`, `--format`, `--fail-on`), deprecation-notice behavior, and the new grouped verbs. Regression of any test blocks future alpha promotion.
+- **Superpowers peer-dep detection** — `doctor` now reports a warn-level check for `superpowers:writing-plans`, `superpowers:using-git-worktrees`, `superpowers:subagent-driven-development`. Missing skills produce an actionable remediation hint (`claude plugin install superpowers`). Treated as warn not fail because review-only users don't need it; pipeline phases will hard-fail at their own entry point.
+- **Grouped CLI verbs** — `claude-autopilot review <verb>` accepts `{run, scan, ci, fix, baseline, explain, watch}`. `claude-autopilot advanced <verb>` accepts `{lsp, mcp, worker, autoregress, test-gen, hook, detector, ignore}`. Both are additive aliases — flat forms (`claude-autopilot run`) continue to work unchanged.
+- **`peerDependencies.superpowers`** (optional) declared in `package.json`.
+- `src/cli/preflight.ts`: `findMissingSuperpowersSkills()` exported with recursive search across `~/.claude/plugins/**` and project-local `.claude/plugins/**`.
+
+### Fixed
+- **`--help` / `-h` routed to `run`** (latent v4 bug). v4's dispatcher defaulted the subcommand to `run` when `args[0]` started with `--`, so `guardrail --help` silently executed a review instead of printing help. v5.0.0-alpha.2 intercepts `--help`/`-h` before subcommand defaulting and routes to the help handler. Surfaced by the new v4 compat matrix.
+- **`--help` output missing 8 v4 subcommands** — `setup`, `preflight`, `hook`, `baseline`, `triage`, `pr-desc`, `council`, `mcp` were listed in the `SUBCOMMANDS` array but not in `printUsage()`. Help now lists all 20+.
+
+### Changed
+- README install instructions now pin `@alpha` explicitly for the v5 alpha cycle. The npm `latest` tag still points at a pre-rename 2.5.0 release; without pinning, bare installs silently regress to old code. When 5.0.0 GA ships, `latest` advances and the `@alpha` pin becomes optional.
+- Migration guide updated with the `@alpha` pinning note for `npm install`, GitHub Actions, and Dockerfile examples.
+
+### Still deferred to alpha.3
+- Tombstone `@delegance/guardrail@5.0.0` with thin CLI wrapper and strict argv/stdio passthrough.
+- CI bin-parity smoke tests (`npx guardrail`, `npx @delegance/guardrail`, global install, GitHub Actions).
+- Codemod script `claude-autopilot migrate-v4 [--write]`.
+- Compiled JS entrypoint (drops `tsx` runtime dep).
+
 ## [5.0.0-alpha.1] — 2026-04-24
 
 **Package renamed: `@delegance/guardrail` → `@delegance/claude-autopilot`.**
