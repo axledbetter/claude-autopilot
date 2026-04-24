@@ -71,10 +71,15 @@ export function detectLLMKey(options: KeyDetectionOptions = {}): KeyDetectionRes
   };
 }
 
-/** Human-readable list of providers and signup URLs, used by every "no key" message. */
+/**
+ * Human-readable list of providers and signup URLs, used by every "no key" message.
+ * Must cover every entry in LLM_KEY_NAMES so users see the same set of options across
+ * preflight, setup, scan, and run.
+ */
 export const LLM_KEY_HINTS: Array<{ name: LLMKeyName; url: string; note?: string }> = [
   { name: 'ANTHROPIC_API_KEY', url: 'https://console.anthropic.com/' },
   { name: 'OPENAI_API_KEY',    url: 'https://platform.openai.com/api-keys' },
   { name: 'GEMINI_API_KEY',    url: 'https://aistudio.google.com/app/apikey' },
+  { name: 'GOOGLE_API_KEY',    url: 'https://aistudio.google.com/app/apikey', note: 'legacy alias for GEMINI_API_KEY' },
   { name: 'GROQ_API_KEY',      url: 'https://console.groq.com/keys', note: 'fast free tier' },
 ];
