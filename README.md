@@ -1,238 +1,112 @@
-# @delegance/guardrail
+# @delegance/claude-autopilot
 
-LLM-powered code review that catches what linters miss — security holes, logic bugs, bad auth patterns, race conditions, and architectural drift. Runs on every push, posts inline PR comments, and outputs SARIF for GitHub Code Scanning.
-
-## What it finds
-
-Static analysis catches style. Guardrail catches things that break in production:
-
-- **Auth & access control** — missing middleware, broken RBAC, IDOR, privilege escalation
-- **Injection & data handling** — SQL injection, XSS vectors, unsafe deserialization, hardcoded secrets
-- **Logic bugs** — off-by-one, missing null checks, incorrect async handling, silent error swallowing
-- **Architectural drift** — layer violations, circular dependencies, god objects, missing abstractions
-- **Race conditions** — unguarded shared state, missing locks, TOCTOU
-- **Security misconfig** — CORS wildcards, missing rate limits, exposed internals
-
-Plus built-in static rules that run before the LLM: `hardcoded-secrets`, `npm-audit`, `sql-injection`, `missing-auth`, `ssrf`, `insecure-redirect`, `console-log`, `todo-fixme`, `large-file`, `missing-tests`, `package-lock-sync`, `brand-tokens`.
-
-## Install
+**Autonomous development pipeline for Claude Code. Brainstorm → spec → plan → implement → migrate → validate → PR → review → merge — all from your terminal, on your codebase, with your test suite.**
 
 ```bash
-npm install -g @delegance/guardrail
+claude-autopilot brainstorm "add SSO with SAML for enterprise tenants"
+# → writes spec (reviewed by Codex) → writes plan (reviewed by Codex) →
+# → creates branch → implements with subagents → runs migrations →
+# → runs full test + lint + type + security gate → opens PR →
+# → dispatches multi-model review → auto-fixes bugbot findings →
+# → ready to merge
 ```
 
-**Requires:** Node 22+, an LLM API key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `GROQ_API_KEY`).
-
-## Quick Start
-
-```bash
-# One command — auto-detects stack, writes config, installs pre-push hook
-npx guardrail setup
-
-# Review git-changed files before a PR
-npx guardrail run --base main
-
-# Scan any path without needing git changes
-npx guardrail scan src/auth/
-
-# Ask a targeted question about your code
-npx guardrail scan --ask "is there an IDOR vulnerability in this route?" src/api/users/
-```
-
-## Claude Code Skill
-
-Ships a ready-made Claude Code skill. After installing, copy it into your project:
-
-```bash
-mkdir -p .claude/skills
-cp node_modules/@delegance/guardrail/skills/guardrail.md .claude/skills/
-```
-
-Claude agents will automatically invoke guardrail before PRs, interpret findings, and auto-fix blocking issues.
+*No hosted agent. No per-seat subscription. Runs locally on your machine, against your real repo, using your API keys. Every phase is a Claude Code skill you can intervene in, rewire, or run by itself.*
 
 ---
 
-## Commands
+## Why this vs the alternatives
 
-### `guardrail run` — review git-changed files
+AI coding tools fall into three buckets. Here's where claude-autopilot sits.
 
-```bash
-npx guardrail run                          # diff against HEAD~1
-npx guardrail run --base main              # diff against a branch
-npx guardrail run --diff                   # send hunks only (~70% fewer tokens)
-npx guardrail run --delta                  # only report findings new since last run
-npx guardrail run --new-only               # only report findings not in committed baseline
-npx guardrail run --fail-on warning        # exit 1 on warnings too (default: critical only)
-npx guardrail run --fail-on none           # never exit 1 — soft mode for onboarding
-npx guardrail run --post-comments          # post summary comment on open PR
-npx guardrail run --inline-comments        # post per-line inline PR annotations
-npx guardrail run --format sarif --output guardrail.sarif
-npx guardrail run --format junit --output results.xml   # JUnit XML for Jenkins/GitLab CI
-```
+| Tool | Shape | Hosted? | Model lock-in | Pipeline structure | You can intervene mid-flow? |
+|---|---|---|---|---|---|
+| **Devin** (Cognition) | Autonomous agent | Yes (SaaS, $500/mo) | Cognition's stack | Opaque | No — watch a dashboard |
+| **GitHub Copilot Workspace** | Spec → plan → PR | Yes | Copilot only | Fixed, non-extensible | Edit the plan, that's it |
+| **Factory Droids** | Multi-agent workflow | Yes (per-seat) | Factory's stack | Fixed | Limited |
+| **Cursor BugBot / Copilot Review / CodeRabbit** | Async PR reviewer | Yes | Vendor's model | Single phase (review only) | N/A — post-hoc only |
+| **Aider / Cline / Cursor agent mode** | Interactive pair programming | Local | User's choice | None — single-shot prompts | Continuous |
+| **OpenHands / SWE-agent** | Open-ended agent framework | Local | User's choice | None — agent decides | Rare, research-grade |
+| **claude-autopilot** | **Opinionated local pipeline** | **Local** | **Any LLM (Claude / GPT / Gemini / Groq / Ollama)** | **Fixed but rewireable, skill-per-phase** | **Every phase. All state on disk.** |
 
-### `guardrail scan` — review any path
+The architectural differences that matter most in practice:
 
-```bash
-npx guardrail scan src/auth/               # scan a directory
-npx guardrail scan src/api/users.ts        # scan specific files
-npx guardrail scan --all                   # scan entire codebase
-npx guardrail scan --ask "is there SQL injection risk?" src/db/
-npx guardrail scan --focus security        # security findings only
-npx guardrail scan --focus logic           # logic bugs only
-npx guardrail scan --focus brand           # brand consistency only
-```
+1. **Multi-model by design.** Claude writes code, Codex reviews the plan, bugbot triages PR findings. Different model for each role, swap any of them. The pipeline's phases are explicit contracts, not one opaque API call.
+2. **Your stack, not a sandbox.** It runs your `npm test`, your `prisma migrate`, your `gh pr create`, your `ruff check`. If it works in your terminal, it works in the pipeline.
+3. **Phase artifacts on disk, editable.** Every phase writes to a file you can open — `docs/specs/*.md`, `docs/plans/*.md`, a branch, a PR. Stop, edit by hand, resume, or re-run any phase in isolation.
+4. **Test-gated auto-revert as a first-class command.** `claude-autopilot fix --verify` patches a file, runs your full test suite, and reverts on failure. Built into the CLI, not a wrapper you write yourself.
 
-`scan` doesn't require git changes — point it at anything.
-
-### `guardrail fix` — auto-fix cached findings
+## 30-second quickstart
 
 ```bash
-npx guardrail fix                          # fix critical findings (interactive)
-npx guardrail fix --severity all           # fix everything
-npx guardrail fix --yes                    # apply all fixes without prompting
-npx guardrail fix --dry-run                # list what would be fixed, no LLM needed
+# Install
+npm install -g @delegance/claude-autopilot
+
+# One-shot setup — detects stack, writes config, installs skills, sets hooks
+npx claude-autopilot init
+
+# Ship a feature end-to-end
+claude-autopilot brainstorm "add rate limiting to the public API"
+# Answer ~5 questions. Spec written. Codex reviews it. You approve.
+# Claude walks the plan → implementation → migration → tests → PR → review.
+# ~15-40 min for a typical feature.
+
+# Or run just the review layer on an existing PR
+claude-autopilot run --pr 123
 ```
 
-When `testCommand` is set in config, each fix is **verified**: the patch is applied, tests run, and the fix is **automatically reverted** if tests fail. Use `--no-verify` to skip test verification.
+## The pipeline, phase by phase
 
-### `guardrail baseline` — commit a finding snapshot
+Each phase is a Claude Code skill (`.claude/skills/<name>/SKILL.md`). You can invoke any phase directly (`/brainstorm`, `/plan`, `/migrate`, `/validate`) without running the full pipeline. You can also rewire the pipeline by editing the `autopilot` skill.
 
-Pin the current findings so future runs only surface *new* issues:
+| Phase | Skill | What it does | Model role |
+|---|---|---|---|
+| **Brainstorm** | `brainstorming` | Turns a rough idea into an approved spec through guided questions | Claude (implementation model) |
+| **Spec review** | `codex-review` | Second model critiques the spec before you commit to it | Codex / GPT-5 |
+| **Plan** | `writing-plans` | Breaks spec into phased, checklist-shaped implementation plan | Claude |
+| **Plan review** | `codex-review` | Second model critiques the plan before you execute it | Codex / GPT-5 |
+| **Implement** | `subagent-driven-development` | Executes plan in a git worktree, one phase at a time, with per-phase tests | Claude |
+| **Migrate** | `migrate` | Runs database migrations dev → QA → prod with per-env validation | Deterministic |
+| **Validate** | `validate` | Static rules + tests + type check + security scan + LLM review | Any |
+| **PR** | `commit-push-pr` | Opens the PR with auto-generated title, summary, and test plan | Claude |
+| **Review** | `review-2pass` / `council` | Multi-model review of the diff (critical pass + informational pass) | Multiple |
+| **Triage** | `bugbot` | Fetches automated reviewer findings, auto-fixes real bugs, dismisses false positives | Claude |
+
+## What's distinctive
+
+Features that are hard or impossible to find in the competitive set:
+
+- **Multi-model council review** — dispatch the same diff to 3+ models in parallel, synthesize agreement. Catches blind spots no single model sees.
+- **Fix with test verification** — `claude-autopilot fix` runs your full test suite after every patch and reverts on failure. Safer than any tool that proposes fixes without running your tests.
+- **Bug-bot auto-triage** — watches Cursor BugBot / Copilot comments on your PR, triages each (real bug vs false positive), auto-fixes confirmed bugs, dismisses noise with explanations.
+- **Schema alignment rule** — ensures DB migrations, backend types, and frontend types stay in sync. Custom static rule, not something any competitor ships.
+- **SARIF output + GitHub Code Scanning integration** — findings appear as annotations in the PR and in the Security tab.
+
+## Just the review layer
+
+If you don't want the full pipeline, the review subcommands are a strict superset of what `guardrail run` used to do: LLM code review over git-changed files, SARIF output, inline PR comments, auto-fix, baselines, per-finding triage, cost budgets. The legacy `guardrail` CLI remains aliased to the review subcommands through v5.x.
 
 ```bash
-npx guardrail baseline create              # create initial baseline
-npx guardrail baseline update              # overwrite with current findings
-npx guardrail baseline show                # print all pinned entries
-npx guardrail baseline diff                # what's new vs baseline, what's resolved
-npx guardrail baseline clear               # remove baseline file
-npx guardrail baseline create --note "post-audit clean state"
+claude-autopilot run                             # review changes since main
+claude-autopilot run --inline-comments           # post per-line PR annotations
+claude-autopilot run --format sarif --output out.sarif
+claude-autopilot fix --verify                    # LLM patch + test gate + revert on fail
 ```
 
-After creating: `git add .guardrail-baseline.json && git commit` to share with the team. Then run with `--new-only` to suppress baselined findings in CI.
+> **Alpha.1 CLI note:** subcommands are flat (`run`, `scan`, `ci`, `fix`, `baseline`, `explain`, …). The grouped `claude-autopilot review <verb>` form lands in alpha.2 as an alias — flat forms continue to work indefinitely.
 
-### `guardrail triage` — mark findings as accepted or false positives
+## Install & requirements
 
 ```bash
-npx guardrail triage <finding-id> false-positive
-npx guardrail triage <finding-id> accepted-risk --reason "mitigated by WAF"
-npx guardrail triage <finding-id> accepted-risk --expires 30   # auto-expire in 30 days
-npx guardrail triage list                  # show all triaged findings
-npx guardrail triage clear <finding-id>    # remove a triage entry
-npx guardrail triage clear --expired       # prune expired entries
+npm install -g @delegance/claude-autopilot
 ```
 
-Triaged findings are suppressed automatically on every subsequent run. Commit `.guardrail-triage.json` to share decisions with the team. Finding IDs appear in `guardrail report` output.
+- Node 22+
+- `gh` CLI (for PR phases)
+- One of: `ANTHROPIC_API_KEY` (recommended), `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `GROQ_API_KEY`
+- Claude Code CLI (for skill-based phases — pipeline falls back to direct CLI invocations without it, but loses interactive checkpoints)
 
-### `guardrail report` — markdown report from cached findings
-
-```bash
-npx guardrail report                       # print to stdout
-npx guardrail report --output report.md    # write to file
-npx guardrail report --trend               # include run history + cost trend
-```
-
-### `guardrail explain` — deep-dive on a finding
-
-```bash
-npx guardrail explain                      # list cached findings with indices
-npx guardrail explain 3                    # explain finding #3
-npx guardrail explain src/auth/login.ts:42 # explain by file:line
-npx guardrail explain hardcoded-secrets    # explain by rule id
-```
-
-Returns five structured sections: **What this is**, **Why it's dangerous**, **How to fix it**, **Before/after example**, **When to suppress**.
-
-### `guardrail ignore` — suppress findings permanently
-
-```bash
-npx guardrail ignore                       # step through cached findings, add rules
-npx guardrail ignore --all                 # suppress all (rule+path scope)
-npx guardrail ignore --dry-run             # preview rules without writing
-```
-
-Writes entries to `.guardrail-ignore`. Scoped to path or rule+path — more targeted than triage.
-
-### `guardrail ci` — opinionated CI entrypoint
-
-```bash
-npx guardrail ci          # base=GITHUB_BASE_REF, posts PR comment, writes SARIF
-npx guardrail ci --base develop
-npx guardrail ci --no-post-comments
-npx guardrail ci --fail-on warning
-```
-
-### `guardrail pr` — review a pull request by number
-
-```bash
-npx guardrail pr 42                        # review PR #42 with inline + summary comments
-npx guardrail pr                           # auto-detect PR from current branch
-npx guardrail pr 42 --no-inline-comments
-npx guardrail pr 42 --no-post-comments
-```
-
-Requires `gh` CLI authenticated.
-
-### `guardrail costs` — usage summary
-
-```bash
-npx guardrail costs                        # all-time + 7-day summary + last 10 runs
-```
-
-### `guardrail worker` — persistent review daemon
-
-Run a local HTTP daemon so multiple terminals dispatch review chunks to one shared LLM connection:
-
-```bash
-guardrail worker start          # start daemon in background, print port
-guardrail worker stop           # kill daemon
-guardrail worker status         # show pid, port, queue depth, jobs processed
-guardrail run --use-worker      # dispatch review chunks to running worker
-```
-
-The daemon writes `.guardrail-cache/worker.lock` and serves `POST /review`, `GET /status`, `POST /stop` on a random localhost port. Stateless per-request — no shared review state. Falls back to inline if worker is unreachable.
-
-### `guardrail test-gen` — generate missing tests
-
-Detect exported functions with no test coverage and generate test files via LLM:
-
-```bash
-guardrail test-gen                    # analyze git-changed files
-guardrail test-gen src/auth/login.ts  # target specific file
-guardrail test-gen --dry-run          # show gaps without generating
-guardrail test-gen --verify           # run generated tests, revert if they fail
-guardrail test-gen --base main        # diff against branch
-```
-
-Scans exports with regex, checks whether any test file imports or references each export, and generates tests using the project's detected test framework (`jest`, `vitest`, or `node:test`). With `--verify`, runs `testCommand` after writing each test and reverts if it fails.
-
-### `guardrail watch` — dev loop
-
-```bash
-npx guardrail watch
-npx guardrail watch --debounce 500
-```
-
-### `guardrail autoregress` — snapshot regression tests
-
-```bash
-npx guardrail autoregress generate   # generate baselines for changed files
-npx guardrail autoregress run        # run impact-selected snapshots
-npx guardrail autoregress run --all  # run all snapshots
-npx guardrail autoregress diff       # show diffs vs baselines
-npx guardrail autoregress update     # overwrite baselines after intentional change
-```
-
-### `guardrail setup` / `guardrail doctor` / `guardrail hook`
-
-```bash
-npx guardrail setup                        # auto-detect stack, write config, install hook
-npx guardrail setup --profile security-strict   # apply a security-focused config bundle
-npx guardrail setup --profile team              # standard team config
-npx guardrail setup --profile solo             # minimal solo-dev config
-npx guardrail doctor                       # check prerequisites
-npx guardrail hook install                 # install pre-push git hook
-npx guardrail hook uninstall
-```
+---
 
 ---
 

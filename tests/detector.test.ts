@@ -65,22 +65,36 @@ describe('detectProject', () => {
     fs.rmSync(dir, { recursive: true });
   });
 
-  it('falls back to nextjs-supabase on generic package.json', () => {
+  it('falls back to generic on package.json without strong framework signals', () => {
     const dir = makeTmp();
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
       scripts: { test: 'jest' },
       dependencies: { 'express': '^4' },
     }));
     const r = detectProject(dir);
-    assert.equal(r.preset, 'nextjs-supabase');
+    assert.equal(r.preset, 'generic');
     assert.equal(r.confidence, 'low');
     fs.rmSync(dir, { recursive: true });
   });
 
-  it('falls back on empty dir', () => {
+  it('falls back to generic for plain Next.js (no Supabase signals)', () => {
+    const dir = makeTmp();
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+      scripts: { test: 'jest' },
+      dependencies: { 'next': '^15' },
+    }));
+    const r = detectProject(dir);
+    // Must not claim "nextjs-supabase" when no Supabase signals — that was the
+    // cold-start eval bug that made plain Next.js apps look like hybrid Supabase setups.
+    assert.equal(r.preset, 'generic');
+    assert.equal(r.confidence, 'low');
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  it('falls back to generic on empty dir', () => {
     const dir = makeTmp();
     const r = detectProject(dir);
-    assert.equal(r.preset, 'nextjs-supabase');
+    assert.equal(r.preset, 'generic');
     assert.equal(r.testCommand, 'npm test');
     assert.equal(r.confidence, 'low');
     fs.rmSync(dir, { recursive: true });

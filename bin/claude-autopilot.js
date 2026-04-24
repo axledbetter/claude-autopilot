@@ -1,3 +1,3 @@
 #!/usr/bin/env node
 import { launch } from './_launcher.js';
-launch({ name: 'guardrail' });
+launch({ name: 'claude-autopilot' });
