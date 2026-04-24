@@ -40,6 +40,81 @@ if (args[0] === '--version' || args[0] === '-v') {
   process.exit(0);
 }
 
+// Help flag — route to help handler explicitly before subcommand defaulting.
+// Without this, `--help` falls through the "args[0].startsWith('--')" check below
+// and defaults to `run`, which is surprising and a v4 regression we preserve no longer.
+if (args[0] === '--help' || args[0] === '-h') {
+  args.unshift('help');
+  args.splice(1, 1); // remove the original --help/-h token
+}
+
+// Verb grouping (new in alpha.2): `claude-autopilot review <verb>` and
+// `claude-autopilot advanced <verb>` are dispatcher prefixes that route to the
+// same flat handlers. Legacy flat invocation (`claude-autopilot run`) is unchanged
+// — the grouped form is purely additive.
+//
+// Scope gates enforce that only the documented verb sets work under each prefix,
+// so `claude-autopilot review doctor` is rejected with a clear error instead of
+// silently routing to the doctor handler (which would confuse the mental model).
+const REVIEW_VERBS = new Set(['run', 'scan', 'ci', 'fix', 'baseline', 'explain', 'watch', 'report']);
+// `detector` is a library used by setup/run, not a CLI subcommand — leave it out.
+const ADVANCED_VERBS = new Set(['lsp', 'mcp', 'worker', 'autoregress', 'test-gen', 'hook', 'ignore']);
+if (args[0] === 'review') {
+  const sub = args[1];
+  if (!sub || sub === '--help' || sub === '-h') {
+    console.log(`
+Usage: claude-autopilot review <verb> [options]
+
+Review-phase verbs:
+  run          Review git-changed files (default)
+  scan         Review any path — no git required
+  ci           Opinionated CI entrypoint (post comments + SARIF)
+  fix          Auto-fix cached findings using the configured LLM
+  baseline     Manage the committed findings baseline
+  explain      Deep-dive explanation + remediation for a specific finding
+  watch        Watch for file changes and re-run on each save
+  report       Render cached findings as a markdown report
+
+These are aliases for the flat subcommands — \`claude-autopilot run\` and
+\`claude-autopilot review run\` are equivalent.
+`);
+    process.exit(0);
+  }
+  if (!REVIEW_VERBS.has(sub)) {
+    console.error(`\x1b[31m[claude-autopilot] "${sub}" is not a review-phase verb.\x1b[0m`);
+    console.error(`\x1b[2m  Valid: ${[...REVIEW_VERBS].join(', ')}\x1b[0m`);
+    console.error(`\x1b[2m  Did you mean: claude-autopilot ${sub} ...?\x1b[0m`);
+    process.exit(1);
+  }
+  args.shift(); // drop 'review', leave the flat subcommand at args[0]
+}
+if (args[0] === 'advanced') {
+  const sub = args[1];
+  if (!sub || sub === '--help' || sub === '-h') {
+    console.log(`
+Usage: claude-autopilot advanced <verb> [options]
+
+Advanced / niche verbs (hidden from top-level --help to keep it readable):
+  lsp          Language server — publishes findings as LSP diagnostics
+  mcp          MCP server for Claude / ChatGPT integration
+  worker       Persistent review daemon (start|stop|status)
+  autoregress  Snapshot regression tests
+  test-gen     Generate test cases for uncovered exports
+  hook         Install / remove the pre-push git hook
+  ignore       Edit the findings ignore list
+
+These are aliases for the flat subcommands; they still work without the 'advanced' prefix.
+`);
+    process.exit(0);
+  }
+  if (!ADVANCED_VERBS.has(sub)) {
+    console.error(`\x1b[31m[claude-autopilot] "${sub}" is not an advanced verb.\x1b[0m`);
+    console.error(`\x1b[2m  Valid: ${[...ADVANCED_VERBS].join(', ')}\x1b[0m`);
+    process.exit(1);
+  }
+  args.shift(); // drop 'advanced'
+}
+
 const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity', 'prompt', 'context-file'];
 
@@ -108,7 +183,15 @@ Commands:
   costs        Show per-run cost summary
   ci           Opinionated CI entrypoint (post comments + SARIF)
   init         Scaffold guardrail.config.yaml from a preset
+  setup        Auto-detect stack, write config, install pre-push hook
   doctor       Check prerequisites (alias: preflight)
+  preflight    Check prerequisites (alias: doctor)
+  hook         Install / remove the pre-push git hook
+  baseline     Manage the committed findings baseline (create|update|show|delete)
+  triage       Mark individual findings as accepted/dismissed
+  pr-desc      Generate a PR title / summary / test plan from the current diff
+  council      Multi-model review — dispatch the diff to N models and synthesize consensus
+  mcp          MCP server for Claude / ChatGPT integration
   autoregress  Snapshot regression tests (run|diff|update|generate)
   lsp          Language server — publishes findings as LSP diagnostics (stdin/stdout)
   worker       Persistent review daemon for multi-terminal parallel usage (start|stop|status)
