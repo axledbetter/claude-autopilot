@@ -118,22 +118,107 @@ Replace `guardrail` with `claude-autopilot review` in your hooks and CI. Or keep
 - Renaming the GitHub repo. It's already `claude-autopilot`.
 - Touching the CHANGELOG history. v4 entries stay.
 
-## Estimated effort
+## Revisions from Codex review (2026-04-24)
+
+Folded in from `/codex-review` against v5.0 draft. Everything below overrides earlier sections in this doc where they conflict.
+
+### Tombstone mechanics (bumped from implicit to blocker)
+
+- `@delegance/guardrail@5.0.0` must ship a real thin CLI wrapper package with `bin.guardrail` that strictly forwards `argv`, `stdout`, `stderr`, and exit code to `claude-autopilot`. Not a re-export — an actual spawn-and-pipe.
+- **CI smoke tests gate the tombstone publish:** `npx guardrail run`, `npx @delegance/guardrail run`, global `npm install -g @delegance/guardrail` + `guardrail run`, and a GitHub Actions invocation of `guardrail run` must all produce byte-identical stdout and matching exit codes vs `claude-autopilot review run`.
+- Tombstone wrapper emits a one-line deprecation notice on `stderr` (not `stdout`, so piped output isn't corrupted) on first invocation per terminal session.
+
+### Surface-area collapse (narrower cut than original plan)
+
+Codex flagged that burying `fix` and `baseline` under `advanced` would regress UX for current power users. Revised map:
+
+```
+claude-autopilot
+├─ brainstorm | plan | implement                 (pipeline entry points)
+├─ review                                        (was: guardrail run / scan / ci)
+│   ├─ run | scan | ci | explain
+│   ├─ fix           (kept top-level — frequently used)
+│   └─ baseline      (kept top-level — frequently used)
+├─ migrate | validate | pr | triage | council | costs | doctor | init
+└─ advanced
+    ├─ lsp | mcp | worker | autoregress         (niche / system)
+    ├─ test-gen | watch | hook | detector       (dev-loop)
+    └─ ignore                                   (used via config more than CLI)
+```
+
+Net: 27 subcommands collapse to ~12 top-level verbs (up from planned ~10), `advanced` holds 9 niche/system commands. Still a readable `--help`, no UX regression for existing workflows.
+
+### v4 compatibility golden-test matrix (new v5.0 gate)
+
+Before `5.0.0` ships (alpha or GA), add `tests/v4-compat/` with golden tests that pin:
+
+- **Top 20 v4 CLI invocations** — `guardrail run`, `guardrail run --base main`, `guardrail run --diff`, `guardrail scan src/auth/`, `guardrail scan --ask "..." src/`, `guardrail ci`, `guardrail setup`, `guardrail doctor`, `guardrail costs`, `guardrail explain 3`, `guardrail baseline`, `guardrail ignore`, `guardrail fix --dry-run`, `guardrail hook install`, `guardrail run --format sarif --output -`, `guardrail run --post-comments`, `guardrail run --inline-comments`, `guardrail pr-desc`, `guardrail report`, `guardrail run --fail-on warning`.
+- **Exit codes** for each invocation against a known fixture repo.
+- **Output shape** — SARIF / JUnit / annotations format parity (hash of normalized output against baseline).
+- **Config acceptance** — every v4 `guardrail.config.yaml` pattern loads without AJV rejection under v5.
+
+Regression of any of these blocks `5.0.0`. Test matrix lives in-repo and runs in CI on every PR.
+
+### Generic preset (promoted from v5.1 to v5.0)
+
+Codex: shipping only a Supabase-coupled `migrate` as default breaks trust for non-Supabase users at first-run. Revision:
+
+- **`presets/generic/`** ships in v5.0 alongside the existing `presets/nextjs-supabase`. Generic preset:
+  - `migrate` skill is a no-op that prints "No migration runner configured. Define one in `.claude-autopilot/stack.yaml` or use `claude-autopilot advanced configure-migrate`."
+  - `validate` uses `npm test` + `npm run typecheck` + `npm run lint` if each script exists; skips otherwise with a one-line note.
+  - No opinion on DB, type generation, or deployment.
+- **`claude-autopilot init --preset <name>`** — user picks at setup time. `init` detects (next.js + supabase → suggests `nextjs-supabase`; otherwise → `generic`) but always asks.
+
+### Superpowers dependency — resolved to "require as peer + doctor hard-fail" for v5.0
+
+Codex was right that deferring this to v5.1 means "installed but won't run" on first invocation. Revised:
+
+- `@delegance/claude-autopilot@5.0.0` declares `peerDependencies: { "@anthropic-ai/claude-code-superpowers": "*" }` (if that's the actual plugin name — verify at implementation time).
+- `claude-autopilot doctor` hard-fails when the superpowers plugin skills (`superpowers:writing-plans`, `superpowers:using-git-worktrees`, `superpowers:subagent-driven-development`) aren't resolvable from `.claude/plugins/` or `~/.claude/plugins/`.
+- `claude-autopilot init` includes a one-command remediation: `npm install --save-peer @anthropic-ai/claude-code-superpowers` or the equivalent Claude Code plugin install command, printed next to the failure.
+- Do NOT vendor superpowers skills — they update independently and vendoring fossilizes the dependency.
+
+### Migration doc + codemod (new v5.0 deliverable)
+
+Ship alongside the first `5.0.0` release:
+
+- **`docs/migration/v4-to-v5.md`** — find/replace table covering every surface users interact with:
+  - `@delegance/guardrail` → `@delegance/claude-autopilot` (package.json, package-lock.json, Dockerfiles, CI yaml, Homebrew formulas, `npx` invocations).
+  - `guardrail run` → `claude-autopilot review run` (shell scripts, pre-commit hooks, GitHub Actions, Makefiles).
+  - `skills/guardrail.md` → `skills/claude-autopilot.md` (`.claude/skills/` directories).
+- **`scripts/migrate-v4.mjs`** — a small codemod distributed inside the package. Runs against a user's repo: scans for the find/replace patterns above, prints a report, applies with `--write`, leaves `.v4-backup` files for rollback. One-liner: `npx @delegance/claude-autopilot migrate-v4 [--write]`.
+- **Blog post or GitHub Release notes** link the migration doc prominently.
+
+### README adjustments (from Codex WARNING #2)
+
+`v5-readme-draft.md` claims like "No other tool in this table does this" are brittle. Revise to:
+
+- "built-in test-gated auto-revert as a first-class command" (vs "no other tool does this")
+- "local execution by default; all phase artifacts on disk and editable" (vs "you can intervene — dashboard-watchers can't")
+- Anchor differentiation in architecture you control (local execution, skill-level rewiring, phase artifacts), not claims about competitors' capabilities — those age fast.
+
+## Revised effort estimate
 
 | Task | Hours |
 |---|---|
 | package.json + bin wiring | 1 |
-| CLI verb restructure | 3 |
+| CLI verb restructure (12 top-level + advanced) | 3 |
 | Skills bundling + init provisioner | 3 |
+| **Generic preset + init preset picker (new)** | 3 |
+| **Superpowers dep — doctor hard-fail + remediation (promoted)** | 2 |
 | README replacement | 1 |
 | New `claude-autopilot.md` skill spec | 2 |
-| Tombstone package publish | 1 |
+| Tombstone package + **CI smoke tests (new)** | 2 |
+| **v4 compat golden-test matrix (new)** | 2 |
+| **Migration doc + codemod script (new)** | 2 |
 | Alpha soak against delegance-app (2 real features) | 4-6 |
-| **Total** | **15-17 hours across a few sessions** |
+| **Total** | **25-27 hours** |
 
-## Open questions for Alex
+## Resolved open questions
 
-1. **Are the pipeline skills fit to bundle?** Today's `migrate` skill is Supabase-specific and references Delegance-specific paths (`data/deltas/`, `types/supabase.ts`). Either generalize it (parametrize DB + type-gen command) or ship it as an opinionated "Supabase stack" preset and offer a no-op `migrate` for other stacks.
-2. **Superpowers dependency.** The `autopilot` skill requires `superpowers:writing-plans`, `superpowers:using-git-worktrees`, `superpowers:subagent-driven-development`. Do we bundle equivalents, vendor them, or require the superpowers plugin as a peer?
-3. **Does `claude-autopilot review --fix --verify` survive the cut?** It's one of the top-3 differentiators but implementation lives inside several files. Worth a pre-v5 pass to make it first-class with its own integration tests.
-4. **Do we want a hosted option?** Not for v5, but worth deciding before v6. Today claude-autopilot is local-only by design; if that's a moat, keep it. If it's a limitation, a "Delegance Cloud" tier is the natural v6 move.
+All four original questions are answered by Codex's review + Alex's "go" on 2026-04-24:
+
+1. **`migrate` skill** → Ship as Supabase preset + ship `generic` preset in parallel (v5.0).
+2. **Superpowers dep** → Peer dependency + doctor hard-fail + one-command remediation (v5.0).
+3. **`review --fix --verify`** → Keep current impl in 5.0, harden + benchmark in 5.1.
+4. **Hosted option** → Local-only as moat through v5. Reconsider cloud tier for v6.

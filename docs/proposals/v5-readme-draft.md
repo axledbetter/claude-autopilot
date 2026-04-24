@@ -37,12 +37,12 @@ AI coding tools fall into three buckets. Here's where claude-autopilot sits.
 | **OpenHands / SWE-agent** | Open-ended agent framework | Local | User's choice | None — agent decides | Rare, research-grade |
 | **claude-autopilot** | **Opinionated local pipeline** | **Local** | **Any LLM (Claude / GPT / Gemini / Groq / Ollama)** | **Fixed but rewireable, skill-per-phase** | **Every phase. All state on disk.** |
 
-The closest competitor is Copilot Workspace. The differences that matter:
+The architectural differences that matter most in practice:
 
-1. **Multi-model by design.** Claude writes code, Codex reviews the plan, bugbot triages PR findings. Use a different model for each role — or swap any of them. No vendor collapses the pipeline into one opaque API call.
+1. **Multi-model by design.** Claude writes code, Codex reviews the plan, bugbot triages PR findings. Different model for each role, swap any of them. The pipeline's phases are explicit contracts, not one opaque API call.
 2. **Your stack, not a sandbox.** It runs your `npm test`, your `prisma migrate`, your `gh pr create`, your `ruff check`. If it works in your terminal, it works in the pipeline.
-3. **Checkpoints you can break into.** Every phase writes its output to disk (`docs/specs/*.md`, `docs/plans/*.md`, a branch, a PR). You can stop, edit, resume, or re-run any phase in isolation.
-4. **Fix verification.** When autopilot proposes a code fix, it runs your test suite and reverts the patch if tests fail. No other tool in this table does this.
+3. **Phase artifacts on disk, editable.** Every phase writes to a file you can open — `docs/specs/*.md`, `docs/plans/*.md`, a branch, a PR. Stop, edit by hand, resume, or re-run any phase in isolation.
+4. **Test-gated auto-revert as a first-class command.** `claude-autopilot review fix --verify` patches a file, runs your full test suite, and reverts on failure. Built into the CLI, not a wrapper you write yourself.
 
 ## 30-second quickstart
 
