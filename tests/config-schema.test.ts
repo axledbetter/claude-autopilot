@@ -78,4 +78,37 @@ describe('config schema validation', () => {
     await assert.rejects(() => loadConfig(p), /testCommand/);
     fs.rmSync(dir, { recursive: true, force: true });
   });
+
+  // Ensures every TS GuardrailConfig field that users set from YAML has a matching
+  // schema entry — without this, `additionalProperties: false` at the top level
+  // silently rejects config that looked fine in TypeScript.
+
+  it('accepts pipeline.runReviewOnStaticFail from YAML', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-schema-'));
+    const p = await writeConfig(dir, [
+      'configVersion: 1',
+      'pipeline:',
+      '  runReviewOnStaticFail: false',
+      '  runReviewOnTestFail: true',
+      '',
+    ].join('\n'));
+    const config = await loadConfig(p);
+    assert.deepEqual(config.pipeline, {
+      runReviewOnStaticFail: false,
+      runReviewOnTestFail: true,
+    });
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('rejects unknown pipeline key', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-schema-'));
+    const p = await writeConfig(dir, [
+      'configVersion: 1',
+      'pipeline:',
+      '  runReviewOnMondays: true',
+      '',
+    ].join('\n'));
+    await assert.rejects(() => loadConfig(p), /runReviewOnMondays/);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
 });

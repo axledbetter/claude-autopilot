@@ -34,6 +34,21 @@ function nodeTestCommand(cwd: string): string {
   return cmd;
 }
 
+// Detects Supabase signals beyond package.json deps — env vars, config files, or client
+// usage. Required because many Next.js projects reference Supabase via the CLI/SSR tooling
+// before installing the JS client.
+function hasSupabaseSignals(cwd: string, deps: Record<string, string>): boolean {
+  if ('@supabase/supabase-js' in deps) return true;
+  if ('@supabase/ssr' in deps) return true;
+  if ('@supabase/auth-helpers-nextjs' in deps) return true;
+  if (fs.existsSync(path.join(cwd, 'supabase', 'config.toml'))) return true;
+  for (const envFile of ['.env', '.env.local', '.env.development']) {
+    const p = path.join(cwd, envFile);
+    if (fs.existsSync(p) && fileContains(p, 'SUPABASE_')) return true;
+  }
+  return false;
+}
+
 export function detectProject(cwd: string): DetectionResult {
   if (fs.existsSync(path.join(cwd, 'go.mod'))) {
     return { preset: 'go', testCommand: 'go test ./...', confidence: 'high', evidence: 'found go.mod' };
@@ -63,14 +78,16 @@ export function detectProject(cwd: string): DetectionResult {
     if ('@trpc/server' in deps) {
       return { preset: 't3', testCommand: testCmd, confidence: 'high', evidence: 'found @trpc/server in package.json' };
     }
-    if ('next' in deps && '@supabase/supabase-js' in deps) {
-      return { preset: 'nextjs-supabase', testCommand: testCmd, confidence: 'high', evidence: 'found next + @supabase/supabase-js in package.json' };
+    if ('next' in deps && hasSupabaseSignals(cwd, deps)) {
+      return { preset: 'nextjs-supabase', testCommand: testCmd, confidence: 'high', evidence: 'found next + supabase signals (deps/env/config)' };
     }
     if ('next' in deps) {
-      return { preset: 'nextjs-supabase', testCommand: testCmd, confidence: 'low', evidence: 'found next in package.json (no supabase detected)' };
+      // Plain Next.js — closest preset we ship is nextjs-supabase but don't claim "supabase"
+      // since nothing indicates it's present. Evidence reflects the actual detection.
+      return { preset: 'nextjs-supabase', testCommand: testCmd, confidence: 'low', evidence: 'found next in package.json — using nextjs-supabase preset as closest match (no supabase signals detected)' };
     }
-    return { preset: 'nextjs-supabase', testCommand: testCmd, confidence: 'low', evidence: 'found package.json (no strong framework signals)' };
+    return { preset: 'nextjs-supabase', testCommand: testCmd, confidence: 'low', evidence: 'found package.json (no strong framework signals) — using nextjs-supabase preset as default' };
   }
 
-  return { preset: 'nextjs-supabase', testCommand: 'npm test', confidence: 'low', evidence: 'no project signals found — using default preset' };
+  return { preset: 'nextjs-supabase', testCommand: 'npm test', confidence: 'low', evidence: 'no project signals found — using nextjs-supabase preset as default' };
 }

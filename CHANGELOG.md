@@ -1,5 +1,19 @@
 # Changelog
 
+## [4.3.1] — 2026-04-24
+
+### Fixed (from external cold-start review)
+- **`parseReviewOutput` silent failure** — regex required literal `### [CRITICAL]` brackets and returned zero findings when the LLM emitted `### CRITICAL`, `### **CRITICAL**`, or `### **[CRITICAL]**` (all common Llama/GPT variants). `src/adapters/review-engine/parse-output.ts` now accepts all four formats and logs a warning when raw output is non-empty but no findings parse, so format drift never silently hides bugs again.
+- **Pipeline short-circuit skipped LLM review** — `src/core/pipeline/run.ts` returned early on static-rules `fail`, meaning the LLM never ran on the code that most needed it (IDOR, TOCTOU, CORS, off-by-one, rate-limit gaps typically ride alongside a static-flagged issue). New default: review runs even on static-fail. Legacy behavior restored via `pipeline.runReviewOnStaticFail: false` in config.
+- **`doctor` / `preflight` ignored 3 of 5 LLM keys** — only checked `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, so users with `GROQ_API_KEY`/`GEMINI_API_KEY`/`GOOGLE_API_KEY` set saw "No LLM API key" right after `setup` reported "detected." New shared helper `src/core/detect/llm-key.ts` is the single source of truth used by setup, scan, run, and preflight.
+- **Stack detector mislabeled plain Next.js as "Next.js + Supabase"** — now requires actual Supabase signals (`@supabase/supabase-js`, `@supabase/ssr`, `@supabase/auth-helpers-nextjs`, `supabase/config.toml`, or `SUPABASE_*` env vars). Vanilla Next.js still uses the `nextjs-supabase` preset as a fallback but the evidence string and setup output make the fallback explicit.
+- **`--profile team` missing security rules** — added `package-lock-sync`, `ssrf`, `insecure-redirect` to match the README's advertised coverage.
+
+### Added
+- `src/core/detect/llm-key.ts` — `detectLLMKey()`, `LLM_KEY_NAMES`, `LLM_KEY_HINTS`, `loadEnvFile()`.
+- `GuardrailConfig.pipeline.runReviewOnStaticFail` / `runReviewOnTestFail` config flags.
+- 6 parser format-variation tests covering all documented markdown variants plus the silent-drift warning path.
+
 ## [2.5.0] — 2026-04-22
 
 ### Added

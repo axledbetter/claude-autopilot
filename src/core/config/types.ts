@@ -46,6 +46,25 @@ export interface GuardrailConfig {
     /** Path to baseline file relative to cwd. Default: .guardrail-baseline.json */
     baselinePath?: string;
   };
+  pipeline?: {
+    /**
+     * When true, run the LLM review phase even if the static-rules phase reports `fail`
+     * (i.e. finds a critical). Default: true. Set to false to skip only the review
+     * phase on static-fail — the tests phase still runs regardless.
+     *
+     * Users that explicitly configure a review engine typically expect it to run — the
+     * bugs the LLM is best at (IDOR, TOCTOU, CORS, off-by-one, rate limits) often sit
+     * in the same commit as something a static rule already flagged. This flag only
+     * gates the review phase, mirroring `runReviewOnTestFail`.
+     */
+    runReviewOnStaticFail?: boolean;
+    /**
+     * When true, run the LLM review phase even if the tests phase reports `fail`.
+     * Default: false — failing tests usually indicate broken code, not code to review.
+     * This flag only gates the review phase; the tests phase itself always runs.
+     */
+    runReviewOnTestFail?: boolean;
+  };
   cost?: {
     /** Abort review phase if estimated spend exceeds this amount (USD). */
     maxPerRun?: number;
