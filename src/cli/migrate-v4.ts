@@ -69,6 +69,8 @@ const SKIP_DIRS = new Set([
   MANIFEST_DIR, // don't mutate our own manifest
 ]);
 
+const VERBS = 'run|scan|ci|setup|doctor|init|fix|baseline|explain|ignore|costs|watch|hook|autoregress|triage|pr-desc|council|report|test-gen|mcp|lsp|worker|pr|preflight';
+
 const TEXT_REPLACEMENTS: Replacement[] = [
   // Package name in any context
   {
@@ -76,16 +78,29 @@ const TEXT_REPLACEMENTS: Replacement[] = [
     replace: () => '@delegance/claude-autopilot',
     description: '@delegance/guardrail → @delegance/claude-autopilot',
   },
+  // `npx guardrail <verb>` / `pnpm dlx guardrail <verb>` / `yarn dlx guardrail <verb>`.
+  // These must run BEFORE the bare `guardrail <verb>` pattern below so the package-
+  // name `guardrail` inside `npx` is replaced as a unit with its wrapper tool.
+  {
+    pattern: new RegExp(
+      `((?:^|\\s)(?:npx|pnpm\\s+dlx|yarn\\s+dlx|bunx)\\s+)guardrail(\\s+)(${VERBS})\\b`,
+      'g',
+    ),
+    replace: (_m, wrapper, ws, verb) => `${wrapper}@delegance/claude-autopilot@alpha${ws}${verb}`,
+    description: 'npx/pnpm dlx/yarn dlx guardrail <verb> → ... @delegance/claude-autopilot@alpha <verb>',
+  },
   // `guardrail <verb>` on its own line or after whitespace/punctuation
   {
-    pattern: /(^|[\s`"'(])guardrail(\s+)(run|scan|ci|setup|doctor|init|fix|baseline|explain|ignore|costs|watch|hook|autoregress|triage|pr-desc|council|report|test-gen|mcp|lsp|worker|pr|preflight)\b/g,
+    pattern: new RegExp(`(^|[\\s\`"'(])guardrail(\\s+)(${VERBS})\\b`, 'g'),
     replace: (_m, lead, ws, verb) => `${lead}claude-autopilot${ws}${verb}`,
     description: '`guardrail <verb>` → `claude-autopilot <verb>`',
   },
   // Quoted `"guardrail"` in argv-style arrays — Dockerfile CMD, exec args, etc.
-  // The surrounding context gives us high confidence this is the CLI name.
   {
-    pattern: /(["'])guardrail(["'])(\s*,\s*)(["'])(run|scan|ci|setup|doctor|init|fix|baseline|explain|ignore|costs|watch|hook|autoregress|triage|pr-desc|council|report|test-gen|mcp|lsp|worker|pr|preflight)\b/g,
+    pattern: new RegExp(
+      `(["'])guardrail(["'])(\\s*,\\s*)(["'])(${VERBS})\\b`,
+      'g',
+    ),
     replace: (_m, q1, q2, sep, q3, verb) => `${q1}claude-autopilot${q2}${sep}${q3}${verb}`,
     description: '`"guardrail", "<verb>"` → `"claude-autopilot", "<verb>"`',
   },
@@ -279,40 +294,60 @@ function runUndo(cwd: string): number {
     console.error(`[migrate-v4] No manifest at ${manifestPath}. Nothing to undo.`);
     return 1;
   }
-  const raw = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as { entries: ManifestEntry[] };
-  let restored = 0;
-  let skipped = 0;
+  const raw = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as {
+    migratedAt: string;
+    from: string;
+    to: string;
+    entries: ManifestEntry[];
+  };
+  const restored: ManifestEntry[] = [];
+  const pending: ManifestEntry[] = [];
 
   for (const entry of raw.entries) {
     if (!fs.existsSync(entry.path)) {
       console.error(`  \x1b[33m!\x1b[0m  ${path.relative(cwd, entry.path)} missing — skipping`);
-      skipped++;
+      pending.push(entry);
       continue;
     }
     if (!fs.existsSync(entry.backupPath)) {
       console.error(`  \x1b[33m!\x1b[0m  backup missing for ${path.relative(cwd, entry.path)} — skipping`);
-      skipped++;
+      pending.push(entry);
       continue;
     }
     const currentHash = sha256(fs.readFileSync(entry.path, 'utf8'));
     if (currentHash !== entry.afterSha256) {
       console.error(`  \x1b[33m!\x1b[0m  ${path.relative(cwd, entry.path)} modified since migrate — refusing to overwrite`);
       console.error(`        expected sha256=${entry.afterSha256.slice(0, 8)}, got ${currentHash.slice(0, 8)}`);
-      skipped++;
+      pending.push(entry);
       continue;
     }
     const backup = fs.readFileSync(entry.backupPath, 'utf8');
     if (sha256(backup) !== entry.beforeSha256) {
       console.error(`  \x1b[33m!\x1b[0m  backup ${path.relative(cwd, entry.backupPath)} tampered — skipping`);
-      skipped++;
+      pending.push(entry);
       continue;
     }
     fs.writeFileSync(entry.path, backup);
     fs.unlinkSync(entry.backupPath);
     console.log(`  \x1b[32m✓\x1b[0m  ${path.relative(cwd, entry.path)}`);
-    restored++;
+    restored.push(entry);
   }
+
+  // Preserve manifest when any entries remain pending so --undo can be re-run
+  // after the user resolves the blocker (restored their edits, fixed backup, etc).
+  if (pending.length > 0) {
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      ...raw,
+      entries: pending,
+    }, null, 2));
+    console.log(
+      `\n  Restored ${restored.length}, ${pending.length} pending. ` +
+      `Manifest retained at ${path.relative(cwd, manifestPath)} — re-run --undo after resolving issues.`,
+    );
+    return 1;
+  }
+
   fs.unlinkSync(manifestPath);
-  console.log(`\n  Restored ${restored}, skipped ${skipped}.`);
-  return skipped > 0 ? 1 : 0;
+  console.log(`\n  Restored ${restored.length}, skipped 0.`);
+  return 0;
 }

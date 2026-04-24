@@ -170,6 +170,33 @@ describe('migrate-v4 codemod', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it('rewrites npx / pnpm dlx / yarn dlx / bunx wrappers', async () => {
+    const runMigrateV4 = await loadMigrateV4();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-m4-wrap-'));
+    fs.writeFileSync(path.join(dir, 'ci.sh'), [
+      '#!/bin/sh',
+      'npx guardrail run --base main',
+      'pnpm dlx guardrail ci',
+      'yarn dlx guardrail scan src/',
+      'bunx guardrail fix --dry-run',
+      '',
+    ].join('\n'));
+
+    await runMigrateV4({ cwd: dir, write: true });
+    const updated = fs.readFileSync(path.join(dir, 'ci.sh'), 'utf8');
+
+    // All four wrappers rewritten to use the new package name AND their original
+    // subcommand preserved.
+    assert.match(updated, /npx @delegance\/claude-autopilot@alpha run --base main/);
+    assert.match(updated, /pnpm dlx @delegance\/claude-autopilot@alpha ci/);
+    assert.match(updated, /yarn dlx @delegance\/claude-autopilot@alpha scan src\//);
+    assert.match(updated, /bunx @delegance\/claude-autopilot@alpha fix --dry-run/);
+    // No stray legacy reference
+    assert.doesNotMatch(updated, /\bguardrail (run|ci|scan|fix)\b/);
+
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it('does not touch node_modules or dist', async () => {
     const runMigrateV4 = await loadMigrateV4();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-m4-skip-'));

@@ -2,7 +2,7 @@
 
 **This package has been renamed to [@delegance/claude-autopilot](https://www.npmjs.com/package/@delegance/claude-autopilot).**
 
-`@delegance/guardrail@5.0.0` is a tombstone — installing it gives you a thin forwarding wrapper that invokes `claude-autopilot` under the hood. Every byte of argv, stdout, stderr, exit code, and signal is passed through unchanged. Only addition is a one-line deprecation notice on stderr (suppress with `CLAUDE_AUTOPILOT_DEPRECATION=never`).
+`@delegance/guardrail@5.0.0` is a tombstone — installing it gives you a thin forwarding wrapper that invokes `claude-autopilot` under the hood. Child stdio, argv, exit code, and signals are passed through unchanged. The wrapper emits one deprecation line on stderr before spawning the child (suppress with `CLAUDE_AUTOPILOT_DEPRECATION=never`).
 
 ## What happened
 

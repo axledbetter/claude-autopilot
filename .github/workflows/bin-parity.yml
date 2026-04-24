@@ -14,9 +14,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         node: [22, 24]
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        # Use bash on Windows for the parity shell snippets below (POSIX-only
+        # syntax like $(…) and grep). Git-Bash ships with actions/checkout.
+        shell: bash
     steps:
       - uses: actions/checkout@v6
 
@@ -31,7 +36,10 @@ jobs:
       - name: Pack and install globally
         run: |
           npm pack
-          npm install -g ./delegance-claude-autopilot-*.tgz
+          # Windows bash wildcard expansion differs — use a for loop for safety
+          for tarball in delegance-claude-autopilot-*.tgz; do
+            npm install -g "$tarball"
+          done
 
       - name: claude-autopilot --version
         run: |
