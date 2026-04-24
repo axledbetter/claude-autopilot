@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { detectProject } from './detector.ts';
 import { runHook } from './hook.ts';
 import { runDoctor } from './preflight.ts';
+import { detectLLMKey, LLM_KEY_NAMES } from '../core/detect/llm-key.ts';
 
 const PASS = '\x1b[32m✓\x1b[0m';
 const WARN = '\x1b[33m!\x1b[0m';
@@ -45,8 +46,11 @@ const PROFILES: Record<ProfileName, { label: string; overlay: string }> = {
       'staticRules:',
       '  - hardcoded-secrets',
       '  - npm-audit',
+      '  - package-lock-sync',
       '  - sql-injection',
       '  - missing-auth',
+      '  - ssrf',
+      '  - insecure-redirect',
       'policy:',
       '  failOn: critical',
       '  newOnly: false',
@@ -105,18 +109,18 @@ export async function runSetup(options: SetupOptions = {}): Promise<void> {
     console.log(`  ${PASS}  Stack:        ${label}`);
     console.log(`  ${PASS}  Evidence:     ${DIM(detection.evidence)}`);
   } else {
-    console.log(`  ${WARN}  Stack:        ${label} ${DIM('(low confidence — no strong signals)')}`);
+    console.log(`  ${WARN}  Stack:        ${label} ${DIM('(low confidence — fallback preset)')}`);
+    console.log(`       ${DIM(detection.evidence)}`);
     console.log(`       ${DIM('Edit guardrail.config.yaml to switch presets if needed')}`);
   }
   console.log(`  ${PASS}  Test command: ${DIM(detection.testCommand)}`);
 
-  const hasKey = !!(process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY ||
-    process.env.GOOGLE_API_KEY || process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY);
+  const { hasKey, preferred } = detectLLMKey();
   if (hasKey) {
-    console.log(`  ${PASS}  LLM API key:  detected`);
+    console.log(`  ${PASS}  LLM API key:  detected (${preferred})`);
   } else {
     console.log(`  ${WARN}  LLM API key:  not found`);
-    console.log(`       ${DIM('Set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY')}`);
+    console.log(`       ${DIM(`Set one of: ${LLM_KEY_NAMES.join(', ')}`)}`);
   }
 
   const presetConfigPath = findPresetConfig(detection.preset, cwd);

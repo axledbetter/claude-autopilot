@@ -196,4 +196,89 @@ Body two.`;
     assert.equal(findings[0]!.severity, 'critical');
     assert.equal(findings[1]!.severity, 'warning');
   });
+
+  // Format-drift tolerance. Before 4.0.1 the regex required literal `### [CRITICAL]`
+  // brackets and silently returned zero findings on any other variant — the single
+  // biggest quality risk flagged in external review. These tests pin the parser to
+  // accept what models actually emit.
+
+  it('parses unbracketed severity: ### CRITICAL title', async () => {
+    const { parseReviewOutput } = await import('../src/adapters/review-engine/parse-output.ts');
+    const output = `### CRITICAL SQL injection in query builder
+In \`db/query.ts:88\` user input concatenated into SQL.
+**Suggestion:** Use parameterized query.`;
+    const findings = parseReviewOutput(output, 'test');
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0]!.severity, 'critical');
+    assert.equal(findings[0]!.file, 'db/query.ts');
+    assert.equal(findings[0]!.line, 88);
+  });
+
+  it('parses bold severity: ### **CRITICAL** title', async () => {
+    const { parseReviewOutput } = await import('../src/adapters/review-engine/parse-output.ts');
+    const output = `### **CRITICAL** Missing auth on mutation
+In \`api/users/route.ts:12\` POST route lacks auth.
+**Suggestion:** Add getServerSession check.`;
+    const findings = parseReviewOutput(output, 'test');
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0]!.severity, 'critical');
+    assert.equal(findings[0]!.file, 'api/users/route.ts');
+  });
+
+  it('parses bold+bracketed severity: ### **[CRITICAL]** title', async () => {
+    const { parseReviewOutput } = await import('../src/adapters/review-engine/parse-output.ts');
+    const output = `### **[CRITICAL]** Hardcoded secret
+See config/secrets.ts:3.
+**Suggestion:** Move to env var.`;
+    const findings = parseReviewOutput(output, 'test');
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0]!.severity, 'critical');
+  });
+
+  it('parses mixed variants across findings', async () => {
+    const { parseReviewOutput } = await import('../src/adapters/review-engine/parse-output.ts');
+    const output = `### [CRITICAL] Bracketed first
+Body A.
+### CRITICAL Unbracketed second
+Body B.
+### **WARNING** Bold third
+Body C.`;
+    const findings = parseReviewOutput(output, 'test');
+    assert.equal(findings.length, 3);
+    assert.equal(findings[0]!.severity, 'critical');
+    assert.equal(findings[1]!.severity, 'critical');
+    assert.equal(findings[2]!.severity, 'warning');
+  });
+
+  it('warns when raw output is non-empty but no findings parse', async () => {
+    const { parseReviewOutput } = await import('../src/adapters/review-engine/parse-output.ts');
+    // Capture console.warn
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (msg: unknown) => warnings.push(String(msg));
+    try {
+      // Real Llama-style drift: prose review with no ### heading at all
+      const output = `I reviewed the code and found several issues. First, the auth handler is missing a check. Second, the SQL query is vulnerable. See authHandler.ts for details.`;
+      const findings = parseReviewOutput(output, 'test');
+      assert.equal(findings.length, 0);
+      assert.equal(warnings.length, 1);
+      assert.match(warnings[0]!, /no findings parsed/);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  it('does not warn on empty output', async () => {
+    const { parseReviewOutput } = await import('../src/adapters/review-engine/parse-output.ts');
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (msg: unknown) => warnings.push(String(msg));
+    try {
+      assert.equal(parseReviewOutput('', 'test').length, 0);
+      assert.equal(parseReviewOutput('   \n  ', 'test').length, 0);
+      assert.equal(warnings.length, 0);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
 });

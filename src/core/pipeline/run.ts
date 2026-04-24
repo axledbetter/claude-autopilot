@@ -35,7 +35,15 @@ export async function runGuardrail(input: RunInput): Promise<RunResult> {
   const phases: PhaseResult[] = [];
   let totalCostUSD: number | undefined;
 
-  // Static-rules phase — fail fast on critical
+  const pipelineCfg = input.config.pipeline ?? {};
+  // Default true: when the user wires up a review engine they expect it to actually run.
+  // Skipping LLM review on static-fail is exactly the "silent skip" behavior the v4.0
+  // reviewer flagged — the bugs the LLM is best at often ride alongside one a static
+  // rule already caught.
+  const runReviewOnStaticFail = pipelineCfg.runReviewOnStaticFail !== false;
+  const runReviewOnTestFail = pipelineCfg.runReviewOnTestFail === true;
+
+  // Static-rules phase
   if (input.staticRules && input.staticRules.length > 0) {
     const result = await runStaticRulesPhase({
       touchedFiles: input.touchedFiles,
@@ -44,7 +52,9 @@ export async function runGuardrail(input: RunInput): Promise<RunResult> {
       engine: input.reviewEngine,
     });
     phases.push(result);
-    if (result.status === 'fail') return finalize(phases, start, totalCostUSD);
+    if (result.status === 'fail' && !runReviewOnStaticFail) {
+      return finalize(phases, start, totalCostUSD);
+    }
   }
 
   // skipReview short-circuit: skip tests and review phases entirely
@@ -60,14 +70,16 @@ export async function runGuardrail(input: RunInput): Promise<RunResult> {
     };
   }
 
-  // Tests phase — fail fast on test failure
+  // Tests phase
   const testsResult = await runTestsPhase({
     touchedFiles: input.touchedFiles,
     testCommand: input.config.testCommand,
     cwd: input.cwd,
   });
   phases.push(testsResult);
-  if (testsResult.status === 'fail') return finalize(phases, start, totalCostUSD);
+  if (testsResult.status === 'fail' && !runReviewOnTestFail) {
+    return finalize(phases, start, totalCostUSD);
+  }
 
   // Review phase (optional — only when engine is provided)
   if (input.reviewEngine) {

@@ -8,6 +8,7 @@ import { detectStack } from '../core/detect/stack.ts';
 import { loadIgnoreRules, parseConfigIgnore, applyIgnoreRules } from '../core/ignore/index.ts';
 import { saveCachedFindings } from '../core/persist/findings-cache.ts';
 import type { GuardrailConfig } from '../core/config/types.ts';
+import { detectLLMKey, LLM_KEY_HINTS } from '../core/detect/llm-key.ts';
 
 const C = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
@@ -109,14 +110,12 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
   }
 
   // Build review engine
-  const hasAnyKey = !!(process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY ||
-    process.env.GOOGLE_API_KEY || process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY);
-  if (!hasAnyKey) {
+  if (!detectLLMKey().hasKey) {
     console.error(fmt('red', '[scan] No LLM API key — set one of:'));
-    console.error(fmt('dim', '         ANTHROPIC_API_KEY  https://console.anthropic.com/'));
-    console.error(fmt('dim', '         OPENAI_API_KEY     https://platform.openai.com/api-keys'));
-    console.error(fmt('dim', '         GEMINI_API_KEY     https://aistudio.google.com/app/apikey'));
-    console.error(fmt('dim', '         GROQ_API_KEY       https://console.groq.com/keys  (fast free tier)'));
+    for (const { name, url, note } of LLM_KEY_HINTS) {
+      const suffix = note ? `  (${note})` : '';
+      console.error(fmt('dim', `         ${name.padEnd(18)} ${url}${suffix}`));
+    }
     return 1;
   }
   const engineRef = typeof config.reviewEngine === 'string' ? config.reviewEngine

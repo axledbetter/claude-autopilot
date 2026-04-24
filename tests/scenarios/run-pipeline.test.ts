@@ -82,15 +82,34 @@ describe('run pipeline — scenarios', () => {
     assert.ok(result.phases.find(p => p.phase === 'tests'));
   });
 
-  it('S3: static-rule critical fails fast — tests phase not run', async () => {
+  it('S3a: static-rule critical keeps running by default (runReviewOnStaticFail true)', async () => {
     const rule = makeRule([makeFinding({ id: 'r1', severity: 'critical' })]);
     const result = await runGuardrail({
       touchedFiles: ['foo.ts'],
-      config: { configVersion: 1, testCommand: 'this-command-does-not-exist' },
+      config: { configVersion: 1, testCommand: null },
       staticRules: [rule],
     });
     assert.equal(result.status, 'fail');
-    // Only static-rules phase ran (fail-fast before tests)
+    // Both static-rules and tests phases ran — the v4.0 short-circuit is off by default
+    // because users who wire up later phases expect them to run.
+    assert.equal(result.phases.length, 2);
+    assert.equal(result.phases[0]!.phase, 'static-rules');
+    assert.equal(result.phases[1]!.phase, 'tests');
+  });
+
+  it('S3b: static-rule critical fails fast when runReviewOnStaticFail=false', async () => {
+    const rule = makeRule([makeFinding({ id: 'r1', severity: 'critical' })]);
+    const result = await runGuardrail({
+      touchedFiles: ['foo.ts'],
+      config: {
+        configVersion: 1,
+        testCommand: 'this-command-does-not-exist',
+        pipeline: { runReviewOnStaticFail: false },
+      },
+      staticRules: [rule],
+    });
+    assert.equal(result.status, 'fail');
+    // Opt-in legacy fail-fast: only static-rules ran
     assert.equal(result.phases.length, 1);
     assert.equal(result.phases[0]!.phase, 'static-rules');
   });

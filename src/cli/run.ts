@@ -43,6 +43,7 @@ import { detectProject } from './detector.ts';
 import { detectPrNumber, formatComment, postPrComment } from './pr-comment.ts';
 import { postReviewComments } from './pr-review-comments.ts';
 import { loadIgnoreRules, parseConfigIgnore, applyIgnoreRules } from '../core/ignore/index.ts';
+import { detectLLMKey, LLM_KEY_HINTS } from '../core/detect/llm-key.ts';
 import { loadCachedFindings, saveCachedFindings, filterNewFindings } from '../core/persist/findings-cache.ts';
 import { loadBaseline, filterBaselined } from '../core/persist/baseline.ts';
 import { appendCostLog } from '../core/persist/cost-log.ts';
@@ -174,14 +175,13 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
   let reviewEngine: ReviewEngine | undefined;
   if (config.reviewEngine) {
     const ref = typeof config.reviewEngine === 'string' ? config.reviewEngine : config.reviewEngine.adapter;
-    const hasAnyKey = !!(process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY ||
-      process.env.GOOGLE_API_KEY || process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY);
-    if (!hasAnyKey && ['auto', 'claude', 'gemini', 'codex', 'openai-compatible'].includes(ref)) {
+    if (!detectLLMKey().hasKey && ['auto', 'claude', 'gemini', 'codex', 'openai-compatible'].includes(ref)) {
       console.log(fmt('yellow', '\n  [run] No LLM API key — set one of:'));
-      console.log(fmt('dim',    '         ANTHROPIC_API_KEY  https://console.anthropic.com/'));
-      console.log(fmt('dim',    '         OPENAI_API_KEY     https://platform.openai.com/api-keys'));
-      console.log(fmt('dim',    '         GEMINI_API_KEY     https://aistudio.google.com/app/apikey'));
-      console.log(fmt('dim',    '         GROQ_API_KEY       https://console.groq.com/keys  (fast free tier)\n'));
+      for (const { name, url, note } of LLM_KEY_HINTS) {
+        const suffix = note ? `  (${note})` : '';
+        console.log(fmt('dim', `         ${name.padEnd(18)} ${url}${suffix}`));
+      }
+      console.log('');
     } else {
       try {
         reviewEngine = await loadAdapter<ReviewEngine>({

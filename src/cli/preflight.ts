@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runSafe } from '../core/shell.ts';
+import { detectLLMKey, loadEnvFile, LLM_KEY_NAMES } from '../core/detect/llm-key.ts';
 
 const PASS = '\x1b[32m✓\x1b[0m';
 const FAIL = '\x1b[31m✗\x1b[0m';
@@ -14,21 +15,6 @@ interface Check {
   name: string;
   result: 'pass' | 'fail' | 'warn';
   message?: string;
-}
-
-function loadEnvFile(filePath: string): Record<string, string> {
-  const vars: Record<string, string> = {};
-  try {
-    const content = fs.readFileSync(filePath, 'utf-8');
-    for (const line of content.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eq = trimmed.indexOf('=');
-      if (eq < 0) continue;
-      vars[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim().replace(/^['"]|['"]$/g, '');
-    }
-  } catch { /* ignore */ }
-  return vars;
 }
 
 export interface DoctorResult {
@@ -83,21 +69,18 @@ export async function runDoctor(): Promise<DoctorResult> {
     name: `Local env file (${envFile ?? 'none found'})`,
     result: envFile ? 'pass' : 'warn',
     message: !envFile
-      ? `No env file found. Looked for: ${ENV_CANDIDATES.join(', ')}. Create one with your OPENAI_API_KEY.`
+      ? `No env file found. Looked for: ${ENV_CANDIDATES.join(', ')}. Create one with one of: ${LLM_KEY_NAMES.join(', ')}.`
       : undefined,
   });
 
-  // 6. LLM API key (ANTHROPIC_API_KEY preferred, OPENAI_API_KEY as fallback)
+  // 6. LLM API key — shared detection with setup/scan/run (all 5 providers)
   const envVars = envFile ? loadEnvFile(envFile) : {};
-  const hasAnthropic = !!process.env.ANTHROPIC_API_KEY || !!envVars['ANTHROPIC_API_KEY'];
-  const hasOpenAI = !!process.env.OPENAI_API_KEY || !!envVars['OPENAI_API_KEY'];
-  const hasLLMKey = hasAnthropic || hasOpenAI;
-  const llmKeyName = hasAnthropic ? 'ANTHROPIC_API_KEY' : hasOpenAI ? 'OPENAI_API_KEY' : 'none';
+  const { hasKey, preferred } = detectLLMKey({ extraEnv: envVars });
   checks.push({
-    name: `LLM API key (${llmKeyName})`,
-    result: hasLLMKey ? 'pass' : 'warn',
-    message: !hasLLMKey
-      ? `No LLM API key found — set ANTHROPIC_API_KEY (recommended) or OPENAI_API_KEY to enable review`
+    name: `LLM API key (${preferred ?? 'none'})`,
+    result: hasKey ? 'pass' : 'warn',
+    message: !hasKey
+      ? `No LLM API key found — set one of: ${LLM_KEY_NAMES.join(', ')} to enable review`
       : undefined,
   });
 
