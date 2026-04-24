@@ -34,7 +34,7 @@ The architectural differences that matter most in practice:
 1. **Multi-model by design.** Claude writes code, Codex reviews the plan, bugbot triages PR findings. Different model for each role, swap any of them. The pipeline's phases are explicit contracts, not one opaque API call.
 2. **Your stack, not a sandbox.** It runs your `npm test`, your `prisma migrate`, your `gh pr create`, your `ruff check`. If it works in your terminal, it works in the pipeline.
 3. **Phase artifacts on disk, editable.** Every phase writes to a file you can open — `docs/specs/*.md`, `docs/plans/*.md`, a branch, a PR. Stop, edit by hand, resume, or re-run any phase in isolation.
-4. **Test-gated auto-revert as a first-class command.** `claude-autopilot review fix --verify` patches a file, runs your full test suite, and reverts on failure. Built into the CLI, not a wrapper you write yourself.
+4. **Test-gated auto-revert as a first-class command.** `claude-autopilot fix --verify` patches a file, runs your full test suite, and reverts on failure. Built into the CLI, not a wrapper you write yourself.
 
 ## 30-second quickstart
 
@@ -52,7 +52,7 @@ claude-autopilot brainstorm "add rate limiting to the public API"
 # ~15-40 min for a typical feature.
 
 # Or run just the review layer on an existing PR
-claude-autopilot review --pr 123
+claude-autopilot run --pr 123
 ```
 
 ## The pipeline, phase by phase
@@ -84,14 +84,16 @@ Features that are hard or impossible to find in the competitive set:
 
 ## Just the review layer
 
-If you don't want the full pipeline, `claude-autopilot review` is a strict superset of what `guardrail run` used to do: LLM code review over git-changed files, SARIF output, inline PR comments, auto-fix, baselines, per-finding triage, cost budgets. The legacy `guardrail` CLI is aliased to `claude-autopilot review` for backward compat through v5.x.
+If you don't want the full pipeline, the review subcommands are a strict superset of what `guardrail run` used to do: LLM code review over git-changed files, SARIF output, inline PR comments, auto-fix, baselines, per-finding triage, cost budgets. The legacy `guardrail` CLI remains aliased to the review subcommands through v5.x.
 
 ```bash
-claude-autopilot review                          # review changes since main
-claude-autopilot review --inline-comments        # post per-line PR annotations
-claude-autopilot review --format sarif --output out.sarif
-claude-autopilot review --fix --verify           # LLM patch + test gate + revert on fail
+claude-autopilot run                             # review changes since main
+claude-autopilot run --inline-comments           # post per-line PR annotations
+claude-autopilot run --format sarif --output out.sarif
+claude-autopilot fix --verify                    # LLM patch + test gate + revert on fail
 ```
+
+> **Alpha.1 CLI note:** subcommands are flat (`run`, `scan`, `ci`, `fix`, `baseline`, `explain`, …). The grouped `claude-autopilot review <verb>` form lands in alpha.2 as an alias — flat forms continue to work indefinitely.
 
 ## Install & requirements
 

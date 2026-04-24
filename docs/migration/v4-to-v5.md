@@ -19,7 +19,7 @@ Every v4 invocation continues to work in v5.x:
 - `npx guardrail fix --dry-run` ✓
 - `npx guardrail baseline create` ✓
 - `npx guardrail explain <id>` ✓
-- Every flag combination that worked in 4.3.1 works in 5.0.0.
+- Top 20 v4 subcommand invocations are preserved (intended compatibility). A formal golden-test matrix lands in alpha.2 — if you hit a regression, please open an issue (see bottom).
 
 Your `guardrail.config.yaml` also loads without changes. New config keys (`pipeline`, etc.) are additive.
 
@@ -46,13 +46,13 @@ Replace the CLI invocation:
 
 ```diff
 - npx guardrail run --base main
-+ npx claude-autopilot review run --base main
++ npx claude-autopilot run --base main
 
 - npx guardrail scan src/auth/
-+ npx claude-autopilot review scan src/auth/
++ npx claude-autopilot scan src/auth/
 
 - npx guardrail ci
-+ npx claude-autopilot review ci
++ npx claude-autopilot ci
 ```
 
 Or keep using `guardrail run` — it continues to work through v5.x.
@@ -66,7 +66,7 @@ Or keep using `guardrail run` — it continues to work through v5.x.
 - run: npm install -g @delegance/guardrail
 + run: npm install -g @delegance/claude-autopilot
 - run: guardrail run --base main --format sarif --output results.sarif
-+ run: claude-autopilot review run --base main --format sarif --output results.sarif
++ run: claude-autopilot run --base main --format sarif --output results.sarif
 ```
 
 ### 4. Dockerfiles
@@ -110,7 +110,7 @@ Pin `@delegance/guardrail@^4.3.1` to stay on v4. The package stays on npm; the t
 
 - `guardrail` CLI binary (2027-Q1 or later).
 - `skills/guardrail.md` alias.
-- Legacy top-level subcommand aliases (`guardrail run` → must be `claude-autopilot review run`).
+- Legacy top-level subcommand aliases (`guardrail run` → must be `claude-autopilot run`).
 
 We'll announce the v6 cutover at least 3 months ahead of time in the CHANGELOG and on any issues using the `legacy-removal` label.
 

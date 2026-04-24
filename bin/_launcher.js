@@ -47,15 +47,29 @@ function hasShownDeprecation() {
 }
 
 /**
+ * Decide whether to emit the deprecation notice. Order:
+ *   CLAUDE_AUTOPILOT_DEPRECATION=never   → never emit (CI/automation)
+ *   CLAUDE_AUTOPILOT_DEPRECATION=always  → always emit (deterministic testing)
+ *   otherwise                            → once per terminal session (stamp-based)
+ */
+function shouldEmitDeprecation() {
+  const override = process.env.CLAUDE_AUTOPILOT_DEPRECATION;
+  if (override === 'never') return false;
+  if (override === 'always') return true;
+  return !hasShownDeprecation();
+}
+
+/**
  * Launch the CLI with `argv` passed through verbatim.
  * @param {{ name: 'claude-autopilot' | 'guardrail' }} opts
  */
 export function launch(opts) {
-  if (opts.name === 'guardrail' && !hasShownDeprecation()) {
+  if (opts.name === 'guardrail' && shouldEmitDeprecation()) {
     process.stderr.write(
       '\x1b[33m[deprecated]\x1b[0m `guardrail` CLI is renamed to `claude-autopilot`. ' +
       'The `guardrail` alias works through v5.x and will be removed in v6. ' +
-      'Migration guide: https://github.com/axledbetter/claude-autopilot/blob/master/docs/migration/v4-to-v5.md\n',
+      'Migration guide: https://github.com/axledbetter/claude-autopilot/blob/master/docs/migration/v4-to-v5.md\n' +
+      'Silence: set CLAUDE_AUTOPILOT_DEPRECATION=never\n',
     );
   }
   const result = spawnSync(findTsx(), [ENTRYPOINT, ...process.argv.slice(2)], { stdio: 'inherit' });
