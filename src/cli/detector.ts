@@ -82,12 +82,11 @@ export function detectProject(cwd: string): DetectionResult {
       return { preset: 'nextjs-supabase', testCommand: testCmd, confidence: 'high', evidence: 'found next + supabase signals (deps/env/config)' };
     }
     if ('next' in deps) {
-      // Plain Next.js — closest preset we ship is nextjs-supabase but don't claim "supabase"
-      // since nothing indicates it's present. Evidence reflects the actual detection.
-      return { preset: 'nextjs-supabase', testCommand: testCmd, confidence: 'low', evidence: 'found next in package.json — using nextjs-supabase preset as closest match (no supabase signals detected)' };
+      // Plain Next.js — fall through to generic rather than mislabel as nextjs-supabase.
+      return { preset: 'generic', testCommand: testCmd, confidence: 'low', evidence: 'found next in package.json but no Supabase signals — using generic preset (pass --preset nextjs-supabase if you do use Supabase)' };
     }
-    return { preset: 'nextjs-supabase', testCommand: testCmd, confidence: 'low', evidence: 'found package.json (no strong framework signals) — using nextjs-supabase preset as default' };
+    return { preset: 'generic', testCommand: testCmd, confidence: 'low', evidence: 'found package.json (no strong framework signals) — using generic preset' };
   }
 
-  return { preset: 'nextjs-supabase', testCommand: 'npm test', confidence: 'low', evidence: 'no project signals found — using nextjs-supabase preset as default' };
+  return { preset: 'generic', testCommand: 'npm test', confidence: 'low', evidence: 'no project signals found — using generic preset' };
 }

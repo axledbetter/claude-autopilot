@@ -1,0 +1,35 @@
+configVersion: 1
+reviewEngine: { adapter: auto }
+vcsHost: { adapter: github }
+reviewBot: { adapter: cursor }
+# No migrationRunner — the migrate phase will no-op with a notice pointing
+# to `.claude-autopilot/stack.yaml` for users who want to wire one up.
+protectedPaths:
+  - "**/auth/**"
+  - "**/payment/**"
+  - "**/encryption/**"
+  - "**/secret/**"
+  - "**/keys/**"
+staticRules:
+  - hardcoded-secrets
+  - npm-audit
+  - package-lock-sync
+  - sql-injection
+  - missing-auth
+  - ssrf
+  - insecure-redirect
+policy:
+  failOn: critical
+  newOnly: false
+thresholds:
+  bugbotAutoFix: 85
+  bugbotProposePatch: 60
+  maxValidateRetries: 3
+reviewStrategy: auto
+chunking:
+  smallTierMaxTokens: 8000
+  partialReviewTokens: 60000
+  perFileMaxTokens: 32000
+pipeline:
+  runReviewOnStaticFail: true
+  runReviewOnTestFail: false

@@ -19,6 +19,7 @@ const PRESET_LABELS: Record<string, string> = {
   'rails-postgres': 'Ruby on Rails + PostgreSQL',
   'python-fastapi': 'Python FastAPI',
   'go': 'Go + PostgreSQL',
+  'generic': 'Generic (no stack-specific assumptions)',
 };
 
 export type ProfileName = 'security-strict' | 'team' | 'solo';

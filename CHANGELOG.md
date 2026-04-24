@@ -1,5 +1,31 @@
 # Changelog
 
+## [5.0.0-alpha.1] — 2026-04-24
+
+**Package renamed: `@delegance/guardrail` → `@delegance/claude-autopilot`.**
+
+The v4 product sold itself as "LLM code review." The real product is an end-to-end autonomous development pipeline built on Claude Code skills — brainstorm → spec → plan → implement → migrate → validate → PR → review → merge. This alpha corrects the identity mismatch without breaking any v4 usage.
+
+Every v4 invocation continues to work through v5.x via the preserved `guardrail` CLI alias. Migration guide: `docs/migration/v4-to-v5.md`.
+
+### Added
+- **`claude-autopilot` CLI binary** — primary entrypoint (`bin/claude-autopilot.js`), co-installed with `guardrail`.
+- **Pipeline skills bundled in the tarball** — `skills/claude-autopilot.md` (agent-loop spec), `skills/autopilot/`, `skills/migrate/`. v4.3.1 shipped only `skills/guardrail.md`; the pipeline skills existed only in-repo and weren't distributed.
+- **`generic` preset** — no DB migration runner, uses `npm test` / `npm run typecheck` / `npm run lint` where present. Picked by `detectProject()` as the fallback when no stack signals are found (replaces the v4 behavior of claiming `nextjs-supabase` with low confidence).
+- **v5 migration guide at `docs/migration/v4-to-v5.md`** — find/replace patterns for `package.json`, shell scripts, GitHub Actions yaml, Dockerfiles, and Claude Code skills.
+
+### Changed
+- **Stack detector fallback:** plain Next.js with no Supabase signals now returns `generic`, not `nextjs-supabase (low confidence)`. Fixes the cold-start eval reviewer finding.
+- **`PRESET_LABELS` in `setup.ts`:** adds `generic` entry.
+- **Detector tests:** updated to assert the new `generic` fallback behavior.
+- **`skills/guardrail.md`:** rewritten as a back-compat alias pointing at `skills/claude-autopilot.md`.
+- **`bin/guardrail.js`:** emits a one-line deprecation notice on `stderr` on first invocation per terminal session, then forwards unchanged.
+
+### Deferred to later alphas
+- **alpha.2:** full CLI verb restructure (`claude-autopilot {review,pr,triage,advanced,…}`), v4 compatibility golden-test matrix, superpowers peer-dep hard-fail in `doctor`.
+- **alpha.3:** tombstone `@delegance/guardrail@5.0.0` publish, CI smoke tests for `npx guardrail` / `npx @delegance/guardrail` / global install / GitHub Actions parity, codemod script for find/replace migration.
+- **5.0.0 GA:** after alpha.3 soaks against delegance-app for 2+ real feature pipelines.
+
 ## [4.3.1] — 2026-04-24
 
 ### Fixed (from external cold-start review)
