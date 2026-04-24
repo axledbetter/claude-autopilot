@@ -61,7 +61,11 @@ export function detectLLMKey(options: KeyDetectionOptions = {}): KeyDetectionRes
   const extra = options.extraEnv ?? {};
   const detected: LLMKeyName[] = [];
   for (const name of LLM_KEY_NAMES) {
-    const value = process.env[name] ?? extra[name];
+    // Treat empty string as "not set" so an env file value can supply the key when
+    // the shell has `FOO=` exported. `??` would shadow the env file here because it
+    // only falls through on null/undefined — matching the old `!! || !!` semantics.
+    const fromProcess = process.env[name];
+    const value = (fromProcess && fromProcess.length > 0) ? fromProcess : extra[name];
     if (value && value.length > 0) detected.push(name);
   }
   return {

@@ -69,4 +69,26 @@ describe('LLM key detection', () => {
       }
     }
   });
+
+  // Regression: empty shell-exported key must not shadow a real env file value.
+  // `process.env.FOO ?? extraEnv.FOO` would silently prefer the empty string; this
+  // would break preflight/doctor, which pass parsed env-file contents as extraEnv.
+  it('detectLLMKey falls through empty process.env value to extraEnv', () => {
+    const original: Record<string, string | undefined> = {};
+    for (const name of LLM_KEY_NAMES) {
+      original[name] = process.env[name];
+      delete process.env[name];
+    }
+    try {
+      process.env.GROQ_API_KEY = ''; // shell has it exported as empty
+      const result = detectLLMKey({ extraEnv: { GROQ_API_KEY: 'gsk_from_env_file' } });
+      assert.equal(result.hasKey, true);
+      assert.equal(result.preferred, 'GROQ_API_KEY');
+    } finally {
+      for (const [k, v] of Object.entries(original)) {
+        if (v !== undefined) process.env[k] = v;
+        else delete process.env[k];
+      }
+    }
+  });
 });
