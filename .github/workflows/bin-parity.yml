@@ -1,0 +1,94 @@
+name: Bin parity smoke
+# Security note: all ${{ matrix.* }} expressions below are internal matrix values,
+# not user-controlled inputs. No use of github.event.*, github.head_ref, or any
+# other untrusted source. Safe to interpolate directly in `run:` blocks.
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  from-tarball:
+    name: Bin smoke (tarball)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Pack and install globally
+        run: |
+          npm pack
+          npm install -g ./delegance-claude-autopilot-*.tgz
+
+      - name: claude-autopilot --version
+        run: |
+          OUT=$(claude-autopilot --version)
+          echo "got: $OUT"
+          echo "$OUT" | grep -E '^5\.[0-9]+\.[0-9]+' || exit 1
+
+      - name: guardrail --version (legacy alias)
+        run: |
+          OUT=$(CLAUDE_AUTOPILOT_DEPRECATION=never guardrail --version)
+          echo "got: $OUT"
+          echo "$OUT" | grep -E '^5\.[0-9]+\.[0-9]+' || exit 1
+
+      - name: Deprecation notice is emitted under always
+        run: |
+          STDERR=$(CLAUDE_AUTOPILOT_DEPRECATION=always guardrail --version 2>&1 >/dev/null)
+          echo "stderr: $STDERR"
+          echo "$STDERR" | grep -i deprecated || exit 1
+
+      - name: Deprecation notice is NOT on stdout
+        run: |
+          STDOUT=$(CLAUDE_AUTOPILOT_DEPRECATION=always guardrail --version 2>/dev/null)
+          if echo "$STDOUT" | grep -i deprecated; then
+            echo "FAIL: deprecation leaked onto stdout"
+            exit 1
+          fi
+
+      - name: Exit code passthrough
+        run: |
+          set +e
+          claude-autopilot not-a-real-subcommand
+          ca_code=$?
+          CLAUDE_AUTOPILOT_DEPRECATION=never guardrail not-a-real-subcommand
+          gr_code=$?
+          set -e
+          echo "claude-autopilot exit: $ca_code, guardrail exit: $gr_code"
+          [ "$ca_code" -ne 0 ] || exit 1
+          [ "$gr_code" -eq "$ca_code" ] || exit 1
+
+  from-npm:
+    name: Bin smoke (published @alpha)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - run: npm install -g @delegance/claude-autopilot@alpha
+
+      - name: Version check
+        run: |
+          OUT=$(claude-autopilot --version)
+          echo "$OUT" | grep -E '^5\.[0-9]+\.[0-9]+' || exit 1
+
+      - run: npx --yes @delegance/claude-autopilot@alpha --version

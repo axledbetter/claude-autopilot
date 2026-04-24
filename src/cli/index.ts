@@ -27,16 +27,42 @@ import { runLsp } from './lsp.ts';
 import { runWorker } from './worker.ts';
 import { runTestGen } from './test-gen.ts';
 import { runCouncilCmd } from './council.ts';
+import { runMigrateV4 } from './migrate-v4.ts';
 
 const args = process.argv.slice(2);
 
-// Version flag — resolve from package.json at runtime
+// Version flag — walk up from import.meta.url looking for the nearest package.json.
+// This works under both dev (src/cli/index.ts → ../../package.json) and compiled
+// output (dist/src/cli/index.js → ../../../package.json via the walk).
 if (args[0] === '--version' || args[0] === '-v') {
   const { createRequire } = await import('node:module');
   const { fileURLToPath } = await import('node:url');
+  const nodePath = await import('node:path');
+  const nodeFs = await import('node:fs');
   const require = createRequire(fileURLToPath(import.meta.url));
-  const pkg = require('../../package.json') as { version: string };
-  console.log(pkg.version);
+  let dir = nodePath.dirname(fileURLToPath(import.meta.url));
+  let pkgPath: string | null = null;
+  for (let i = 0; i < 8; i++) {
+    const candidate = nodePath.join(dir, 'package.json');
+    if (nodeFs.existsSync(candidate)) {
+      try {
+        const maybe = require(candidate) as { name?: string; version: string };
+        if (maybe.name === '@delegance/claude-autopilot') {
+          pkgPath = candidate;
+          break;
+        }
+      } catch { /* keep walking */ }
+    }
+    const parent = nodePath.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  if (pkgPath) {
+    const pkg = require(pkgPath) as { version: string };
+    console.log(pkg.version);
+  } else {
+    console.log('unknown');
+  }
   process.exit(0);
 }
 
@@ -115,8 +141,8 @@ These are aliases for the flat subcommands; they still work without the 'advance
   args.shift(); // drop 'advanced'
 }
 
-const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'help', '--help', '-h'] as const;
-const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity', 'prompt', 'context-file'];
+const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'help', '--help', '-h'] as const;
+const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity', 'prompt', 'context-file', 'path'];
 
 // Bare invocation — no subcommand, no flags → show welcome guide
 if (args.length === 0) {
@@ -126,24 +152,30 @@ if (args.length === 0) {
     ? '\x1b[32m✓\x1b[0m  LLM API key detected'
     : '\x1b[33m!\x1b[0m  No LLM API key found — set one of:\n     ANTHROPIC_API_KEY  https://console.anthropic.com/\n     OPENAI_API_KEY     https://platform.openai.com/api-keys\n     GEMINI_API_KEY     https://aistudio.google.com/app/apikey\n     GROQ_API_KEY       https://console.groq.com/keys  (fast free tier)';
   console.log(`
-\x1b[1m@delegance/guardrail\x1b[0m — LLM-powered code review for your PR diffs
+\x1b[1m@delegance/claude-autopilot\x1b[0m — Autonomous dev pipeline for Claude Code
+      \x1b[2m(brainstorm → spec → plan → implement → migrate → validate → PR → review)\x1b[0m
 
   ${keyLine}
 
-\x1b[1mQuick start:\x1b[0m
+\x1b[1mQuick start — full pipeline:\x1b[0m
 
-  \x1b[36mnpx guardrail run --base main\x1b[0m          Review files changed vs main
-  \x1b[36mnpx guardrail scan src/auth/\x1b[0m           Scan any path (no git required)
-  \x1b[36mnpx guardrail scan --ask "SQL injection?" src/db/\x1b[0m
-  \x1b[36mnpx guardrail fix\x1b[0m                      Auto-fix cached findings
-  \x1b[36mnpx guardrail pr-desc\x1b[0m                  Generate PR description from current diff
+  \x1b[36mclaude-autopilot brainstorm "add SSO for enterprise tenants"\x1b[0m
+      Turn an idea into a reviewed spec, then auto-implement end-to-end.
+
+\x1b[1mOr just the review phase (v4 compatible):\x1b[0m
+
+  \x1b[36mclaude-autopilot run --base main\x1b[0m             Review files changed vs main
+  \x1b[36mclaude-autopilot scan src/auth/\x1b[0m              Scan any path (no git required)
+  \x1b[36mclaude-autopilot scan --ask "SQL injection?" src/db/\x1b[0m
+  \x1b[36mclaude-autopilot fix\x1b[0m                         Auto-fix cached findings
+  \x1b[36mclaude-autopilot migrate-v4\x1b[0m                  Codemod: migrate v4 config / CI / hooks
 
 \x1b[1mSetup:\x1b[0m
 
-  \x1b[36mnpx guardrail setup\x1b[0m                    Auto-detect stack, write config, install hook
-  \x1b[36mnpx guardrail doctor\x1b[0m                   Check prerequisites
+  \x1b[36mclaude-autopilot setup\x1b[0m                       Auto-detect stack, write config, install hook
+  \x1b[36mclaude-autopilot doctor\x1b[0m                      Check prerequisites
 
-Run \x1b[36mnpx guardrail --help\x1b[0m for full command reference.
+Run \x1b[36mclaude-autopilot --help\x1b[0m for full command reference.
 `);
   process.exit(0);
 }
@@ -157,7 +189,7 @@ function flag(name: string): string | undefined {
   if (idx < 0) return undefined;
   const val = args[idx + 1];
   if (val === undefined || val.startsWith('--')) {
-    console.error(`\x1b[31m[guardrail] --${name} requires a value\x1b[0m`);
+    console.error(`\x1b[31m[claude-autopilot] --${name} requires a value\x1b[0m`);
     process.exit(1);
   }
   return val;
@@ -246,7 +278,7 @@ switch (subcommand) {
     const ask = flag('ask');
     const focusArg = flag('focus');
     if (focusArg && !['security', 'logic', 'performance', 'brand', 'all'].includes(focusArg)) {
-      console.error(`\x1b[31m[guardrail] --focus must be "security", "logic", "performance", or "all"\x1b[0m`);
+      console.error(`\x1b[31m[claude-autopilot] --focus must be "security", "logic", "performance", or "all"\x1b[0m`);
       process.exit(1);
     }
     const dryRun = boolFlag('dry-run');
@@ -290,7 +322,7 @@ switch (subcommand) {
     const debounceArg = flag('debounce');
     const debounceMs = debounceArg ? parseInt(debounceArg, 10) : undefined;
     if (debounceArg && (isNaN(debounceMs!) || debounceMs! < 0)) {
-      console.error(`\x1b[31m[guardrail] --debounce must be a non-negative integer\x1b[0m`);
+      console.error(`\x1b[31m[claude-autopilot] --debounce must be a non-negative integer\x1b[0m`);
       process.exit(1);
     }
     await runWatch({ configPath: config, debounceMs });
@@ -311,17 +343,17 @@ switch (subcommand) {
     const outputPath = flag('output');
 
     if (formatArg && formatArg !== 'text' && formatArg !== 'sarif' && formatArg !== 'junit') {
-      console.error(`\x1b[31m[guardrail] --format must be "text", "sarif", or "junit"\x1b[0m`);
+      console.error(`\x1b[31m[claude-autopilot] --format must be "text", "sarif", or "junit"\x1b[0m`);
       process.exit(1);
     }
     if ((formatArg === 'sarif' || formatArg === 'junit') && !outputPath) {
-      console.error(`\x1b[31m[guardrail] --format ${formatArg} requires --output <path>\x1b[0m`);
+      console.error(`\x1b[31m[claude-autopilot] --format ${formatArg} requires --output <path>\x1b[0m`);
       process.exit(1);
     }
 
     const failOnArg = flag('fail-on');
     if (failOnArg && !['critical', 'warning', 'note', 'none'].includes(failOnArg)) {
-      console.error(`\x1b[31m[guardrail] --fail-on must be "critical", "warning", "note", or "none"\x1b[0m`);
+      console.error(`\x1b[31m[claude-autopilot] --fail-on must be "critical", "warning", "note", or "none"\x1b[0m`);
       process.exit(1);
     }
     const newOnly = boolFlag('new-only');
@@ -417,7 +449,7 @@ switch (subcommand) {
     const config = flag('config');
     const severityArg = flag('severity');
     if (severityArg && !['critical', 'warning', 'all'].includes(severityArg)) {
-      console.error(`\x1b[31m[guardrail] --severity must be "critical", "warning", or "all"\x1b[0m`);
+      console.error(`\x1b[31m[claude-autopilot] --severity must be "critical", "warning", or "all"\x1b[0m`);
       process.exit(1);
     }
     const dryRun = boolFlag('dry-run');
@@ -514,7 +546,7 @@ switch (subcommand) {
     const force = args.includes('--force');
     const profileArg = flag('profile');
     if (profileArg && !['security-strict', 'team', 'solo'].includes(profileArg)) {
-      console.error(`\x1b[31m[guardrail] --profile must be "security-strict", "team", or "solo"\x1b[0m`);
+      console.error(`\x1b[31m[claude-autopilot] --profile must be "security-strict", "team", or "solo"\x1b[0m`);
       process.exit(1);
     }
     await runSetup({ force, profile: profileArg as 'security-strict' | 'team' | 'solo' | undefined });
@@ -553,8 +585,18 @@ switch (subcommand) {
     break;
   }
 
+  case 'migrate-v4': {
+    const code = await runMigrateV4({
+      cwd: flag('path') ?? process.cwd(),
+      write: boolFlag('write'),
+      undo: boolFlag('undo'),
+    });
+    process.exit(code);
+    break;
+  }
+
   default:
-    console.error(`\x1b[31m[guardrail] Unknown subcommand: "${subcommand}"\x1b[0m`);
+    console.error(`\x1b[31m[claude-autopilot] Unknown subcommand: "${subcommand}"\x1b[0m`);
     printUsage();
     process.exit(1);
 }

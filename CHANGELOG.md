@@ -1,5 +1,35 @@
 # Changelog
 
+## [5.0.0-alpha.3] — 2026-04-24
+
+Final alpha before v5.0.0 GA. Closes every remaining GA blocker from the alpha cycle.
+
+### Added
+- **Compiled JS entrypoint** — `npm run build` emits `dist/src/**/*.js` via `tsc -p tsconfig.build.json`. The launcher at `bin/_launcher.js` prefers the compiled output when present (global installs), falls back to `src/` + `tsx` for dev workflows. Drops `tsx` from the runtime hot path for published installs. Uses TypeScript 6's `rewriteRelativeImportExtensions: true` to rewrite `.ts` → `.js` specifiers at emit time; includes a defensive post-build rewriter script that no-ops when tsc already did the work.
+- **`claude-autopilot migrate-v4` codemod** — `src/cli/migrate-v4.ts`. Scans a target repo for `@delegance/guardrail` and `guardrail <verb>` references, proposes replacements, applies with `--write` (creates `.v4-backup.<timestamp>` files and writes a restore manifest). `--undo` reads the manifest and restores by sha256 match — refuses to overwrite files modified after the migrate. Covers `package.json` (dependency sections with operator preservation), shell scripts, Makefiles, GitHub Actions yaml, Dockerfiles (including CMD-array `["guardrail", "verb"]` form). Skips `node_modules/`, `dist/`, and the tool's own `.claude-autopilot/` state dir.
+- **Tombstone `@delegance/guardrail@5.0.0`** package at `packages/guardrail-tombstone/`. Thin CLI wrapper that forwards argv / stdio / exit code / signal to `@delegance/claude-autopilot`. Resolves the child via `createRequire().resolve()` (works under npm / pnpm / yarn / PnP) with two relative-probe fallbacks and a last-resort PATH lookup. Emits a one-line deprecation notice on stderr (silenceable via `CLAUDE_AUTOPILOT_DEPRECATION=never`). Maps ENOENT to exit 127 with an actionable install hint.
+- **CI bin-parity workflow** at `.github/workflows/bin-parity.yml`. On every push to master + PR, runs matrix (ubuntu + macos × node 22 + 24) that packs a tarball, globally installs, then asserts: (a) both bins return semver, (b) deprecation notice is on stderr under `always`, (c) deprecation does not leak onto stdout, (d) exit codes match between `claude-autopilot` and `guardrail` on a non-zero-exit invocation. A second job installs from the published `@alpha` tag on push to master for real-world parity.
+- **Prefix-hygiene test** at `tests/no-legacy-prefix.test.ts` — asserts that `src/cli/**` uses `[claude-autopilot]` not `[guardrail]`, with an explicit allowlist for legitimate legacy references (bin wrappers, launcher).
+- `tsconfig.build.json` — separate build config with `rewriteRelativeImportExtensions: true` and explicit emit settings.
+- `scripts/post-build-rewrite-imports.mjs` — defensive rewriter for `.ts` → `.js` import specifiers in emitted JS. No-op when tsc emits correctly.
+- `prepublishOnly` script — runs `build && test` before any `npm publish`.
+- 14 new tests (migrate-v4: 7, tombstone-bin: 3, no-legacy-prefix: 1, others: 3).
+
+### Changed
+- **Error prefixes normalized** — every `[guardrail] ...` error message in `src/cli/index.ts` and `src/cli/preflight.ts` now uses `[claude-autopilot]` or the phase name (`[run]`, `[doctor]`). Legacy `[guardrail]` retained only in the bin-wrapper deprecation notice, `bin/_launcher.js`, and the tombstone package (where it legitimately refers to the deprecated package name).
+- **Welcome screen rewritten** — bare `claude-autopilot` invocation now leads with the pipeline pitch (`claude-autopilot brainstorm "..."`) and frames the review subcommands as the v4-compatible alternative. Previously sold the package as "LLM code review."
+- **Version resolution in `src/cli/index.ts`** — walks up from `import.meta.url` for the nearest `@delegance/claude-autopilot` `package.json` instead of a hardcoded `../../package.json`. Necessary because the compiled entrypoint lives at `dist/src/cli/index.js` where the old relative path resolved to `dist/package.json` (which doesn't exist).
+- **`package.json` `files` field** now includes `dist/` (new) and `scripts/post-build-rewrite-imports.mjs`.
+- `preflight.ts`: "Guardrail prerequisite check" heading → "claude-autopilot prerequisite check".
+
+### Fixed
+- (None — alpha.3 is feature work; no regressions surfaced by the compat matrix.)
+
+### Still manual for GA
+- Alex to publish `@delegance/guardrail@5.0.0` tombstone from `packages/guardrail-tombstone/`.
+- Alex to run `npm dist-tag add @delegance/claude-autopilot@5.0.0 latest` once 5.0.0 GA ships.
+- Alex to run `npm deprecate @delegance/claude-autopilot@"<5.0.0" "Use @delegance/claude-autopilot@alpha during alpha cycle, or @latest after GA"` to flag pre-rename versions.
+
 ## [5.0.0-alpha.2] — 2026-04-24
 
 ### Added

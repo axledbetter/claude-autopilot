@@ -1,0 +1,30 @@
+{
+  "name": "@delegance/guardrail",
+  "version": "5.0.0",
+  "type": "module",
+  "description": "[Renamed] @delegance/guardrail is now @delegance/claude-autopilot. Installing this package gives you a thin forwarding wrapper that invokes claude-autopilot under the hood.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/axledbetter/claude-autopilot.git",
+    "directory": "packages/guardrail-tombstone"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "bin": {
+    "guardrail": "bin/guardrail.js"
+  },
+  "dependencies": {
+    "@delegance/claude-autopilot": ">=5.0.0-alpha"
+  },
+  "files": [
+    "bin/",
+    "README.md"
+  ],
+  "keywords": [
+    "guardrail",
+    "claude-autopilot",
+    "deprecated"
+  ]
+}

@@ -31,14 +31,23 @@ describe('welcome screen (bare invocation)', () => {
     assert.equal(r.code, 0);
   });
 
-  it('WS2: shows @delegance/guardrail branding', () => {
+  it('WS2: shows @delegance/claude-autopilot branding', () => {
     const r = runCli([]);
-    assert.ok(r.stdout.includes('@delegance/guardrail'), `stdout: ${r.stdout}`);
+    assert.ok(r.stdout.includes('@delegance/claude-autopilot'), `stdout: ${r.stdout}`);
   });
 
-  it('WS3: shows Quick start section with run command', () => {
+  it('WS3: shows Quick start section with pipeline + review entrypoints', () => {
     const r = runCli([]);
-    assert.ok(r.stdout.includes('guardrail run'), `stdout: ${r.stdout}`);
+    // Pipeline brainstorm is the new top-billing quickstart. Review commands
+    // (`claude-autopilot run`) remain shown as the v4-compatible alternative.
+    assert.ok(
+      r.stdout.includes('brainstorm'),
+      `stdout is missing pipeline brainstorm quickstart: ${r.stdout}`,
+    );
+    assert.ok(
+      r.stdout.includes('claude-autopilot run'),
+      `stdout is missing review-phase run command: ${r.stdout}`,
+    );
   });
 
   it('WS4: shows no-key warning when API keys absent', () => {

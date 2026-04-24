@@ -1,6 +1,6 @@
 {
   "name": "@delegance/claude-autopilot",
-  "version": "5.0.0-alpha.2",
+  "version": "5.0.0-alpha.3",
   "type": "module",
   "description": "Autonomous development pipeline for Claude Code: brainstorm → spec → plan → implement → migrate → validate → PR → review → merge. Multi-model, local-first, every phase a skill you can intervene in.",
   "keywords": [
@@ -34,19 +34,23 @@
   },
   "files": [
     "bin/",
+    "dist/",
     "src/",
     "presets/",
     "skills/",
     "scripts/test-runner.mjs",
     "scripts/autoregress.ts",
+    "scripts/post-build-rewrite-imports.mjs",
     "scripts/snapshots/",
     "tests/snapshots/",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "README.md"
   ],
   "scripts": {
     "test": "node scripts/test-runner.mjs",
     "typecheck": "tsc --noEmit",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json && node scripts/post-build-rewrite-imports.mjs",
+    "prepublishOnly": "npm run build && npm test",
     "autoregress": "tsx scripts/autoregress.ts"
   },
   "dependencies": {

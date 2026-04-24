@@ -9,7 +9,19 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ENTRYPOINT = path.resolve(__dirname, '..', 'src', 'cli', 'index.ts');
+const COMPILED = path.resolve(__dirname, '..', 'dist', 'src', 'cli', 'index.js');
+const SOURCE = path.resolve(__dirname, '..', 'src', 'cli', 'index.ts');
+
+/**
+ * Pick the best available entrypoint. Compiled (dist/) is preferred for global
+ * installs — no tsx dependency, faster startup. Source+tsx is used in dev from the
+ * repo itself. Result determines the spawn strategy below.
+ */
+function resolveEntry() {
+  if (fs.existsSync(COMPILED)) return { kind: 'compiled', path: COMPILED };
+  if (fs.existsSync(SOURCE)) return { kind: 'source', path: SOURCE };
+  return null;
+}
 
 function findTsx() {
   const own = path.resolve(__dirname, '..', 'node_modules', '.bin', 'tsx');
@@ -72,6 +84,37 @@ export function launch(opts) {
       'Silence: set CLAUDE_AUTOPILOT_DEPRECATION=never\n',
     );
   }
-  const result = spawnSync(findTsx(), [ENTRYPOINT, ...process.argv.slice(2)], { stdio: 'inherit' });
+
+  const entry = resolveEntry();
+  if (!entry) {
+    process.stderr.write(
+      '[claude-autopilot] Could not find CLI entrypoint. Expected either\n' +
+      `  ${COMPILED} (compiled) or\n` +
+      `  ${SOURCE} (source)\n` +
+      'Reinstall: npm install -g @delegance/claude-autopilot@alpha\n',
+    );
+    process.exit(127);
+  }
+
+  let result;
+  if (entry.kind === 'compiled') {
+    // Fast path — plain node, no tsx dep. Used by global installs (ships dist/).
+    result = spawnSync(process.execPath, [entry.path, ...process.argv.slice(2)], { stdio: 'inherit' });
+  } else {
+    // Dev path — run source via tsx. Used from the repo itself, or by users who
+    // installed from git or linked a local copy.
+    result = spawnSync(findTsx(), [entry.path, ...process.argv.slice(2)], { stdio: 'inherit' });
+  }
+
+  if (result.error) {
+    // ENOENT or similar spawn failure — surface cleanly instead of hanging.
+    process.stderr.write(`[claude-autopilot] Failed to launch CLI: ${result.error.message}\n`);
+    process.exit(127);
+  }
+  if (result.signal) {
+    // Forward child signal by re-raising equivalently
+    process.kill(process.pid, result.signal);
+    return;
+  }
   process.exit(result.status ?? 1);
 }
