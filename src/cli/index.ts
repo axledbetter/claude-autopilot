@@ -57,7 +57,8 @@ if (args[0] === '--help' || args[0] === '-h') {
 // so `claude-autopilot review doctor` is rejected with a clear error instead of
 // silently routing to the doctor handler (which would confuse the mental model).
 const REVIEW_VERBS = new Set(['run', 'scan', 'ci', 'fix', 'baseline', 'explain', 'watch', 'report']);
-const ADVANCED_VERBS = new Set(['lsp', 'mcp', 'worker', 'autoregress', 'test-gen', 'hook', 'detector', 'ignore']);
+// `detector` is a library used by setup/run, not a CLI subcommand — leave it out.
+const ADVANCED_VERBS = new Set(['lsp', 'mcp', 'worker', 'autoregress', 'test-gen', 'hook', 'ignore']);
 if (args[0] === 'review') {
   const sub = args[1];
   if (!sub || sub === '--help' || sub === '-h') {
@@ -100,7 +101,6 @@ Advanced / niche verbs (hidden from top-level --help to keep it readable):
   autoregress  Snapshot regression tests
   test-gen     Generate test cases for uncovered exports
   hook         Install / remove the pre-push git hook
-  detector     Stack detection utilities
   ignore       Edit the findings ignore list
 
 These are aliases for the flat subcommands; they still work without the 'advanced' prefix.

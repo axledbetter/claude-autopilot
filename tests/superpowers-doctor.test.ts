@@ -5,32 +5,6 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 describe('preflight — superpowers skill detection', () => {
-  // Helper: spawn a child node process with isolated HOME so we control the
-  // plugin search path entirely. Returns the `findMissingSuperpowersSkills`
-  // result under that environment.
-  function runUnderHome(home: string): string[] {
-    // Isolate by temporarily overriding HOME and cwd for this check.
-    const savedHome = process.env.HOME;
-    const savedCwd = process.cwd();
-    const tmpCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-superpwr-cwd-'));
-    process.env.HOME = home;
-    process.chdir(tmpCwd);
-    try {
-      // Re-require to pick up the patched env for cwd resolution. Since the
-      // module reads process.env.HOME and process.cwd() inside the function,
-      // a simple dynamic import + fresh call is enough.
-      // But Node caches modules — use a direct require via a fresh import URL.
-      // For simplicity we use the already-cached module; the function reads
-      // env/cwd on every call so this works.
-      const mod = require('../src/cli/preflight.ts');
-      return mod.findMissingSuperpowersSkills();
-    } finally {
-      process.env.HOME = savedHome;
-      process.chdir(savedCwd);
-      fs.rmSync(tmpCwd, { recursive: true, force: true });
-    }
-  }
-
   it('reports all skills missing when no plugin dir exists', async () => {
     const { findMissingSuperpowersSkills } = await import('../src/cli/preflight.ts');
     // Isolate under a HOME that has no .claude/plugins
