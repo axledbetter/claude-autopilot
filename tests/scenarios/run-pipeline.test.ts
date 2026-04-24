@@ -97,24 +97,29 @@ describe('run pipeline — scenarios', () => {
     assert.equal(result.phases[1]!.phase, 'tests');
   });
 
-  it('S3b: static-rule critical fails fast when runReviewOnStaticFail=false', async () => {
+  it('S3b: runReviewOnStaticFail=false skips review but NOT tests', async () => {
+    // Bugbot-corrected semantics: the flag gates review only, matching its name.
+    // Tests always run unless skipReview is set.
     const rule = makeRule([makeFinding({ id: 'r1', severity: 'critical' })]);
+    const engine = makeEngine([makeFinding({ id: 'e1', severity: 'warning', source: 'review-engine' })]);
     const result = await runGuardrail({
       touchedFiles: ['foo.ts'],
       config: {
         configVersion: 1,
-        testCommand: 'this-command-does-not-exist',
+        testCommand: null,
         pipeline: { runReviewOnStaticFail: false },
       },
       staticRules: [rule],
+      reviewEngine: engine,
     });
     assert.equal(result.status, 'fail');
-    // Opt-in legacy fail-fast: only static-rules ran
-    assert.equal(result.phases.length, 1);
-    assert.equal(result.phases[0]!.phase, 'static-rules');
+    // static-rules + tests ran, review skipped
+    const phaseNames = result.phases.map(p => p.phase);
+    assert.deepEqual(phaseNames, ['static-rules', 'tests']);
+    assert.ok(!phaseNames.includes('review'));
   });
 
-  it('S4: tests fail → review phase not run', async () => {
+  it('S4: tests fail → review phase not run (runReviewOnTestFail default false)', async () => {
     const engine = makeEngine([makeFinding()]);
     const result = await runGuardrail({
       touchedFiles: [],
@@ -123,6 +128,21 @@ describe('run pipeline — scenarios', () => {
     });
     assert.equal(result.status, 'fail');
     assert.ok(!result.phases.find(p => p.phase === 'review'));
+  });
+
+  it('S4b: runReviewOnTestFail=true → review runs despite test failure', async () => {
+    const engine = makeEngine([makeFinding({ id: 'e1', source: 'review-engine' })]);
+    const result = await runGuardrail({
+      touchedFiles: ['__mock_file_s4b__.ts'],
+      config: {
+        configVersion: 1,
+        testCommand: 'this-command-does-not-exist-999',
+        pipeline: { runReviewOnTestFail: true },
+      },
+      reviewEngine: engine,
+    });
+    assert.equal(result.status, 'fail');
+    assert.ok(result.phases.find(p => p.phase === 'review'));
   });
 
   it('S5: review engine returns criticals → status fail', async () => {

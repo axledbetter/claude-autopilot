@@ -49,17 +49,19 @@ export interface GuardrailConfig {
   pipeline?: {
     /**
      * When true, run the LLM review phase even if the static-rules phase reports `fail`
-     * (i.e. finds a critical). Default: true. Set to false to restore the legacy
-     * short-circuit behavior that skips review on static-fail to save tokens.
+     * (i.e. finds a critical). Default: true. Set to false to skip only the review
+     * phase on static-fail — the tests phase still runs regardless.
      *
      * Users that explicitly configure a review engine typically expect it to run — the
      * bugs the LLM is best at (IDOR, TOCTOU, CORS, off-by-one, rate limits) often sit
-     * in the same commit as something a static rule already flagged.
+     * in the same commit as something a static rule already flagged. This flag only
+     * gates the review phase, mirroring `runReviewOnTestFail`.
      */
     runReviewOnStaticFail?: boolean;
     /**
      * When true, run the LLM review phase even if the tests phase reports `fail`.
      * Default: false — failing tests usually indicate broken code, not code to review.
+     * This flag only gates the review phase; the tests phase itself always runs.
      */
     runReviewOnTestFail?: boolean;
   };

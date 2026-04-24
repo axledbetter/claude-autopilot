@@ -43,7 +43,11 @@ export async function runGuardrail(input: RunInput): Promise<RunResult> {
   const runReviewOnStaticFail = pipelineCfg.runReviewOnStaticFail !== false;
   const runReviewOnTestFail = pipelineCfg.runReviewOnTestFail === true;
 
-  // Static-rules phase
+  // Static-rules phase — tests always run afterward, regardless of status. The
+  // runReviewOnStaticFail flag only gates the LLM review phase (matching its name);
+  // skipping tests on a static-fail would be surprising and asymmetric with
+  // runReviewOnTestFail which only gates the review phase too.
+  let staticFailed = false;
   if (input.staticRules && input.staticRules.length > 0) {
     const result = await runStaticRulesPhase({
       touchedFiles: input.touchedFiles,
@@ -52,9 +56,7 @@ export async function runGuardrail(input: RunInput): Promise<RunResult> {
       engine: input.reviewEngine,
     });
     phases.push(result);
-    if (result.status === 'fail' && !runReviewOnStaticFail) {
-      return finalize(phases, start, totalCostUSD);
-    }
+    staticFailed = result.status === 'fail';
   }
 
   // skipReview short-circuit: skip tests and review phases entirely
@@ -70,19 +72,20 @@ export async function runGuardrail(input: RunInput): Promise<RunResult> {
     };
   }
 
-  // Tests phase
+  // Tests phase — always runs (unless skipReview above). The runReviewOnTestFail
+  // flag only gates the subsequent review phase.
   const testsResult = await runTestsPhase({
     touchedFiles: input.touchedFiles,
     testCommand: input.config.testCommand,
     cwd: input.cwd,
   });
   phases.push(testsResult);
-  if (testsResult.status === 'fail' && !runReviewOnTestFail) {
-    return finalize(phases, start, totalCostUSD);
-  }
+  const testsFailed = testsResult.status === 'fail';
 
-  // Review phase (optional — only when engine is provided)
-  if (input.reviewEngine) {
+  // Review phase (optional — only when engine is provided, not gated off by flags)
+  const skipReviewDueToStatic = staticFailed && !runReviewOnStaticFail;
+  const skipReviewDueToTests = testsFailed && !runReviewOnTestFail;
+  if (input.reviewEngine && !skipReviewDueToStatic && !skipReviewDueToTests) {
     const costCfg = input.config.cost as { maxPerRun?: number; budgetUSD?: number } | undefined;
     const budgetUSD = costCfg?.maxPerRun ?? costCfg?.budgetUSD;
     const reviewResult = await runReviewPhase({
