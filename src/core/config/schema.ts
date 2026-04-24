@@ -73,6 +73,14 @@ export const GUARDRAIL_CONFIG_SCHEMA = {
       },
       additionalProperties: false,
     },
+    pipeline: {
+      type: 'object',
+      properties: {
+        runReviewOnStaticFail: { type: 'boolean' },
+        runReviewOnTestFail: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
     cost: {
       type: 'object',
       properties: {
