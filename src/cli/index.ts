@@ -56,7 +56,7 @@ if (args[0] === '--help' || args[0] === '-h') {
 // Scope gates enforce that only the documented verb sets work under each prefix,
 // so `claude-autopilot review doctor` is rejected with a clear error instead of
 // silently routing to the doctor handler (which would confuse the mental model).
-const REVIEW_VERBS = new Set(['run', 'scan', 'ci', 'fix', 'baseline', 'explain', 'watch']);
+const REVIEW_VERBS = new Set(['run', 'scan', 'ci', 'fix', 'baseline', 'explain', 'watch', 'report']);
 const ADVANCED_VERBS = new Set(['lsp', 'mcp', 'worker', 'autoregress', 'test-gen', 'hook', 'detector', 'ignore']);
 if (args[0] === 'review') {
   const sub = args[1];
@@ -72,6 +72,7 @@ Review-phase verbs:
   baseline     Manage the committed findings baseline
   explain      Deep-dive explanation + remediation for a specific finding
   watch        Watch for file changes and re-run on each save
+  report       Render cached findings as a markdown report
 
 These are aliases for the flat subcommands — \`claude-autopilot run\` and
 \`claude-autopilot review run\` are equivalent.

@@ -44,40 +44,63 @@ function skillRoots(): string[] {
 }
 
 export function findMissingSuperpowersSkills(): string[] {
-  const missing: string[] = [];
-  const roots = skillRoots();
-  for (const skill of REQUIRED_SUPERPOWERS_SKILLS) {
-    const found = roots.some(root => recursiveSkillSearch(root, skill));
-    if (!found) missing.push(skill);
+  // Traverse each root once, collect all discovered skill names, then diff against
+  // the required set. Previous implementation did N × roots separate recursive walks.
+  const discovered = new Set<string>();
+  const MAX_DIRS_PER_ROOT = 2000; // safety cap to prevent pathological plugin trees
+
+  for (const root of skillRoots()) {
+    collectSkills(root, discovered, { visited: { n: 0 }, max: MAX_DIRS_PER_ROOT });
   }
-  return missing;
+
+  return REQUIRED_SUPERPOWERS_SKILLS.filter(s => !discovered.has(s));
 }
 
-// Walks up to 8 levels deep looking for `skills/<skill>/SKILL.md` or `skills/<skill>.md`.
-// Plugin paths vary: marketplace cache, cache/temp_git_*, installed_plugins, etc.
-function recursiveSkillSearch(dir: string, skill: string, depth = 0): boolean {
-  if (depth > 8) return false;
+// Walks up to 8 levels deep, capped at `max` directories total. When it finds a
+// `skills/` directory, records every `<skill-name>/SKILL.md` and `<skill-name>.md`
+// entry directly into the Set. Never revisits by name (Claude Code plugin caches
+// can contain many parallel copies — we only care whether a skill exists *somewhere*).
+function collectSkills(
+  dir: string,
+  out: Set<string>,
+  ctx: { visited: { n: number }; max: number },
+  depth = 0,
+): void {
+  if (depth > 8) return;
+  if (ctx.visited.n >= ctx.max) return;
+  ctx.visited.n++;
+
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch {
-    return false;
+    return;
   }
-  // Shortcut: if current dir has a `skills/` child, check it directly first
-  const skillsDir = entries.find(e => e.isDirectory() && e.name === 'skills');
-  if (skillsDir) {
-    const dirPath = path.join(dir, 'skills', skill, 'SKILL.md');
-    const filePath = path.join(dir, 'skills', `${skill}.md`);
-    if (fs.existsSync(dirPath) || fs.existsSync(filePath)) return true;
+
+  // If this dir has a skills/ child, record every skill inside it
+  for (const entry of entries) {
+    if (entry.isDirectory() && entry.name === 'skills') {
+      const skillsDir = path.join(dir, 'skills');
+      try {
+        for (const skill of fs.readdirSync(skillsDir, { withFileTypes: true })) {
+          if (skill.isDirectory() && fs.existsSync(path.join(skillsDir, skill.name, 'SKILL.md'))) {
+            out.add(skill.name);
+          } else if (skill.isFile() && skill.name.endsWith('.md') && skill.name !== 'README.md') {
+            out.add(skill.name.slice(0, -3)); // strip .md
+          }
+        }
+      } catch { /* ignore */ }
+    }
   }
-  // Recurse into non-skills dirs (bounded depth prevents pathological traversal)
+
+  // Recurse into non-skills dirs (bounded depth + visit cap prevent pathological scans)
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     if (entry.name.startsWith('.')) continue;
     if (entry.name === 'node_modules') continue;
-    if (recursiveSkillSearch(path.join(dir, entry.name), skill, depth + 1)) return true;
+    if (entry.name === 'skills') continue; // already handled above
+    collectSkills(path.join(dir, entry.name), out, ctx, depth + 1);
   }
-  return false;
 }
 
 export async function runDoctor(): Promise<DoctorResult> {
