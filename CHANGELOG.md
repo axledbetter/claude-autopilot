@@ -1,5 +1,20 @@
 # Changelog
 
+## [5.0.0-alpha.4] — 2026-04-27
+
+Hotfix discovered by post-publish soak. The previous alpha.3 published a compiled `dist/` bundle but the path-resolution sites that look up `presets/`, `package.json`, etc. assumed source-tree layout (`../..` from `src/cli/<file>.ts` = package root). Under the compiled layout (`dist/src/cli/<file>.js`), the same `../..` resolves to `dist/`, which doesn't contain `presets/` or `package.json`. Result: `npx @delegance/claude-autopilot@alpha init` crashed with "Preset config not found for: generic" — a release-blocker missed by every prior CI check.
+
+### Fixed
+- **`init` / `setup` no longer crash on compiled output.** All sites that previously did `path.resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')` now use `findPackageRoot()` from a new shared helper at `src/cli/_pkg-root.ts`. The helper walks up from `import.meta.url` looking for the `@delegance/claude-autopilot` `package.json`, so it lands on the same package root whether the caller is source or compiled.
+- Affected sites: `src/cli/setup.ts`, `src/cli/init.ts`, `src/cli/run.ts` (`readToolVersion`), `src/cli/pr-comment.ts` (`readVersion`).
+
+### Added
+- `src/cli/_pkg-root.ts` — `findPackageRoot()` and `requirePackageRoot()`.
+- `tests/pkg-root.test.ts` — unit test for the helper, plus a full integration smoke that builds `dist/`, invokes `node dist/src/cli/index.js init --preset generic` against a fresh temp project, and asserts `guardrail.config.yaml` is written. Catches future compiled-vs-source path drift.
+
+### Notes for users on alpha.3
+- If you ran `npx @delegance/claude-autopilot@alpha init` on alpha.3 and saw "Preset config not found", upgrade with `npm install -g @delegance/claude-autopilot@alpha` to pick up alpha.4. No config changes needed.
+
 ## [5.0.0-alpha.3] — 2026-04-24
 
 Final alpha before v5.0.0 GA. Closes every remaining GA blocker from the alpha cycle.
