@@ -20,7 +20,7 @@ export async function runWorker(sub: string | undefined, options: { cwd?: string
     case 'status':
       return workerStatus(cwd);
     default:
-      console.error(`${C.red}[guardrail worker] Unknown subcommand: "${sub ?? ''}". Use start|stop|status${C.reset}`);
+      console.error(`${C.red}[worker] Unknown subcommand: "${sub ?? ''}". Use start|stop|status${C.reset}`);
       return 1;
   }
 }

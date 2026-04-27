@@ -43,7 +43,7 @@ export async function runBaseline(sub: string, options: BaselineCommandOptions =
         console.log(fmt('dim', '  Run: guardrail baseline create'));
         return 0;
       }
-      console.log(`\n${fmt('bold', '[guardrail baseline]')} ${fmt('dim', relPath)}`);
+      console.log(`\n${fmt('bold', '[baseline]')} ${fmt('dim', relPath)}`);
       console.log(fmt('dim', `  Created: ${baseline.createdAt}  Updated: ${baseline.updatedAt}`));
       if (baseline.note) console.log(fmt('dim', `  Note: ${baseline.note}`));
       console.log(`  ${baseline.entries.length} pinned finding${baseline.entries.length !== 1 ? 's' : ''}\n`);

@@ -90,7 +90,12 @@ describe('runCouncil', () => {
     const adapters = [makeAdapter('A', 'r', 50), makeAdapter('B', 'r', 50)];
     const synthesizer = makeAdapter('Synth', 's');
     const result = await runCouncil(baseConfig, adapters, synthesizer, 'q', 'ctx');
-    assert.ok(result.responses.every(r => r.latencyMs >= 50));
+    // Timer jitter on fast CI can fire setTimeout(50) at ~45ms; we only need to
+    // verify latency is *measured*, not that it equals the delay to the ms.
+    assert.ok(
+      result.responses.every(r => r.latencyMs >= 40),
+      `latencyMs should be roughly the adapter delay; got ${result.responses.map(r => r.latencyMs).join(', ')}`,
+    );
   });
 
   it('R7: successful adapter clears timeout timer (does not keep event loop alive)', async () => {

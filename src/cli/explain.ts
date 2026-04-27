@@ -92,7 +92,7 @@ export async function runExplain(options: ExplainCommandOptions = {}): Promise<n
     }
   } else {
     // No target — list findings and prompt
-    console.log(`\n${fmt('bold', '[guardrail explain]')} ${findings.length} cached finding${findings.length !== 1 ? 's' : ''}:\n`);
+    console.log(`\n${fmt('bold', '[explain]')} ${findings.length} cached finding${findings.length !== 1 ? 's' : ''}:\n`);
     findings.forEach((f, i) => {
       const sev = f.severity === 'critical' ? fmt('red', 'CRIT') : f.severity === 'warning' ? fmt('yellow', 'WARN') : fmt('dim', 'NOTE');
       const loc = f.file !== '<unspecified>' ? fmt('dim', ` ${f.file}${f.line ? `:${f.line}` : ''}`) : '';
@@ -163,7 +163,7 @@ export async function runExplain(options: ExplainCommandOptions = {}): Promise<n
   const sev = finding.severity === 'critical' ? fmt('red', 'CRITICAL')
     : finding.severity === 'warning' ? fmt('yellow', 'WARNING') : fmt('dim', 'NOTE');
 
-  console.log(`\n${fmt('bold', '[guardrail explain]')}`);
+  console.log(`\n${fmt('bold', '[explain]')}`);
   console.log(`  [${sev}] ${fmt('dim', `${finding.file}${finding.line ? `:${finding.line}` : ''}`)} — ${finding.message}`);
   if (finding.suggestion) console.log(`  ${fmt('dim', `→ ${finding.suggestion}`)}`);
   console.log('');

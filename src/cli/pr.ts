@@ -57,7 +57,7 @@ export async function runPr(options: PrCommandOptions = {}): Promise<number> {
     return 1;
   }
 
-  console.log(`\n${fmt('bold', `[guardrail pr]`)} #${pr.number} ${fmt('dim', pr.title)}`);
+  console.log(`\n${fmt('bold', `[pr]`)} #${pr.number} ${fmt('dim', pr.title)}`);
   console.log(fmt('dim', `  base: ${pr.baseRefName}  head: ${pr.headRefName}`));
 
   // Fetch base ref so diff works locally

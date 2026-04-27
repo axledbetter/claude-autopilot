@@ -100,7 +100,7 @@ export async function runSetup(options: SetupOptions = {}): Promise<void> {
     throw new Error('guardrail.config.yaml already exists — use --force to overwrite');
   }
 
-  console.log(`\n${BOLD('[guardrail setup]')} ${DIM(cwd)}\n`);
+  console.log(`\n${BOLD('[setup]')} ${DIM(cwd)}\n`);
   console.log(`${BOLD('Detecting project…')}\n`);
 
   const detection = detectProject(cwd);

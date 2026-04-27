@@ -99,7 +99,7 @@ export async function runWatch(options: WatchOptions = {}): Promise<void> {
     ? fmt('green', '✓ LLM review enabled')
     : fmt('yellow', '! No API key — static rules only  (set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY)');
 
-  console.log(`\n${fmt('bold', '[guardrail watch]')} ${fmt('dim', cwd)}`);
+  console.log(`\n${fmt('bold', '[watch]')} ${fmt('dim', cwd)}`);
   console.log(fmt('dim', `  debounce: ${debounceMs}ms  |  Ctrl+C to exit`));
   console.log(`  ${keyStatus}\n`);
   console.log(fmt('dim', '  Watching for changes…\n'));

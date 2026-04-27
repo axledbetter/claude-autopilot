@@ -65,7 +65,7 @@ export async function runIgnore(options: IgnoreCommandOptions = {}): Promise<num
   const existing = readIgnoreFile(cwd);
   let added = 0;
 
-  console.log(`\n${fmt('bold', '[guardrail ignore]')} ${findings.length} finding${findings.length !== 1 ? 's' : ''} to review\n`);
+  console.log(`\n${fmt('bold', '[ignore]')} ${findings.length} finding${findings.length !== 1 ? 's' : ''} to review\n`);
 
   for (const [i, f] of findings.entries()) {
     const sev = f.severity === 'critical' ? fmt('red', 'CRITICAL')

@@ -123,7 +123,7 @@ export async function runDoctor(): Promise<DoctorResult> {
   checks.push({
     name: 'tsx available',
     result: tsxVersion ? 'pass' : 'fail',
-    message: !tsxVersion ? 'tsx not found — run: npm install @delegance/guardrail (includes tsx)' : undefined,
+    message: !tsxVersion ? 'tsx not found — run: npm install @delegance/claude-autopilot@alpha (includes tsx for dev builds)' : undefined,
   });
 
   // 3. gh CLI authenticated
@@ -202,7 +202,7 @@ export async function runDoctor(): Promise<DoctorResult> {
   });
 
   // Print results
-  console.log('\n\x1b[1m[doctor] Guardrail prerequisite check\x1b[0m\n');
+  console.log('\n\x1b[1m[doctor] claude-autopilot prerequisite check\x1b[0m\n');
   let blockers = 0;
   let warnings = 0;
   for (const check of checks) {

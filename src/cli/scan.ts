@@ -137,7 +137,7 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
 
   console.log('');
   const scopeDesc = options.all ? 'entire codebase' : relFiles.slice(0, 3).join(', ') + (relFiles.length > 3 ? ` +${relFiles.length - 3} more` : '');
-  console.log(fmt('bold', `[guardrail scan]`) + fmt('dim', ` ${files.length} file(s) — ${scopeDesc}`));
+  console.log(fmt('bold', `[scan]`) + fmt('dim', ` ${files.length} file(s) — ${scopeDesc}`));
   if (options.ask) console.log(fmt('dim', `  question: ${options.ask}`));
   if (focusLabel) console.log(fmt('dim', `  focus: ${focusLabel}`));
   console.log('');
