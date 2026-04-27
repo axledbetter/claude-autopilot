@@ -5,7 +5,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findPackageRoot } from '../src/cli/_pkg-root.ts';
+import { findPackageRoot, resolveSiblingModule } from '../src/cli/_pkg-root.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -41,6 +41,57 @@ describe('findPackageRoot', () => {
     const callerUrl = new URL('file:' + distFile).href;
     const root = findPackageRoot(callerUrl);
     assert.equal(root, ROOT, `compiled caller must walk up out of dist/ to package root; got ${root}`);
+  });
+});
+
+describe('resolveSiblingModule', () => {
+  it('keeps .ts extension when caller is a .ts source file', () => {
+    const callerUrl = 'file:///repo/src/foo/bar.ts';
+    const resolved = resolveSiblingModule('./baz.ts', callerUrl);
+    assert.match(resolved, /baz\.ts$/);
+  });
+
+  it('rewrites .ts → .js when caller is a .js compiled file', () => {
+    const callerUrl = 'file:///repo/dist/src/foo/bar.js';
+    const resolved = resolveSiblingModule('./baz.ts', callerUrl);
+    assert.match(resolved, /baz\.js$/);
+  });
+
+  it('rewrites .ts → .js when caller is a .mjs file', () => {
+    const callerUrl = 'file:///repo/dist/src/foo/bar.mjs';
+    const resolved = resolveSiblingModule('./baz.ts', callerUrl);
+    assert.match(resolved, /baz\.js$/);
+  });
+
+  // Regression: alpha.4's `npx @alpha scan --all` failed with "Failed to import
+  // adapter from .../auto.ts" because the adapter loader's BUILTIN_PATHS map
+  // hardcodes `.ts` extensions, but compiled output has `.js`. resolveSiblingModule
+  // closes the gap.
+  it('handles nested relative refs (../parent/file.ts)', () => {
+    const callerUrl = 'file:///repo/dist/src/adapters/loader.js';
+    const resolved = resolveSiblingModule('./review-engine/auto.ts', callerUrl);
+    assert.equal(resolved, '/repo/dist/src/adapters/review-engine/auto.js');
+  });
+});
+
+describe('static-rule registry resolves under compiled layout', () => {
+  it('loadRulesFromConfig successfully imports built-in rules under compiled output', async () => {
+    const distEntry = path.join(ROOT, 'dist', 'src', 'core', 'static-rules', 'registry.js');
+    if (!fs.existsSync(distEntry)) return; // skip when dist hasn't been built
+
+    // Spawn a child node process to import the compiled registry and load a
+    // representative rule. Verifies the dynamic-import string in registry.js
+    // resolves correctly (catches the alpha.4 → alpha.5 bug class).
+    const probe = `
+      import('${distEntry}').then(m => m.loadRulesFromConfig(['hardcoded-secrets']))
+        .then(rules => { if (rules.length === 1 && rules[0].name === 'hardcoded-secrets') process.exit(0); else process.exit(2); })
+        .catch(e => { console.error(e.message); process.exit(3); });
+    `;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', probe], {
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+    assert.equal(r.status, 0, `compiled registry import failed: ${r.stderr}`);
   });
 });
 

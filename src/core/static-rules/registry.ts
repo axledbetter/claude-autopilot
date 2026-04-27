@@ -1,33 +1,41 @@
 import type { StaticRule } from '../phases/static-rules.ts';
 import type { StaticRuleReference } from '../config/types.ts';
+import { resolveSiblingModule } from '../../cli/_pkg-root.ts';
+
+// Dynamic-import string literals that end in `.ts` are NOT rewritten by tsc's
+// `rewriteRelativeImportExtensions`. resolveSiblingModule swaps `.ts` → `.js`
+// when the caller is itself compiled, so these imports resolve correctly under
+// both source (`tsx`) and compiled (`node dist/...`) layouts.
+const importRule = <T>(ref: string, exportName: string): Promise<StaticRule> =>
+  import(resolveSiblingModule(ref, import.meta.url)).then((m: Record<string, T>) => m[exportName] as unknown as StaticRule);
 
 // Built-in cross-stack rules
 const BUILTIN: Record<string, () => Promise<StaticRule>> = {
-  'hardcoded-secrets':  () => import('./rules/hardcoded-secrets.ts').then(m => m.hardcodedSecretsRule),
-  'npm-audit':          () => import('./rules/npm-audit.ts').then(m => m.npmAuditRule),
-  'package-lock-sync':  () => import('./rules/package-lock-sync.ts').then(m => m.packageLockSyncRule),
-  'console-log':        () => import('./rules/console-log.ts').then(m => m.consoleLogRule),
-  'todo-fixme':         () => import('./rules/todo-fixme.ts').then(m => m.todoFixmeRule),
-  'large-file':         () => import('./rules/large-file.ts').then(m => m.largeFileRule),
-  'missing-tests':      () => import('./rules/missing-tests.ts').then(m => m.missingTestsRule),
+  'hardcoded-secrets':  () => importRule('./rules/hardcoded-secrets.ts', 'hardcodedSecretsRule'),
+  'npm-audit':          () => importRule('./rules/npm-audit.ts', 'npmAuditRule'),
+  'package-lock-sync':  () => importRule('./rules/package-lock-sync.ts', 'packageLockSyncRule'),
+  'console-log':        () => importRule('./rules/console-log.ts', 'consoleLogRule'),
+  'todo-fixme':         () => importRule('./rules/todo-fixme.ts', 'todoFixmeRule'),
+  'large-file':         () => importRule('./rules/large-file.ts', 'largeFileRule'),
+  'missing-tests':      () => importRule('./rules/missing-tests.ts', 'missingTestsRule'),
   // Security rules
-  'sql-injection':      () => import('./rules/sql-injection.ts').then(m => m.sqlInjectionRule),
-  'missing-auth':       () => import('./rules/missing-auth.ts').then(m => m.missingAuthRule),
-  'ssrf':               () => import('./rules/ssrf.ts').then(m => m.ssrfRule),
-  'insecure-redirect':  () => import('./rules/insecure-redirect.ts').then(m => m.insecureRedirectRule),
+  'sql-injection':      () => importRule('./rules/sql-injection.ts', 'sqlInjectionRule'),
+  'missing-auth':       () => importRule('./rules/missing-auth.ts', 'missingAuthRule'),
+  'ssrf':               () => importRule('./rules/ssrf.ts', 'ssrfRule'),
+  'insecure-redirect':  () => importRule('./rules/insecure-redirect.ts', 'insecureRedirectRule'),
   // Brand rules
-  'brand-tokens':       () => import('./rules/brand-tokens.ts').then(m => m.brandTokensRule),
+  'brand-tokens':       () => importRule('./rules/brand-tokens.ts', 'brandTokensRule'),
   // Schema alignment
-  'schema-alignment':   () => import('./rules/schema-alignment.ts').then(m => m.schemaAlignmentRule),
+  'schema-alignment':   () => importRule('./rules/schema-alignment.ts', 'schemaAlignmentRule'),
 };
 
 // Preset-specific rules registered by name
 const PRESET: Record<string, () => Promise<StaticRule>> = {
-  'supabase-rls-bypass': () => import('../../../presets/nextjs-supabase/rules/supabase-rls-bypass.ts').then(m => m.supabaseRlsBypassRule),
-  'go-sql-injection':    () => import('../../../presets/go/rules/go-sql-injection.ts').then(m => m.goSqlInjectionRule),
-  'fastapi-missing-auth': () => import('../../../presets/python-fastapi/rules/fastapi-missing-auth.ts').then(m => m.fastapiMissingAuthRule),
-  't3-server-only':      () => import('../../../presets/t3/rules/t3-server-only.ts').then(m => m.t3ServerOnlyRule),
-  'rails-sql-injection': () => import('../../../presets/rails-postgres/rules/rails-sql-injection.ts').then(m => m.railsSqlInjectionRule),
+  'supabase-rls-bypass':  () => importRule('../../../presets/nextjs-supabase/rules/supabase-rls-bypass.ts', 'supabaseRlsBypassRule'),
+  'go-sql-injection':     () => importRule('../../../presets/go/rules/go-sql-injection.ts', 'goSqlInjectionRule'),
+  'fastapi-missing-auth': () => importRule('../../../presets/python-fastapi/rules/fastapi-missing-auth.ts', 'fastapiMissingAuthRule'),
+  't3-server-only':       () => importRule('../../../presets/t3/rules/t3-server-only.ts', 't3ServerOnlyRule'),
+  'rails-sql-injection':  () => importRule('../../../presets/rails-postgres/rules/rails-sql-injection.ts', 'railsSqlInjectionRule'),
 };
 
 const ALL = { ...BUILTIN, ...PRESET };

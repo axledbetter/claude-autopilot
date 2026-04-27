@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import { GuardrailError } from '../core/errors.ts';
 import { checkApiVersionCompatibility, type AdapterBase } from './base.ts';
+import { resolveSiblingModule } from '../cli/_pkg-root.ts';
 
 export type IntegrationPoint = 'review-engine' | 'vcs-host' | 'migration-runner' | 'review-bot-parser';
 
@@ -56,7 +57,7 @@ export async function loadAdapter<T extends AdapterBase>(options: LoadAdapterOpt
         details: { point, ref, available: Object.keys(BUILTIN_PATHS[point] ?? {}) },
       });
     }
-    modulePath = new URL(builtin, import.meta.url).pathname;
+    modulePath = resolveSiblingModule(builtin, import.meta.url);
   }
 
   let mod: { default?: T } | T;
