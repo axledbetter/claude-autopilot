@@ -64,19 +64,16 @@ Or keep using `guardrail run` — it continues to work through v5.x.
   with:
     node-version: '22'
 - run: npm install -g @delegance/guardrail
-+ run: npm install -g @delegance/claude-autopilot@alpha
++ run: npm install -g @delegance/claude-autopilot
 - run: guardrail run --base main --format sarif --output results.sarif
 + run: claude-autopilot run --base main --format sarif --output results.sarif
 ```
-
-> During the v5 alpha cycle, pin `@alpha` explicitly. The npm `latest` tag still points at a pre-rename `2.5.0` release until GA; installing without a tag will silently give you the old code.
 
 ### 4. Dockerfiles
 
 ```diff
 - RUN npm install -g @delegance/guardrail@^4
-+ RUN npm install -g @delegance/claude-autopilot@alpha   # during alpha cycle
-+ # After v5 GA: RUN npm install -g @delegance/claude-autopilot@^5
++ RUN npm install -g @delegance/claude-autopilot@^5
 ```
 
 ### 5. Claude Code skills

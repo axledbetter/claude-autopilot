@@ -1,5 +1,25 @@
 # Changelog
 
+## [5.0.0] — 2026-04-27
+
+First GA release after a five-alpha soak cycle. Promotes `5.0.0-alpha.5` to GA unchanged on the code side; the only diff is the version bump, README rebranding away from `@alpha` channel guidance, and a new "Reproducing the benchmark" section.
+
+### Added
+- **README hero benchmark.** Documented 13/13 on the seeded Next.js fixture with Claude Opus at $0.21 / 38s. Includes a "Reproducing the benchmark" section at the bottom with the full procedure, the categories measured, and explicit non-claims (e.g. doesn't measure false-positive rate on clean repos).
+- README install instructions now use bare `npm install -g @delegance/claude-autopilot` (no `@alpha` pin) — assumes the `latest` dist-tag has advanced to 5.0.0.
+
+### Changed
+- Migration guide install snippets drop the `@alpha` pin and the alpha-cycle warning.
+- Removed the alpha-era CLI note from the README ("Alpha.1 CLI note: subcommands are flat …" → just "CLI note").
+
+### Manual GA steps (for the publisher)
+After this lands and `v5.0.0` is tagged + auto-published:
+
+1. `cd packages/guardrail-tombstone && npm publish` — publishes `@delegance/guardrail@5.0.0` thin wrapper.
+2. `npm dist-tag add @delegance/claude-autopilot@5.0.0 latest` — moves `latest` from the legacy 2.5.0 to GA.
+3. `npm deprecate @delegance/claude-autopilot@"<5.0.0" "Pre-rename — use 5.x"` — flags the orphaned 1.0.0-rc.1 / 2.x / 5.0.0-alpha.* releases.
+4. `npm deprecate @delegance/guardrail@"<5.0.0" "Renamed — use @delegance/claude-autopilot"` — tells v4 users to migrate (the `5.0.0` tombstone forwards their existing CLI usage transparently).
+
 ## [5.0.0-alpha.5] — 2026-04-27
 
 Second hotfix from the soak. Alpha.4 fixed `init`'s preset resolution but `scan` / `run` still crashed on compiled output with `Failed to import adapter from .../auto.ts` — the adapter loader and static-rule registry use dynamic-import string literals that tsc's `rewriteRelativeImportExtensions` doesn't touch.
