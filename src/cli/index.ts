@@ -28,37 +28,19 @@ import { runWorker } from './worker.ts';
 import { runTestGen } from './test-gen.ts';
 import { runCouncilCmd } from './council.ts';
 import { runMigrateV4 } from './migrate-v4.ts';
+import { findPackageRoot } from './_pkg-root.ts';
 
 const args = process.argv.slice(2);
 
-// Version flag — walk up from import.meta.url looking for the nearest package.json.
-// This works under both dev (src/cli/index.ts → ../../package.json) and compiled
-// output (dist/src/cli/index.js → ../../../package.json via the walk).
+// Version flag — read package.json via the shared package-root helper. Works
+// under both source (src/cli/index.ts) and compiled (dist/src/cli/index.js)
+// layouts since findPackageRoot walks up to the canonical package root.
 if (args[0] === '--version' || args[0] === '-v') {
-  const { createRequire } = await import('node:module');
-  const { fileURLToPath } = await import('node:url');
-  const nodePath = await import('node:path');
-  const nodeFs = await import('node:fs');
-  const require = createRequire(fileURLToPath(import.meta.url));
-  let dir = nodePath.dirname(fileURLToPath(import.meta.url));
-  let pkgPath: string | null = null;
-  for (let i = 0; i < 8; i++) {
-    const candidate = nodePath.join(dir, 'package.json');
-    if (nodeFs.existsSync(candidate)) {
-      try {
-        const maybe = require(candidate) as { name?: string; version: string };
-        if (maybe.name === '@delegance/claude-autopilot') {
-          pkgPath = candidate;
-          break;
-        }
-      } catch { /* keep walking */ }
-    }
-    const parent = nodePath.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  if (pkgPath) {
-    const pkg = require(pkgPath) as { version: string };
+  const root = findPackageRoot(import.meta.url);
+  if (root) {
+    const nodeFs = await import('node:fs');
+    const nodePath = await import('node:path');
+    const pkg = JSON.parse(nodeFs.readFileSync(nodePath.join(root, 'package.json'), 'utf8')) as { version: string };
     console.log(pkg.version);
   } else {
     console.log('unknown');
