@@ -40,7 +40,7 @@ export async function runCosts(cwd = process.cwd()): Promise<number> {
   const totalOutput = log.reduce((s, e) => s + e.outputTokens, 0);
   const recentCost = recent.reduce((s, e) => s + e.costUSD, 0);
 
-  console.log(`\n${fmt('bold', '[guardrail costs]')}\n`);
+  console.log(`\n${fmt('bold', '[costs]')}\n`);
 
   // Summary row
   console.log(fmt('bold', 'Summary'));

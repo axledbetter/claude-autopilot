@@ -24,7 +24,7 @@ export async function runInit(cwd: string = process.cwd()): Promise<void> {
     process.exit(1);
   }
 
-  console.log('\n\x1b[1m[guardrail init] Choose a preset:\x1b[0m\n');
+  console.log('\n\x1b[1m[init] Choose a preset:\x1b[0m\n');
   PRESET_NAMES.forEach((name, i) => {
     console.log(`  ${i + 1}. ${name.padEnd(22)} ${PRESET_DESCRIPTIONS[name]}`);
   });

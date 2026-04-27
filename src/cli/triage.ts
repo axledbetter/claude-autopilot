@@ -85,7 +85,7 @@ function cmdList(cwd: string): number {
     return 0;
   }
 
-  console.log(`\n${fmt('bold', '[guardrail triage]')} ${active.length} active, ${expired.length} expired\n`);
+  console.log(`\n${fmt('bold', '[triage]')} ${active.length} active, ${expired.length} expired\n`);
   for (const e of active) {
     const tag = e.state === 'false-positive'
       ? fmt('dim', 'false-positive ')

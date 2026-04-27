@@ -74,7 +74,7 @@ export async function runFix(options: FixCommandOptions = {}): Promise<number> {
   }
 
   const modeNote = options.dryRun ? ' (dry run)' : options.yes ? '' : ' (interactive — use --yes to skip prompts)';
-  console.log(`\n${fmt('bold', '[guardrail fix]')} ${fixable.length} finding${fixable.length !== 1 ? 's' : ''} to attempt${modeNote}\n`);
+  console.log(`\n${fmt('bold', '[fix]')} ${fixable.length} finding${fixable.length !== 1 ? 's' : ''} to attempt${modeNote}\n`);
 
   // Print upfront summary of all fixable findings before prompting
   for (const f of fixable) {

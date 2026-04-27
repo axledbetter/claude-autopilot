@@ -157,7 +157,7 @@ export async function runCommand(options: RunCommandOptions = {}): Promise<numbe
     return 0;
   }
 
-  console.log(`\n${fmt('bold', '[guardrail run]')} ${fmt('dim', configPath)}`);
+  console.log(`\n${fmt('bold', '[run]')} ${fmt('dim', configPath)}`);
   console.log(`${fmt('dim', `  ${touchedFiles.length} changed file(s):`)} ${touchedFiles.slice(0, 5).join(', ')}${touchedFiles.length > 5 ? ` … +${touchedFiles.length - 5} more` : ''}`);
   if (gitCtx.summary) {
     console.log(fmt('dim', `  ${gitCtx.summary}`));

@@ -20,8 +20,10 @@ const ALLOWED_FILES = new Set<string>([
   // not error prefixes
 ]);
 
-// Match: anything of the form `[guardrail]` (red/colored ANSI or plain).
-const PREFIX_RE = /\[guardrail\]/;
+// Match `[guardrail]` AND `[guardrail <phase>]` (e.g. `[guardrail baseline]`,
+// `[guardrail costs]`). The phase variants were missed by the original
+// `/\[guardrail\]/` regex, letting legacy prefixes leak past the audit.
+const PREFIX_RE = /\[guardrail(?: [\w-]+)?\]/;
 
 function walk(dir: string, acc: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

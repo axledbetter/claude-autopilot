@@ -101,15 +101,18 @@ describe('v4 compatibility matrix', () => {
   describe('subcommand routing', () => {
     it('V5: every v4 subcommand name is recognized by the top-level dispatcher', () => {
       // The dispatcher rejects unknown top-level subcommands with exactly:
-      //   [guardrail] Unknown subcommand: "<sub>"
+      //   [claude-autopilot] Unknown subcommand: "<sub>"
+      // (or, in v4 / pre-rename releases, [guardrail] Unknown subcommand: "<sub>").
       // Subcommand-internal parsers have their own "unknown sub-subcommand" errors
       // (e.g. `baseline foo` says "Unknown subcommand: foo") — those are legitimate,
       // not a v4 regression. This test checks only the top-level rejection path.
+      // We match BOTH prefixes so the assertion stays meaningful across the v4→v5
+      // rebrand and so it still detects missing subcommand handlers either way.
       for (const sub of V4_SUBCOMMANDS) {
         const r = runCli([sub], { cwd: tmpWorkdir });
         const combined = r.stdout + r.stderr;
         assert.ok(
-          !new RegExp(`\\[guardrail\\] Unknown subcommand: "${sub}"`, 'i').test(combined),
+          !new RegExp(`\\[(claude-autopilot|guardrail)\\] Unknown subcommand: "${sub}"`, 'i').test(combined),
           `top-level dispatcher rejected "${sub}" as unknown. v5 must route every v4 name. Output:\n${combined.slice(0, 500)}`,
         );
       }
@@ -244,7 +247,7 @@ describe('v4 compatibility matrix', () => {
       const r = runCli(['run', '--help']);
       const combined = r.stdout + r.stderr;
       assert.ok(
-        !new RegExp(`\\[guardrail\\] Unknown subcommand: "run"`, 'i').test(combined),
+        !new RegExp(`\\[(claude-autopilot|guardrail)\\] Unknown subcommand: "run"`, 'i').test(combined),
         'flat `run` was rejected after grouped-verb refactor — v4 regression',
       );
     });
