@@ -201,7 +201,7 @@ function boolFlag(name: string): boolean {
 
 function printUsage(): void {
   console.log(`
-Usage: guardrail <command> [options]
+Usage: claude-autopilot <command> [options]  (legacy alias: guardrail)
 
 Commands:
   run          Review git-changed files (default)

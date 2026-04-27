@@ -32,7 +32,12 @@ function walk(dir) {
     const p = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       walk(p);
-    } else if (entry.isFile() && (p.endsWith('.js') || p.endsWith('.mjs') || p.endsWith('.js.map'))) {
+    } else if (entry.isFile() && (p.endsWith('.js') || p.endsWith('.mjs'))) {
+      // Skip .js.map — sourcemaps embed the original TypeScript inside
+      // `sourcesContent` and regex-rewriting specifiers there would corrupt
+      // the mapping. TS 6's rewriteRelativeImportExtensions already handles
+      // the emit rewrites, so this script is a safety net for older toolchains
+      // that emit `.ts` specifiers unchanged into the output JS only.
       rewrite(p);
     }
   }
