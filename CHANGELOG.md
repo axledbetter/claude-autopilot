@@ -1,5 +1,16 @@
 # Changelog
 
+## [5.0.0-alpha.5] — 2026-04-27
+
+Second hotfix from the soak. Alpha.4 fixed `init`'s preset resolution but `scan` / `run` still crashed on compiled output with `Failed to import adapter from .../auto.ts` — the adapter loader and static-rule registry use dynamic-import string literals that tsc's `rewriteRelativeImportExtensions` doesn't touch.
+
+### Fixed
+- **`scan` / `run` adapter loading under compiled JS.** `src/adapters/loader.ts` BUILTIN_PATHS and `src/core/static-rules/registry.ts` import map both used hardcoded `.ts` extensions in dynamic-import string literals. TS's emit-time rewriter only handles static imports, so these strings stayed `.ts` post-compile and the runtime tried to load `dist/.../auto.ts` (which doesn't exist; the file is `auto.js`). New helper `resolveSiblingModule()` in `src/cli/_pkg-root.ts` swaps `.ts` → `.js` based on whether the caller is itself compiled.
+
+### Added
+- **Real-world soak benchmark result.** Against a 13-bug seeded Next.js fixture (SQL injection, hardcoded secret, missing auth, IDOR, CORS wildcard, SSRF, open redirect, TOCTOU, silent error swallow, off-by-one, missing rate limit, console.log, no input validation), `claude-autopilot scan --all` with the `claude` adapter caught **13 of 13** with concrete remediation. The cold-start eval reviewer's original run with Llama 3.3 70B caught 8/13 (and even that was blocked by the parser bug now fixed).
+- 4 new tests in `tests/pkg-root.test.ts` covering `resolveSiblingModule` semantics across source/.js/.mjs callers, plus a regression test that compiles `dist/` and imports the registry to verify dynamic-import refs resolve.
+
 ## [5.0.0-alpha.4] — 2026-04-27
 
 Hotfix discovered by post-publish soak. The previous alpha.3 published a compiled `dist/` bundle but the path-resolution sites that look up `presets/`, `package.json`, etc. assumed source-tree layout (`../..` from `src/cli/<file>.ts` = package root). Under the compiled layout (`dist/src/cli/<file>.js`), the same `../..` resolves to `dist/`, which doesn't contain `presets/` or `package.json`. Result: `npx @delegance/claude-autopilot@alpha init` crashed with "Preset config not found for: generic" — a release-blocker missed by every prior CI check.
