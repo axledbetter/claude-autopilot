@@ -3,14 +3,16 @@ import type { RunResult } from '../core/pipeline/run.ts';
 import type { GuardrailConfig } from '../core/config/types.ts';
 import type { GitContext } from '../core/detect/git-context.ts';
 import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+import { findPackageRoot } from './_pkg-root.ts';
 
 const COMMENT_MARKER = '<!-- guardrail-review -->';
 
 function readVersion(): string {
   try {
-    const pkgPath = join(dirname(fileURLToPath(import.meta.url)), '../../package.json');
+    const root = findPackageRoot(import.meta.url);
+    if (!root) return 'unknown';
+    const pkgPath = join(root, 'package.json');
     return (JSON.parse(readFileSync(pkgPath, 'utf8')) as { version: string }).version;
   } catch { return 'unknown'; }
 }

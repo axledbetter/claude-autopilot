@@ -1,11 +1,11 @@
 import * as fs from 'node:fs';
 import * as fsAsync from 'node:fs/promises';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { detectProject } from './detector.ts';
 import { runHook } from './hook.ts';
 import { runDoctor } from './preflight.ts';
 import { detectLLMKey, LLM_KEY_NAMES } from '../core/detect/llm-key.ts';
+import { requirePackageRoot } from './_pkg-root.ts';
 
 const PASS = '\x1b[32m✓\x1b[0m';
 const WARN = '\x1b[33m!\x1b[0m';
@@ -78,7 +78,7 @@ export interface SetupOptions {
 }
 
 function presetSearchPaths(name: string, cwd: string): string[] {
-  const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const pkgRoot = requirePackageRoot(import.meta.url);
   return [
     path.join(pkgRoot, 'presets', name, 'guardrail.config.yaml'),
     path.join(cwd, 'node_modules', '@delegance', 'claude-autopilot', 'presets', name, 'guardrail.config.yaml'),

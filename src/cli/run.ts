@@ -30,7 +30,7 @@ import { resolveGitTouchedFiles } from '../core/git/touched-files.ts';
 import type { RunInput } from '../core/pipeline/run.ts';
 import type { ReviewEngine } from '../adapters/review-engine/types.ts';
 import type { GuardrailConfig } from '../core/config/types.ts';
-import { fileURLToPath } from 'node:url';
+import { findPackageRoot } from './_pkg-root.ts';
 import { toSarif } from '../formatters/sarif.ts';
 import { toJUnit } from '../formatters/junit.ts';
 import { loadTriage, filterTriaged } from '../core/persist/triage.ts';
@@ -58,7 +58,9 @@ function computeExitCode(findings: { severity: string }[], failOn: string): numb
 }
 
 function readToolVersion(): string {
-  const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
+  const root = findPackageRoot(import.meta.url);
+  if (!root) return 'unknown';
+  const pkgPath = path.join(root, 'package.json');
   return (JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { version: string }).version;
 }
 
