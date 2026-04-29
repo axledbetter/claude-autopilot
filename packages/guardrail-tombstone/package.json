@@ -16,7 +16,7 @@
     "guardrail": "bin/guardrail.js"
   },
   "dependencies": {
-    "@delegance/claude-autopilot": ">=5.0.0-alpha"
+    "@delegance/claude-autopilot": "^5.0.0"
   },
   "files": [
     "bin/",
