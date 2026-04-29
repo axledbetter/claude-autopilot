@@ -1,0 +1,134 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/axledbetter/claude-autopilot/presets/schemas/migrate.schema.json",
+  "title": "Stack.md migrate block",
+  "type": "object",
+  "required": ["schema_version", "migrate"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "migrate": {
+      "type": "object",
+      "required": ["skill"],
+      "properties": {
+        "skill": {
+          "type": "string",
+          "description": "Stable skill ID (e.g. 'migrate@1', 'migrate.supabase@1', 'none@1')",
+          "pattern": "^[a-z][a-z0-9.-]*@[0-9]+$"
+        },
+        "envs": {
+          "type": "object",
+          "patternProperties": {
+            "^[a-z][a-z0-9-]*$": { "$ref": "#/$defs/envSpec" }
+          },
+          "additionalProperties": false
+        },
+        "post": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["command"],
+            "properties": { "command": { "$ref": "#/$defs/commandSpec" } }
+          }
+        },
+        "policy": { "$ref": "#/$defs/policySpec" },
+        "supabase": { "$ref": "#/$defs/supabaseSpec" },
+        "detected_at": { "type": "string", "format": "date-time" },
+        "project_root": { "type": "string" },
+        "dev_command": {
+          "description": "Deprecated alias for envs.dev.command — auto-migrated by doctor --fix",
+          "$ref": "#/$defs/legacyCommandValue"
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "skill": { "const": "migrate.supabase@1" } } },
+          "then": {
+            "required": ["supabase"],
+            "properties": {
+              "supabase": {
+                "required": ["deltas_dir", "types_out", "envs_file"]
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "skill": { "const": "migrate@1" } } },
+          "then": {
+            "required": ["envs"],
+            "properties": {
+              "envs": {
+                "required": ["dev"]
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "commandSpec": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["exec", "args"],
+          "properties": {
+            "exec": { "type": "string", "minLength": 1 },
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "not": { "pattern": "[|;&><`$()]" }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "$ref": "#/$defs/legacyCommandValue"
+        }
+      ]
+    },
+    "legacyCommandValue": {
+      "type": "string",
+      "description": "Deprecated string form. Auto-migrated to structured argv by doctor --fix.",
+      "minLength": 1
+    },
+    "envSpec": {
+      "type": "object",
+      "required": ["command"],
+      "properties": {
+        "command": { "$ref": "#/$defs/commandSpec" },
+        "env_file": {
+          "type": "string",
+          "description": "Path to env file, must be relative to project_root, no '..'",
+          "not": {
+            "anyOf": [
+              { "pattern": "^/" },
+              { "pattern": "(^|/)\\.\\.(/|$)" }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "policySpec": {
+      "type": "object",
+      "properties": {
+        "allow_prod_in_ci": { "type": "boolean", "default": false },
+        "require_clean_git": { "type": "boolean", "default": true },
+        "require_manual_approval": { "type": "boolean", "default": true },
+        "require_dry_run_first": { "type": "boolean", "default": false }
+      },
+      "additionalProperties": false
+    },
+    "supabaseSpec": {
+      "type": "object",
+      "properties": {
+        "deltas_dir": { "type": "string" },
+        "types_out": { "type": "string" },
+        "envs_file": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}
