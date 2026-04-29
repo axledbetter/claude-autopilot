@@ -54,9 +54,9 @@ Passed via env vars (`AUTOPILOT_ENVELOPE`, `AUTOPILOT_RESULT_PATH`) and stdin JS
 
 ### Result artifact (skill → dispatcher)
 
-**Primary transport:** dispatcher passes `AUTOPILOT_RESULT_PATH=/tmp/<uuid>.json`; skill writes JSON there.
-**Fallback transport:** delimited stdout markers `@@AUTOPILOT_RESULT_BEGIN@@\n{...}\n@@AUTOPILOT_RESULT_END@@` for environments where the env var is stripped.
-Pipeline reads the file first, falls back to delimiter scan, errors on neither.
+**Primary transport (default, mandatory):** dispatcher passes `AUTOPILOT_RESULT_PATH=/tmp/<uuid>.json`; skill writes JSON there.
+
+**Stdout fallback (opt-in only):** delimited markers `@@AUTOPILOT_RESULT_BEGIN:<invocationId>@@\n{...}\n@@AUTOPILOT_RESULT_END:<invocationId>@@`. Disabled by default; enabled per-skill via `skill.manifest.json#stdoutFallback: true`. The `<invocationId>` is bound to the markers — collisions or invocationId mismatches cause the pipeline to ignore stdout and require the file. Spoofing via subprocess output that echoes the markers is rejected unless invocationId matches the dispatch.
 
 ```json
 {
@@ -88,13 +88,18 @@ Each skill ships `skills/<name>/skill.manifest.json`:
 ```json
 {
   "skillId": "migrate.supabase@1",
-  "skill_api_version": "1.0",
+  "skill_runtime_api_version": "1.0",
   "min_runtime": "5.2.0",
-  "max_runtime": "5.x"
+  "max_runtime": "5.x",
+  "stdoutFallback": false
 }
 ```
 
-Dispatcher reads the manifest before invoking. If `runtime ∉ [min, max]` or `skill_api_version` major doesn't match runtime contract version → fail-closed with explicit upgrade instructions.
+The runtime emits `envelope_contract_version` (the dispatcher's contract version) and reads the skill's `skill_runtime_api_version`. Compatibility rule: **major versions must match**, runtime must be `∈ [min_runtime, max_runtime]`.
+
+If incompatible → fail-closed with explicit upgrade instructions: e.g., "skill `migrate.supabase@1` requires runtime 5.2.0+, you have 5.1.3 — run `npm install -g @delegance/claude-autopilot@latest`."
+
+Naming separation matters: `envelope_contract_version` is the wire format (envelope + result artifact); `skill_runtime_api_version` is the skill's declared compatibility against that wire format. Documented as a single compatibility matrix in `docs/skills/version-compatibility.md`.
 
 ### Stable skill ID alias map
 
@@ -104,6 +109,9 @@ Dispatcher reads the manifest before invoking. If `runtime ∉ [min, max]` or `s
 |---|---|
 | `migrate@1` | `skills/migrate/` |
 | `migrate.supabase@1` | `skills/migrate-supabase/` |
+| `none@1` | `skills/migrate-none/` (no-op skill — exits `status: skipped, reasonCode: migration-disabled`) |
+
+The `none@1` alias is the explicit "migration intentionally not configured" state. `init --skip-migrate` writes `migrate.skill: "none@1"`. Pipeline short-circuits with deterministic messaging instead of failing later with "missing env command."
 
 **Resolution rules:**
 - Exact stable ID match (`migrate@1`) wins
@@ -117,9 +125,30 @@ Dispatcher reads the manifest before invoking. If `runtime ∉ [min, max]` or `s
 For non-dev envs:
 - Interactive runs require explicit confirmation prompt
 - Non-interactive (CI) runs require **all four** of: `--yes` flag, `AUTOPILOT_CI_POLICY=allow-prod` env, `AUTOPILOT_TARGET_ENV=prod` env (must equal `--env`), and `migrate.policy.allow_prod_in_ci: true` in stack.md
-- Plus provider-env detection (`GITHUB_ACTIONS=true` / `CI=true` / etc.) — local shells with the env vars manually set don't trigger; only real CI does
+
+Plus provider-env detection. Built-in detector recognizes:
+- `GITHUB_ACTIONS=true` (GitHub Actions)
+- `CIRCLECI=true` (CircleCI)
+- `GITLAB_CI=true` (GitLab CI)
+- `BUILDKITE=true` (Buildkite)
+- `CI=true` + `JENKINS_URL` (Jenkins)
+
+Self-hosted or missing-from-list providers must set `AUTOPILOT_CI_PROVIDER=<name>` explicitly. Audit log records both the detected provider and any override. Local shells that just set `CI=true` without one of the recognized markers fall through and remain blocked.
 
 Stack.md schema **forbids** `envs.dev.command` value appearing as any non-dev env's command (prevents `prisma migrate dev` against prod).
+
+### Per-policy enforcement points (every dispatch)
+
+Each `migrate.policy.*` field has an explicit dispatcher check:
+
+| Policy field | Enforced where | Behavior on violation |
+|---|---|---|
+| `allow_prod_in_ci: false` (default) | Pre-dispatch, when `env != dev` and `ci == true` | Reject with 4-flag checklist |
+| `require_clean_git: true` | Pre-dispatch, runs `git status --porcelain` | Reject if uncommitted changes exist (suggest commit/stash) |
+| `require_manual_approval: true` | Pre-dispatch, when `env != dev` and not `ci` | Interactive y/n prompt, abort on n |
+| `require_dry_run_first: true` | Pre-dispatch, looks for prior dry-run artifact at `.autopilot/dry-runs/<gitHead>-<env>.json` | Reject if no recent dry-run for this gitHead+env |
+
+Acceptance tests verify each enforcement point with golden fixtures.
 
 ### Audit log
 
@@ -127,23 +156,33 @@ Every dispatch emits one event to `.autopilot/audit.log` (JSONL):
 
 ```json
 {
+  "seq": 421,
   "ts": "2026-04-29T...",
   "invocationId": "uuid",
   "event": "dispatch",
   "requested_skill": "migrate@1",
   "resolved_skill": "migrate.supabase@1",
   "skill_path": "skills/migrate-supabase/SKILL.md",
-  "contract_version": "1.0",
+  "envelope_contract_version": "1.0",
+  "skill_runtime_api_version": "1.0",
   "envelope_hash": "sha256",
-  "policy_decisions": ["allow_prod_in_ci=false"],
+  "policy_decisions": ["allow_prod_in_ci=false", "require_clean_git=passed"],
   "mode": "apply" | "dry-run" | "doctor-fix",
   "actor": "<git user.email>",
   "ci_provider": "github-actions" | null,
   "ci_run_id": "..." | null,
   "result_status": "applied",
-  "duration_ms": 3421
+  "duration_ms": 3421,
+  "prev_hash": "sha256:..."
 }
 ```
+
+**Tamper resistance:**
+- Monotonic `seq` field per repo, bumped on every write
+- `prev_hash` chains to the SHA-256 of the previous line — local edits to the log break the chain
+- File writes use `flock`-style advisory locking to prevent concurrent corruption
+- CI emits an additional copy to immutable artifact storage (configurable; defaults to GitHub Actions artifact upload when in GHA)
+- `claude-autopilot doctor` validates the chain and reports any breaks
 
 ## Stack.md schema
 
@@ -153,15 +192,15 @@ migrate:
   skill: "migrate@1"                  # default; exact stable ID
   envs:
     dev:
-      command: "prisma migrate dev --skip-seed"
+      command: { exec: "prisma", args: ["migrate", "dev", "--skip-seed"] }
     staging:
-      command: "prisma migrate deploy"
+      command: { exec: "prisma", args: ["migrate", "deploy"] }
       env_file: ".env.staging"
     prod:
-      command: "prisma migrate deploy"
+      command: { exec: "prisma", args: ["migrate", "deploy"] }
       env_file: ".env.prod"
   post:
-    - command: "prisma generate"
+    - command: { exec: "prisma", args: ["generate"] }
   policy:
     allow_prod_in_ci: false
     require_clean_git: true
@@ -180,6 +219,15 @@ migrate:
   policy:
     allow_prod_in_ci: false
 ```
+
+### Command execution contract (security-critical)
+
+Commands are stored as structured argv objects (`{ exec, args[] }`) and executed via Node's `spawn`/`execFile` with `shell: false`. **No shell interpretation, no injection vector.**
+
+- Raw string form (`command: "prisma migrate deploy"`) is **deprecated**. Parsed via `shell-quote` for backcompat tokenization, with a `doctor --fix` rewrite suggestion. Accepted in v1, rejected in v2.
+- `args[]` entries cannot contain shell metacharacters (`|`, `;`, `&`, `>`, `<`, `` ` ``, `$()`, `&&`, `||`) — schema rejects.
+- `env_file` values are read into the spawn `env` map, never injected into the command line.
+- Cross-platform: `exec` is resolved via PATH (Windows + Unix); no shell quirks.
 
 **Validation:**
 - JSON Schema at `presets/schemas/migrate.schema.json`, validated via existing `ajv` dep
