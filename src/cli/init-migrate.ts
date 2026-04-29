@@ -42,13 +42,23 @@ export interface InitMigrateOptions {
   repoRoot: string;
   skipMigrate?: boolean;
   force?: boolean;
+  /**
+   * When true, computes what would be written but performs no write.
+   * Each workspace result includes a `diff` field showing the
+   * proposed change against the existing stack.md (or "would create
+   * new file" if missing). Used by `--force-rewrite` to preview
+   * changes before user confirmation.
+   */
+  dryRunPreview?: boolean;
   prompter?: Prompter;
 }
 
 export interface WorkspaceResult {
   workspace: string;
-  action: 'wrote' | 'updated' | 'skipped';
+  action: 'wrote' | 'updated' | 'skipped' | 'preview';
   skill: string;
+  /** Populated only when dryRunPreview is true. */
+  diff?: string;
 }
 
 export interface InitMigrateResult {
@@ -224,6 +234,59 @@ function serializeStackMd(stack: StackMdShape, options: { skipMigrate: boolean }
   return body;
 }
 
+/**
+ * Produce a unified-diff-style summary of the change from `oldText` to
+ * `newText`. Pure-line LCS — no external dependency. Output is for human
+ * review only; not intended to round-trip via `patch`.
+ */
+function unifiedDiff(oldText: string, newText: string): string {
+  if (oldText === newText) return '';
+  const a = oldText.split('\n');
+  const b = newText.split('\n');
+  const m = a.length;
+  const n = b.length;
+
+  // LCS table
+  const lcs: number[][] = Array.from({ length: m + 1 }, () =>
+    new Array<number>(n + 1).fill(0),
+  );
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      if (a[i] === b[j]) {
+        lcs[i]![j] = lcs[i + 1]![j + 1]! + 1;
+      } else {
+        lcs[i]![j] = Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!);
+      }
+    }
+  }
+
+  const out: string[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < m && j < n) {
+    if (a[i] === b[j]) {
+      out.push(`  ${a[i]}`);
+      i++;
+      j++;
+    } else if (lcs[i + 1]![j]! >= lcs[i]![j + 1]!) {
+      out.push(`- ${a[i]}`);
+      i++;
+    } else {
+      out.push(`+ ${b[j]}`);
+      j++;
+    }
+  }
+  while (i < m) {
+    out.push(`- ${a[i]}`);
+    i++;
+  }
+  while (j < n) {
+    out.push(`+ ${b[j]}`);
+    j++;
+  }
+  return out.join('\n');
+}
+
 function chooseRule(
   matches: DetectionMatch[],
   autoSelect: boolean,
@@ -240,6 +303,7 @@ export async function initMigrate(
   const repoRoot = path.resolve(opts.repoRoot);
   const skipMigrate = opts.skipMigrate ?? false;
   const force = opts.force ?? false;
+  const dryRunPreview = opts.dryRunPreview ?? false;
   const prompter = opts.prompter ?? DEFAULT_PROMPTER;
 
   const workspaces = findWorkspaces(repoRoot);
@@ -277,7 +341,12 @@ export async function initMigrate(
     let toWrite: StackMdShape;
     let action: WorkspaceResult['action'];
 
-    if (exists && !force) {
+    if (dryRunPreview) {
+      // Preview always reflects the *fresh* content (mirrors `force: true`).
+      // Merge-preserving previews can be added later if needed.
+      toWrite = fresh;
+      action = 'preview';
+    } else if (exists && !force) {
       const existing = readExistingStackMd(stackPath);
       if (existing) {
         toWrite = mergePreserving(existing, fresh);
@@ -291,12 +360,28 @@ export async function initMigrate(
       action = 'wrote';
     }
 
+    const newContent = serializeStackMd(toWrite, { skipMigrate });
+
+    if (dryRunPreview) {
+      // Compute diff against existing on disk; do NOT write.
+      const oldContent = exists ? fs.readFileSync(stackPath, 'utf8') : '';
+      const diff = exists
+        ? unifiedDiff(oldContent, newContent)
+        : `would create new file ${path.relative(repoRoot, stackPath) || stackPath}\n${newContent
+            .split('\n')
+            .map(l => `+ ${l}`)
+            .join('\n')}`;
+      results.push({
+        workspace,
+        action,
+        skill: toWrite.migrate.skill,
+        diff,
+      });
+      continue;
+    }
+
     fs.mkdirSync(stackDir, { recursive: true });
-    fs.writeFileSync(
-      stackPath,
-      serializeStackMd(toWrite, { skipMigrate }),
-      'utf8',
-    );
+    fs.writeFileSync(stackPath, newContent, 'utf8');
 
     results.push({
       workspace,
@@ -306,7 +391,7 @@ export async function initMigrate(
   }
 
   // Multi-workspace repos: write a root manifest.yaml listing the workspaces.
-  if (workspaces.length > 1) {
+  if (workspaces.length > 1 && !dryRunPreview) {
     const manifestDir = path.join(repoRoot, '.autopilot');
     fs.mkdirSync(manifestDir, { recursive: true });
     const manifest = {

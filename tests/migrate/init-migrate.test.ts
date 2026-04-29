@@ -294,6 +294,83 @@ describe('initMigrate', () => {
     fs.rmSync(dir, { recursive: true });
   });
 
+  it('dryRunPreview returns diff against existing stack.md without writing', async () => {
+    const dir = mkRepo({
+      'prisma/schema.prisma': 'model User { id String @id }',
+      'prisma/migrations/': true,
+    });
+
+    // First run writes a stack.md
+    await initMigrate({ repoRoot: dir });
+    const stackPath = path.join(dir, '.autopilot', 'stack.md');
+    const before = fs.readFileSync(stackPath, 'utf8');
+
+    // User customizes the dev command — preview should show the
+    // proposed revert back to the rule default.
+    const parsed = yaml.load(before) as any;
+    parsed.migrate.envs.dev.command = {
+      exec: 'prisma',
+      args: ['migrate', 'deploy', '--my-flag'],
+    };
+    fs.writeFileSync(stackPath, yaml.dump(parsed));
+    const customized = fs.readFileSync(stackPath, 'utf8');
+
+    const result = await initMigrate({
+      repoRoot: dir,
+      dryRunPreview: true,
+    });
+
+    assert.equal(result.workspaces.length, 1);
+    assert.equal(result.workspaces[0]!.action, 'preview');
+    assert.ok(typeof result.workspaces[0]!.diff === 'string');
+    // Diff must mention the user's flag being removed
+    assert.match(result.workspaces[0]!.diff!, /-\s+.*my-flag/);
+    // Diff must mention the rule default `dev` re-appearing on the + side
+    assert.match(result.workspaces[0]!.diff!, /\+\s+- dev/);
+
+    // CRITICAL: file on disk is unchanged
+    const after = fs.readFileSync(stackPath, 'utf8');
+    assert.equal(after, customized, 'dryRunPreview must not write to disk');
+
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  it('dryRunPreview returns "would create new file" when stack.md is missing', async () => {
+    const dir = mkRepo({
+      'prisma/schema.prisma': 'model User { id String @id }',
+      'prisma/migrations/': true,
+    });
+
+    const stackPath = path.join(dir, '.autopilot', 'stack.md');
+    assert.equal(fs.existsSync(stackPath), false);
+
+    const result = await initMigrate({
+      repoRoot: dir,
+      dryRunPreview: true,
+    });
+
+    assert.equal(result.workspaces.length, 1);
+    assert.equal(result.workspaces[0]!.action, 'preview');
+    assert.match(result.workspaces[0]!.diff!, /would create new file/);
+    // Should include the prisma default command in the proposed body
+    assert.match(result.workspaces[0]!.diff!, /prisma/);
+    assert.match(result.workspaces[0]!.diff!, /migrate/);
+
+    // CRITICAL: nothing written
+    assert.equal(
+      fs.existsSync(stackPath),
+      false,
+      'dryRunPreview must not create the stack.md file',
+    );
+    assert.equal(
+      fs.existsSync(path.join(dir, '.autopilot')),
+      false,
+      'dryRunPreview must not create the .autopilot dir',
+    );
+
+    fs.rmSync(dir, { recursive: true });
+  });
+
   it('default prompter throws when no prompter is injected and prompt is required', async () => {
     const dir = mkRepo({
       'drizzle.config.ts': 'export default {}',
