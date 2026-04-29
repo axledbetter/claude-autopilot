@@ -27,6 +27,10 @@ import * as path from 'node:path';
 import * as yaml from 'js-yaml';
 import { runAllChecks, type NamedCheckResult } from '../core/migrate/doctor-checks.ts';
 import { resolveSkill } from '../core/migrate/alias-resolver.ts';
+import {
+  detectsLegacyMigrateSkill,
+  migrateLegacySkill,
+} from '../core/migrate/migrator.ts';
 
 export interface RunMigrateDoctorOptions {
   repoRoot: string;
@@ -38,6 +42,12 @@ export interface RunMigrateDoctorResult {
   results: NamedCheckResult[];
   /** Populated only when fix=true. Empty if no fixes were needed. */
   mutations?: string[];
+  /**
+   * Absolute path of the migration report (Markdown) written under
+   * .autopilot/. Populated when fix=true and the legacy migrator ran. Read-
+   * only mode never writes a report.
+   */
+  migrationReportPath?: string;
 }
 
 const DEFAULT_POLICY_GENERIC = {
@@ -151,6 +161,35 @@ function applyAutoFixes(
   return { mutations, wrote: true };
 }
 
+function isoStampForReport(): string {
+  return new Date().toISOString().replace(/[.:]/g, '-');
+}
+
+function writeMigrationReport(
+  repoRoot: string,
+  report: string[],
+  context: { migrated: boolean; reason?: string; archivePath?: string },
+): string {
+  const dir = path.join(repoRoot, '.autopilot');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `migration-report-${isoStampForReport()}.md`);
+  const lines: string[] = [
+    `# Legacy /migrate skill migration report`,
+    ``,
+    `- generated: ${new Date().toISOString()}`,
+    `- migrated: ${context.migrated}`,
+  ];
+  if (context.reason) lines.push(`- reason: ${context.reason}`);
+  if (context.archivePath) {
+    lines.push(`- archive: ${path.relative(repoRoot, context.archivePath)}`);
+  }
+  lines.push(``, `## Steps`, ``);
+  for (const step of report) lines.push(`- ${step}`);
+  lines.push('');
+  fs.writeFileSync(file, lines.join('\n'), 'utf8');
+  return file;
+}
+
 export async function runMigrateDoctor(
   opts: RunMigrateDoctorOptions,
 ): Promise<RunMigrateDoctorResult> {
@@ -160,15 +199,51 @@ export async function runMigrateDoctor(
   if (!fix) {
     // Plain doctor: read-only.
     const results = runAllChecks(repoRoot);
+    // Detect-only: surface legacy /migrate skill presence as a separate
+    // named check so callers can see it, but never write.
+    if (detectsLegacyMigrateSkill(repoRoot)) {
+      results.push({
+        name: 'legacyMigrateSkillAbsent',
+        result: {
+          ok: false,
+          message:
+            'skills/migrate/SKILL.md still has the legacy Supabase shape — run with --fix to migrate',
+          fixHint: 'claude-autopilot migrate doctor --fix',
+        },
+      });
+    }
     return { allOk: results.every(r => r.result.ok), results };
   }
 
   // --fix: apply auto-fixable mutations, then re-run checks.
-  const { mutations } = applyAutoFixes(repoRoot);
+  const { mutations: yamlMutations } = applyAutoFixes(repoRoot);
+  const mutations = [...yamlMutations];
+  let migrationReportPath: string | undefined;
+
+  // Wire in the legacy /migrate skill migrator (Task 8.2).
+  if (detectsLegacyMigrateSkill(repoRoot)) {
+    const m = migrateLegacySkill({ repoRoot });
+    for (const step of m.report) {
+      mutations.push(`migrator: ${step}`);
+    }
+    if (m.migrated && m.reason) {
+      mutations.push(`migrator: completed (${m.reason})`);
+    }
+    migrationReportPath = writeMigrationReport(repoRoot, m.report, {
+      migrated: m.migrated,
+      reason: m.reason,
+      archivePath: m.archivePath,
+    });
+    mutations.push(
+      `migrator: wrote migration report → ${path.relative(repoRoot, migrationReportPath)}`,
+    );
+  }
+
   const results = runAllChecks(repoRoot);
   return {
     allOk: results.every(r => r.result.ok),
     results,
     mutations,
+    migrationReportPath,
   };
 }
