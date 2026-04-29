@@ -1,0 +1,43 @@
+name: Publish Tombstone
+on:
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Run npm publish with --dry-run'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+
+jobs:
+  publish:
+    name: Publish @delegance/guardrail tombstone
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish tombstone
+        working-directory: packages/guardrail-tombstone
+        env:
+          DRY_RUN: ${{ inputs.dry-run }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          PKG_NAME=$(node -p "require('./package.json').name")
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          EXISTING=$(npm view "${PKG_NAME}@${PKG_VERSION}" version 2>/dev/null || echo "")
+          if [ "$EXISTING" = "$PKG_VERSION" ]; then
+            echo "Version $PKG_VERSION already published — skipping"
+            exit 0
+          fi
+          if [ "$DRY_RUN" = "true" ]; then
+            npm publish --access public --dry-run
+          else
+            npm publish --access public
+          fi

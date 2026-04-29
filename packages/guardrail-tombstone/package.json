@@ -1,6 +1,6 @@
 {
   "name": "@delegance/guardrail",
-  "version": "5.0.0",
+  "version": "5.0.1",
   "type": "module",
   "description": "[Renamed] @delegance/guardrail is now @delegance/claude-autopilot. Installing this package gives you a thin forwarding wrapper that invokes claude-autopilot under the hood.",
   "license": "MIT",
