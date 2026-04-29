@@ -43,7 +43,7 @@ describe('schema-alignment rule', () => {
     fs.mkdirSync(path.join(dir, 'data', 'deltas'), { recursive: true });
     const migFile = path.join(dir, 'data', 'deltas', '20260423_add_status.sql');
     fs.writeFileSync(migFile, 'ALTER TABLE users ADD COLUMN status text;');
-    const findings = await schemaAlignmentRule.check([migFile], { 'schema-alignment': { enabled: false } });
+    const findings = await schemaAlignmentRule.check([migFile], { config: { configVersion: 1, 'schema-alignment': { enabled: false } } });
     assert.deepEqual(findings, []);
     fs.rmSync(dir, { recursive: true });
   });
@@ -121,6 +121,9 @@ describe('schema-alignment rule', () => {
       confidence: 'high',
     }]);
     const mockEngine = {
+      name: 'mock',
+      apiVersion: '1.0.0',
+      getCapabilities: () => ({}),
       label: 'mock',
       review: async () => ({ findings: [], rawOutput: mockJson }),
       estimateTokens: (s: string) => s.length,
@@ -129,7 +132,7 @@ describe('schema-alignment rule', () => {
     const origCwd = process.cwd();
     process.chdir(dir);
     try {
-      const findings = await schemaAlignmentRule.check([migFile], { _engine: mockEngine });
+      const findings = await schemaAlignmentRule.check([migFile], { engine: mockEngine });
       assert.equal(findings.length, 1);
       assert.notEqual(findings[0]!.file, 'users');
       assert.ok(findings[0]!.file.endsWith('.sql'), `expected SQL migration path, got: ${findings[0]!.file}`);
@@ -156,11 +159,14 @@ describe('schema-alignment rule', () => {
     try {
       // Engine that returns non-JSON prose — llmFindings becomes []
       const mockEngine = {
+        name: 'mock',
+        apiVersion: '1.0.0',
+        getCapabilities: () => ({}),
         label: 'mock',
         review: async () => ({ findings: [], rawOutput: 'some prose, not JSON' }),
         estimateTokens: (s: string) => s.length,
       };
-      const findings = await schemaAlignmentRule.check([migFile], { _engine: mockEngine });
+      const findings = await schemaAlignmentRule.check([migFile], { engine: mockEngine });
       assert.ok(findings.length > 0, 'expected structural fallback when LLM output was unparseable');
     } finally {
       process.chdir(origCwd);

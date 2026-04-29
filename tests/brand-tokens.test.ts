@@ -140,7 +140,7 @@ describe('brand-tokens rule', () => {
   it('returns no findings when file has no color values', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bt-'));
     const f = makeTmpFile(dir, 'src/Button.tsx', '<button className="bg-primary">click</button>');
-    const findings = await brandTokensRule.check([f], { brand: { colors: ['#f97316'] } });
+    const findings = await brandTokensRule.check([f], { config: { configVersion: 1, brand: { colors: ['#f97316'] } } });
     assert.equal(findings.length, 0);
     fs.rmSync(dir, { recursive: true });
   });
@@ -148,7 +148,7 @@ describe('brand-tokens rule', () => {
   it('passes hex value that is in the palette', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bt-'));
     const f = makeTmpFile(dir, 'src/Button.tsx', "const s = { color: '#f97316' };");
-    const findings = await brandTokensRule.check([f], { brand: { colors: ['#f97316'] } });
+    const findings = await brandTokensRule.check([f], { config: { configVersion: 1, brand: { colors: ['#f97316'] } } });
     assert.equal(findings.length, 0);
     fs.rmSync(dir, { recursive: true });
   });
@@ -156,7 +156,7 @@ describe('brand-tokens rule', () => {
   it('flags hex value not in the palette', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bt-'));
     const f = makeTmpFile(dir, 'src/Button.tsx', "const s = { color: '#ff0000' };");
-    const findings = await brandTokensRule.check([f], { brand: { colors: ['#f97316'] } });
+    const findings = await brandTokensRule.check([f], { config: { configVersion: 1, brand: { colors: ['#f97316'] } } });
     assert.equal(findings.length, 1);
     assert.equal(findings[0]!.category, 'brand-tokens');
     assert.ok(findings[0]!.message.includes('#ff0000'));
@@ -166,7 +166,7 @@ describe('brand-tokens rule', () => {
   it('flags arbitrary Tailwind color class not in palette', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bt-'));
     const f = makeTmpFile(dir, 'src/Card.tsx', '<div className="bg-[#badbad] text-white">');
-    const findings = await brandTokensRule.check([f], { brand: { colors: ['#ffffff'] } });
+    const findings = await brandTokensRule.check([f], { config: { configVersion: 1, brand: { colors: ['#ffffff'] } } });
     assert.equal(findings.length, 1);
     assert.ok(findings[0]!.message.includes('#badbad'));
     fs.rmSync(dir, { recursive: true });
@@ -175,7 +175,7 @@ describe('brand-tokens rule', () => {
   it('passes arbitrary Tailwind color class that is in palette', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bt-'));
     const f = makeTmpFile(dir, 'src/Card.tsx', '<div className="bg-[#f97316]">');
-    const findings = await brandTokensRule.check([f], { brand: { colors: ['#f97316'] } });
+    const findings = await brandTokensRule.check([f], { config: { configVersion: 1, brand: { colors: ['#f97316'] } } });
     assert.equal(findings.length, 0);
     fs.rmSync(dir, { recursive: true });
   });
@@ -183,7 +183,7 @@ describe('brand-tokens rule', () => {
   it('flags off-brand font-family in CSS', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bt-'));
     const f = makeTmpFile(dir, 'src/styles.css', "body { font-family: 'Comic Sans MS', cursive; }");
-    const findings = await brandTokensRule.check([f], { brand: { fonts: ['Inter', 'Geist'] } });
+    const findings = await brandTokensRule.check([f], { config: { configVersion: 1, brand: { fonts: ['Inter', 'Geist'] } } });
     assert.equal(findings.length, 1);
     assert.ok(findings[0]!.message.toLowerCase().includes('font'));
     fs.rmSync(dir, { recursive: true });
@@ -192,7 +192,7 @@ describe('brand-tokens rule', () => {
   it('passes font-family that is in canonical fonts', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bt-'));
     const f = makeTmpFile(dir, 'src/styles.css', "body { font-family: 'Inter', sans-serif; }");
-    const findings = await brandTokensRule.check([f], { brand: { fonts: ['Inter'] } });
+    const findings = await brandTokensRule.check([f], { config: { configVersion: 1, brand: { fonts: ['Inter'] } } });
     assert.equal(findings.length, 0);
     fs.rmSync(dir, { recursive: true });
   });
@@ -200,7 +200,7 @@ describe('brand-tokens rule', () => {
   it('skips non-UI files (.go)', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bt-'));
     const f = makeTmpFile(dir, 'server/handler.go', '// color: #ff0000');
-    const findings = await brandTokensRule.check([f], { brand: { colors: ['#f97316'] } });
+    const findings = await brandTokensRule.check([f], { config: { configVersion: 1, brand: { colors: ['#f97316'] } } });
     assert.equal(findings.length, 0);
     fs.rmSync(dir, { recursive: true });
   });
@@ -208,7 +208,7 @@ describe('brand-tokens rule', () => {
   it('skips comment-only lines', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bt-'));
     const f = makeTmpFile(dir, 'src/a.tsx', '// Old brand color was #ff0000');
-    const findings = await brandTokensRule.check([f], { brand: { colors: ['#f97316'] } });
+    const findings = await brandTokensRule.check([f], { config: { configVersion: 1, brand: { colors: ['#f97316'] } } });
     assert.equal(findings.length, 0);
     fs.rmSync(dir, { recursive: true });
   });
