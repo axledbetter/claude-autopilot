@@ -183,6 +183,28 @@ Use v2.3.4 of this library.
     assert.equal(findings[0]!.file, '<unspecified>');
   });
 
+  // Real-world bug: "e.g" and "i.e" matched the prior regex `\.[a-z]{1,6}`,
+  // so every finding ended up with `file: "e.g"` and `claude-autopilot fix`
+  // could never match anything to fix. The 5.0.4-pre stress test on
+  // randai-johnson surfaced this — second-largest demo torpedo.
+  it('does not treat "e.g." / "i.e." prose as file refs', async () => {
+    const { parseReviewOutput } = await import('../src/adapters/review-engine/parse-output.ts');
+    const output = `### [WARNING] Missing input validation
+The function accepts arbitrary types (e.g. dict, list) without validation.
+**Suggestion:** Add type guards (i.e. isinstance checks).`;
+    const findings = parseReviewOutput(output, 'test');
+    assert.equal(findings[0]!.file, '<unspecified>');
+  });
+
+  it('rejects bare references with non-code extensions like "etc"', async () => {
+    const { parseReviewOutput } = await import('../src/adapters/review-engine/parse-output.ts');
+    const output = `### [NOTE] Path mention
+See config.etc, or whatever.
+**Suggestion:** Document it.`;
+    const findings = parseReviewOutput(output, 'test');
+    assert.equal(findings[0]!.file, '<unspecified>');
+  });
+
   it('parses multiple findings with correct ids', async () => {
     const { parseReviewOutput } = await import('../src/adapters/review-engine/parse-output.ts');
     const output = `### [CRITICAL] Issue one

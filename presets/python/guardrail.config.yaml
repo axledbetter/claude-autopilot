@@ -1,0 +1,24 @@
+configVersion: 1
+reviewEngine: { adapter: auto }
+vcsHost: { adapter: github }
+reviewBot: { adapter: cursor }
+protectedPaths:
+  - "**/auth/**"
+  - "**/security.py"
+  - "**/config.py"
+  - "**/settings.py"
+  - "**/secrets/**"
+staticRules:
+  - hardcoded-secrets
+testCommand: pytest -q
+thresholds:
+  bugbotAutoFix: 85
+  bugbotProposePatch: 60
+  maxValidateRetries: 3
+reviewStrategy: auto
+chunking:
+  smallTierMaxTokens: 8000
+  perFileMaxTokens: 32000
+pipeline:
+  runReviewOnStaticFail: true
+  runReviewOnTestFail: true

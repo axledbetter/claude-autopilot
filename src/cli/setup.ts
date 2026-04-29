@@ -18,6 +18,7 @@ const PRESET_LABELS: Record<string, string> = {
   't3': 'T3 Stack (Next.js + tRPC + Prisma)',
   'rails-postgres': 'Ruby on Rails + PostgreSQL',
   'python-fastapi': 'Python FastAPI',
+  'python': 'Python',
   'go': 'Go + PostgreSQL',
   'generic': 'Generic (no stack-specific assumptions)',
 };

@@ -32,7 +32,12 @@ chunking:
   perFileMaxTokens: 32000
 pipeline:
   runReviewOnStaticFail: true
-  runReviewOnTestFail: false
+  # Default true so that failed/missing test commands don't silently kill the
+  # LLM review phase. Most common case: user runs `setup` on a fresh repo,
+  # auto-detected test command is `npm test` but no test script exists →
+  # exit 1 → review skipped → user sees nothing useful. Review on failing
+  # code is the path where review is *most* valuable.
+  runReviewOnTestFail: true
 # Optional: multi-model council. Uncomment + set ANTHROPIC_API_KEY and/or
 # OPENAI_API_KEY. Models are dispatched in parallel; the synthesizer reads
 # their responses and writes the consensus. Both APIs supported (chat-completions
