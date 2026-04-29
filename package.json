@@ -67,12 +67,14 @@
     "minimatch": ">=9",
     "openai": ">=4",
     "proper-lockfile": "^4.1.2",
+    "shell-quote": "^1.8.3",
     "tsx": ">=4"
   },
   "devDependencies": {
     "@types/js-yaml": "^4",
     "@types/node": "^25",
     "@types/proper-lockfile": "^4.1.4",
+    "@types/shell-quote": "^1.7.5",
     "typescript": "^6"
   },
   "peerDependencies": {
