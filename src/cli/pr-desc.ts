@@ -76,11 +76,18 @@ function deriveTitleFromBranch(branch?: string): string | null {
       const cleaned = rest.replace(/[-_/]+/g, ' ').trim();
       return cleaned ? `${prefix}: ${cleaned}` : null;
     }
+    // Unknown prefix that contains a slash — treat the segment after the
+    // first slash as the descriptive part and default the conventional
+    // type to `chore:`. Example: `autopilot-test/validate-weights` →
+    // `chore: validate weights` rather than the prefix-less
+    // `autopilot test validate weights` (which fails commitlint and looks
+    // half-finished in PR titles).
+    const cleanedRest = rest.replace(/[-_/]+/g, ' ').trim();
+    if (cleanedRest) return `chore: ${cleanedRest}`;
   }
-  // Final fallback — return null (not '') when the branch normalizes to an
-  // empty string (e.g. `_`, `---`). The caller chains via `??`, which only
-  // short-circuits on null/undefined; an empty string would skip the rest
-  // of the fallback chain and produce an empty PR title.
+  // No slash — return cleaned branch name, or null when it normalizes empty
+  // (e.g. `_`, `---`). The caller chains via `??`, which only short-circuits
+  // on null/undefined; an empty string would skip the rest of the fallback.
   const cleaned = branch.replace(/[-_/]+/g, ' ').trim();
   return cleaned || null;
 }
