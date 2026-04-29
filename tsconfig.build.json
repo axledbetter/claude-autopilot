@@ -5,8 +5,8 @@
     "rootDir": ".",
     "noEmit": false,
     "emitDeclarationOnly": false,
-    "declaration": false,
-    "declarationMap": false,
+    "declaration": true,
+    "declarationMap": true,
     "sourceMap": true,
     "allowImportingTsExtensions": false,
     "rewriteRelativeImportExtensions": true

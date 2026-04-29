@@ -26,10 +26,10 @@
     "claude-autopilot": "bin/claude-autopilot.js",
     "guardrail": "bin/guardrail.js"
   },
-  "types": "./src/index.ts",
+  "types": "./dist/src/index.d.ts",
   "exports": {
     ".": {
-      "types": "./src/index.ts"
+      "types": "./dist/src/index.d.ts"
     },
     "./bin/claude-autopilot.js": "./bin/claude-autopilot.js",
     "./bin/guardrail.js": "./bin/guardrail.js",
