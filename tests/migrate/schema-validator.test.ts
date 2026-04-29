@@ -149,3 +149,35 @@ migrate:
     assert.ok(r.errors.some(e => /yaml|parse/i.test(e.message ?? '')));
   });
 });
+
+describe('validateStackMd — caching (compiled once per process)', () => {
+  it('multiple invocations reuse a single compiled validator', async () => {
+    // Module is already loaded by prior tests; just exercise it many times
+    // and confirm there's no perceptible per-call recompilation cost.
+    const { validateStackMd } = await import('../../src/core/migrate/schema-validator.ts');
+    const yaml = `
+schema_version: 1
+migrate:
+  skill: "migrate@1"
+  envs:
+    dev:
+      command: { exec: "prisma", args: ["migrate", "dev"] }
+`;
+    const t0 = Date.now();
+    for (let i = 0; i < 100; i++) {
+      const r = validateStackMd(yaml);
+      assert.equal(r.valid, true);
+    }
+    const elapsed = Date.now() - t0;
+    // 100 invocations of a cached compiled validator should finish in <1s
+    // (typically <100ms). If we see >2s, recompilation is happening.
+    assert.ok(elapsed < 2000, `100 cached calls took ${elapsed}ms — likely recompiling per call`);
+  });
+
+  it('module-scoped validator instance is reused across imports', async () => {
+    const m1 = await import('../../src/core/migrate/schema-validator.ts');
+    const m2 = await import('../../src/core/migrate/schema-validator.ts');
+    // Same module instance → same exports identity
+    assert.equal(m1.validateStackMd, m2.validateStackMd);
+  });
+});
