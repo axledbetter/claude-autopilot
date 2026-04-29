@@ -56,8 +56,12 @@ export async function runCouncil(
     .map(r => `### ${r.label}\n${r.text}`)
     .join('\n\n');
 
-  const synthesisDoc = `${contextDoc}\n\n---\n\n${responseSections}`;
-  const synthesisCtx = windowContext(synthesisDoc, config.synthesisInputMaxTokens);
+  // Advisor responses go in synthesisPrompt only (structured form). The
+  // context the synthesizer sees is the original conversation document
+  // re-windowed for its own token budget — keeping responseSections out of
+  // it avoids duplicating them and also avoids letting large responses
+  // squeeze contextDoc out of synthesisInputMaxTokens.
+  const synthesisCtx = windowContext(contextDoc, config.synthesisInputMaxTokens);
   const synthesisPrompt = [
     `You have received responses from multiple technical advisors on the following question:\n\n## Original Question\n\n${prompt}`,
     `## Advisor Responses\n\n${responseSections}`,
