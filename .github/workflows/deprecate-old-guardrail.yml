@@ -1,0 +1,35 @@
+name: Deprecate Old Guardrail Versions
+on:
+  workflow_dispatch:
+    inputs:
+      range:
+        description: 'Version range to deprecate (npm semver, e.g. <5.0.0)'
+        required: true
+        default: '<5.0.0'
+        type: string
+      message:
+        description: 'Deprecation message shown by npm'
+        required: true
+        default: '@delegance/guardrail has been renamed to @delegance/claude-autopilot. See https://github.com/axledbetter/claude-autopilot for migration.'
+        type: string
+
+jobs:
+  deprecate:
+    name: npm deprecate @delegance/guardrail
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Deprecate
+        env:
+          RANGE: ${{ inputs.range }}
+          MESSAGE: ${{ inputs.message }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm deprecate "@delegance/guardrail@${RANGE}" "${MESSAGE}"
+          echo "Deprecated @delegance/guardrail@${RANGE}"
