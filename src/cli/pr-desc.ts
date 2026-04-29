@@ -70,7 +70,10 @@ function deriveTitleFromBranch(branch?: string): string | null {
       : CONVENTIONAL_TYPES.has(rawPrefix) ? rawPrefix
       : null;
     if (prefix) {
-      const cleaned = rest.replace(/[-_]+/g, ' ').trim();
+      // Include `/` in the character class — multi-segment branches like
+      // `fix/auth/session-leak` should normalize to `fix: auth session leak`,
+      // not `fix: auth/session-leak`.
+      const cleaned = rest.replace(/[-_/]+/g, ' ').trim();
       return cleaned ? `${prefix}: ${cleaned}` : null;
     }
   }

@@ -18,9 +18,9 @@ const CODE_EXT = String.raw`(?:` +
   // 6
   String.raw`coffee|gradle|svelte|` +
   // 5
-  String.raw`astro|cljs|cmake|jsonc|proto|scala|scss|swift|` +
+  String.raw`astro|cmake|jsonc|proto|scala|swift|` +
   // 4
-  String.raw`bash|dart|fish|html|java|json|less|sass|toml|yaml|` +
+  String.raw`bash|cljs|dart|fish|html|java|json|less|sass|scss|toml|yaml|` +
   // 3
   String.raw`asm|cjs|clj|cpp|css|edn|elm|env|erl|exs|fsi|fsx|gql|hcl|hpp|htm|ini|jsx|lua|mdx|mjs|mli|nim|php|sol|sql|tsx|vue|xml|yml|zig|zsh|` +
   // 2

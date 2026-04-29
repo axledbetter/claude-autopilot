@@ -78,6 +78,13 @@ describe('parseDescription', () => {
     assert.equal(out.title, 'fix: cost tracker');
   });
 
+  it('cleans embedded slashes in multi-segment branch names', () => {
+    // Bugbot MED on PR #49 round 2 — `fix/auth/session-leak` used to produce
+    // `fix: auth/session-leak` because the `rest` cleanup didn't include `/`.
+    const out = parseDescription('## Summary\n- bullet', { branchName: 'fix/auth/session-leak' });
+    assert.equal(out.title, 'fix: auth session leak');
+  });
+
   it('derives title from first summary bullet when branch is unhelpful', () => {
     const out = parseDescription(
       '## Summary\n- adds caching to user lookup',
