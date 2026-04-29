@@ -72,6 +72,28 @@ describe('parseDescription', () => {
   it('returns fallback title when Title: line is missing', () => {
     assert.equal(parseDescription('## Summary\n- no title').title, 'chore: update');
   });
+
+  it('derives title from feature branch name when Title: missing', () => {
+    const out = parseDescription('## Summary\n- bullet', { branchName: 'fix/cost-tracker' });
+    assert.equal(out.title, 'fix: cost tracker');
+  });
+
+  it('derives title from first summary bullet when branch is unhelpful', () => {
+    const out = parseDescription(
+      '## Summary\n- adds caching to user lookup',
+      { branchName: 'main', firstSummaryLine: '- adds caching to user lookup' },
+    );
+    assert.equal(out.title, 'adds caching to user lookup');
+  });
+
+  // Bugbot LOW on PR #49 — `??` only short-circuits on null/undefined, not "".
+  // A branch name that normalizes to an empty string (e.g. `_` or `---`) used
+  // to return "" from deriveTitleFromBranch, which then bypassed the rest of
+  // the fallback chain and produced an empty PR title.
+  it('falls through to "chore: update" when branch normalizes to empty', () => {
+    assert.equal(parseDescription('## Summary\n- bullet', { branchName: '_' }).title, 'chore: update');
+    assert.equal(parseDescription('## Summary\n- bullet', { branchName: '---' }).title, 'chore: update');
+  });
 });
 
 describe('runPrDesc', () => {

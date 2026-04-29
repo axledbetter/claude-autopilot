@@ -4,7 +4,30 @@ import type { Finding } from '../../core/findings/types.ts';
 // this constraint the prior regex `\.[a-z]{1,6}` matched prose abbreviations
 // like "e.g" and "i.e", which is how the `fix` command broke for users — every
 // finding got `file: "e.g"` and the auto-fixer matched nothing.
-const CODE_EXT = String.raw`(?:tsx?|jsx?|mjs|cjs|py|go|rs|java|kt|rb|php|cs|c|cc|cpp|h|hpp|swift|sh|bash|zsh|fish|sql|ya?ml|json|jsonc|toml|md|mdx|html|htm|css|scss|sass|less|vue|svelte|astro|tf|hcl|ini|env|gradle|xml|proto|graphql|gql|sol|erl|ex|exs|elm|fs|fsi|fsx|hs|lua|pl|pm|r|scala|sc|clj|cljs|edn|ml|mli|nim|zig|d|dart|coffee|jl|m|mm|s|asm|cmake|mk|dockerfile)`;
+//
+// JS regex alternation is leftmost-first, so longer alternatives MUST come
+// before shorter ones — otherwise `file.cpp:42` matches `file.c` and the line
+// number `:42` is silently dropped (across cpp/hpp/mdx/jsonc/dart/mm/mk/css/
+// hs/cmake/coffee and more). Sorted strictly by length DESC; ties within a
+// length bucket are alphabetical. Tests in claude-adapter.test.ts pin this.
+const CODE_EXT = String.raw`(?:` +
+  // 10
+  String.raw`dockerfile|` +
+  // 7
+  String.raw`graphql|` +
+  // 6
+  String.raw`coffee|gradle|svelte|` +
+  // 5
+  String.raw`astro|cljs|cmake|jsonc|proto|scala|scss|swift|` +
+  // 4
+  String.raw`bash|dart|fish|html|java|json|less|sass|toml|yaml|` +
+  // 3
+  String.raw`asm|cjs|clj|cpp|css|edn|elm|env|erl|exs|fsi|fsx|gql|hcl|hpp|htm|ini|jsx|lua|mdx|mjs|mli|nim|php|sol|sql|tsx|vue|xml|yml|zig|zsh|` +
+  // 2
+  String.raw`cc|cs|ex|fs|go|hs|jl|js|kt|md|mk|ml|mm|pl|pm|py|rb|rs|sc|sh|tf|ts|` +
+  // 1
+  String.raw`c|d|h|m|r|s` +
+String.raw`)`;
 
 // Matches "path/to/file.ts:42" (bare with known ext), "`path/to/file.ts`" (any
 // ext when explicitly backtick-wrapped). Backtick-wrapped accepts any extension

@@ -69,9 +69,17 @@ function deriveTitleFromBranch(branch?: string): string | null {
       : rawPrefix === 'bugfix' || rawPrefix === 'hotfix' ? 'fix'
       : CONVENTIONAL_TYPES.has(rawPrefix) ? rawPrefix
       : null;
-    if (prefix) return `${prefix}: ${rest.replace(/[-_]+/g, ' ').trim()}`;
+    if (prefix) {
+      const cleaned = rest.replace(/[-_]+/g, ' ').trim();
+      return cleaned ? `${prefix}: ${cleaned}` : null;
+    }
   }
-  return branch.replace(/[-_/]+/g, ' ').trim();
+  // Final fallback — return null (not '') when the branch normalizes to an
+  // empty string (e.g. `_`, `---`). The caller chains via `??`, which only
+  // short-circuits on null/undefined; an empty string would skip the rest
+  // of the fallback chain and produce an empty PR title.
+  const cleaned = branch.replace(/[-_/]+/g, ' ').trim();
+  return cleaned || null;
 }
 
 function deriveTitleFromSummary(summaryLine?: string): string | null {

@@ -205,6 +205,28 @@ See config.etc, or whatever.
     assert.equal(findings[0]!.file, '<unspecified>');
   });
 
+  // Bugbot HIGH on PR #49 — JS regex alternation is leftmost-first, so when
+  // shorter extensions appear before longer ones with the same prefix
+  // (`c` before `cpp`, `h` before `hpp`, `md` before `mdx`, `m` before `mm`,
+  // `d` before `dart`), `file.cpp:42` matched as `file.c` and the line number
+  // was silently dropped. Pins extensions ordered longest-first.
+  it('matches cpp/hpp/mdx/dart/mm fully (regex alternation order regression)', async () => {
+    const { parseReviewOutput } = await import('../src/adapters/review-engine/parse-output.ts');
+    const cases = [
+      { ext: 'cpp', body: 'In src/runtime/buffer.cpp:42 the deque overflows.' },
+      { ext: 'hpp', body: 'See include/lib.hpp:88 for the macro.' },
+      { ext: 'mdx', body: 'Edit docs/index.mdx:3 to fix.' },
+      { ext: 'dart', body: 'In lib/main.dart:120 use late.' },
+      { ext: 'mm',  body: 'See ios/AppDelegate.mm:55 for setup.' },
+      { ext: 'jsonc', body: 'Tweak .vscode/settings.jsonc:7.' },
+    ];
+    for (const { ext, body } of cases) {
+      const findings = parseReviewOutput(`### [WARNING] x\n${body}\n**Suggestion:** y`, 'test');
+      assert.ok(findings[0]!.file.endsWith(`.${ext}`), `expected file to end .${ext}, got: ${findings[0]!.file}`);
+      assert.ok(findings[0]!.line && findings[0]!.line > 0, `expected line for .${ext}, got: ${findings[0]!.line}`);
+    }
+  });
+
   it('parses multiple findings with correct ids', async () => {
     const { parseReviewOutput } = await import('../src/adapters/review-engine/parse-output.ts');
     const output = `### [CRITICAL] Issue one
