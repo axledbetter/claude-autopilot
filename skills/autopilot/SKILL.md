@@ -83,19 +83,39 @@ For each task:
 - Skip formal spec/quality review to maintain speed (the validate step catches issues)
 - If subagent fails to write to worktree: implement directly
 
-### Step 4: Auto-Migrate
+### Step 4: Migrate
 
-For any `.sql` files created in `data/deltas/` during implementation:
+After implementation creates schema changes, the autopilot pipeline runs the migrate phase via the canonical dispatcher contract. The dispatcher:
 
-```bash
-/migrate
-```
+1. Reads `.autopilot/stack.md` → looks up `migrate.skill` (default: `migrate@1`)
+2. Resolves the skill via the alias map (path-escape protected)
+3. Performs version handshake (skill manifest must declare a runtime range that includes the current `claude-autopilot` version, and an API version major matching the envelope contract)
+4. Builds an invocation envelope (`{ contractVersion, invocationId, nonce, env, repoRoot, changedFiles, gitBase, gitHead, ci, ... }`) passed to the skill via env vars + stdin
+5. Enforces policy (4-flag CI prod gate + clean-git + manual-approval + dry-run-first)
+6. Executes the configured command via `spawn(shell:false)` — structured argv only, no shell injection
+7. Parses the result artifact (file-first, nonce-bound stdout fallback only if skill manifest opts in)
+8. Writes a hash-chained audit log entry to `.autopilot/audit.log`
+9. Branches on `nextActions[]` from the result (e.g. `regenerate-types` triggers `npm run typecheck`)
 
-Run against **dev only** by default. Stop after dev succeeds and continue the pipeline.
+For the autopilot pipeline, this is invoked once per migration affected by the implementation changes.
 
-Only promote to QA → prod if the user has explicitly enabled it (e.g., `AUTOPILOT_ALLOW_PROD_MIGRATIONS=true` in their env) or asked for it directly. Production migrations are irreversible — never auto-promote without a clear signal.
+#### CI prod safety floor
 
-If migration fails, fix the SQL and retry (max 2 retries). If it still fails, stop and report.
+Running `--env prod` from CI requires **all four** of these (skills cannot relax):
+1. `--yes` flag explicit
+2. `AUTOPILOT_CI_POLICY=allow-prod` env var
+3. `AUTOPILOT_TARGET_ENV=prod` env var (must match `--env`)
+4. `migrate.policy.allow_prod_in_ci: true` in stack.md
+
+Plus a recognized CI provider env (GitHub Actions / GitLab CI / CircleCI / Buildkite / Jenkins) — or an explicit `AUTOPILOT_CI_PROVIDER=<name>` override for self-hosted CI.
+
+#### Configuration source of truth
+
+All migrate behavior is configured in `.autopilot/stack.md`. The autopilot skill never invokes a specific runner directly; it always dispatches through `claude-autopilot dispatch`. See:
+- `docs/superpowers/specs/2026-04-29-migrate-skill-generalization-design.md` — full spec
+- `docs/skills/rich-migrate-contract.md` — envelope + result artifact contract for skill authors
+- `docs/skills/version-compatibility.md` — runtime/skill version compatibility matrix
+- `presets/schemas/migrate.schema.json` — JSON Schema for the stack.md migrate block
 
 ### Step 5: Validate
 
@@ -157,7 +177,7 @@ Tell the user:
 ## Error Recovery
 
 - **Subagent failure:** Re-dispatch with more context or implement directly
-- **Migration failure:** Fix SQL, re-run /migrate
+- **Migration failure:** Fix the migration source (per the configured `migrate.skill` in stack.md), re-dispatch via `claude-autopilot dispatch migrate`
 - **Validate failure:** Fix issues, re-run (max 3 retries)
 - **Codex critical findings:** Fix, push, re-review (max 2 retries)
 - **Bugbot findings:** /bugbot handles triage + fix automatically (max 3 rounds)
