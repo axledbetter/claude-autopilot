@@ -61,9 +61,22 @@ export function detectProject(cwd: string): DetectionResult {
 
   const reqTxt = path.join(cwd, 'requirements.txt');
   const pyproject = path.join(cwd, 'pyproject.toml');
-  if ((fs.existsSync(reqTxt) && fileContains(reqTxt, 'fastapi')) ||
-      (fs.existsSync(pyproject) && fileContains(pyproject, 'fastapi'))) {
+  const hasFastapi = (fs.existsSync(reqTxt) && fileContains(reqTxt, 'fastapi')) ||
+                     (fs.existsSync(pyproject) && fileContains(pyproject, 'fastapi'));
+  if (hasFastapi) {
     return { preset: 'python-fastapi', testCommand: 'pytest', confidence: 'high', evidence: 'found fastapi in requirements' };
+  }
+  // Generic Python — covers any pyproject.toml or requirements.txt project that
+  // isn't FastAPI. Previously fell through to the JS/Generic preset, which
+  // writes `npm test` and npm-only static rules into a Python repo — the most
+  // visible "is this thing built?" papercut for non-JS users.
+  if (fs.existsSync(pyproject) || fs.existsSync(reqTxt)) {
+    return {
+      preset: 'python',
+      testCommand: 'pytest',
+      confidence: 'high',
+      evidence: fs.existsSync(pyproject) ? 'found pyproject.toml' : 'found requirements.txt',
+    };
   }
 
   const pkgPath = path.join(cwd, 'package.json');

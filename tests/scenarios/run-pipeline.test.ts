@@ -119,11 +119,30 @@ describe('run pipeline — scenarios', () => {
     assert.ok(!phaseNames.includes('review'));
   });
 
-  it('S4: tests fail → review phase not run (runReviewOnTestFail default false)', async () => {
+  it('S4: tests fail → review still runs (runReviewOnTestFail default true in 5.0.5+)', async () => {
+    // 5.0.5 changed the default: tests failing or missing no longer silently
+    // kills the LLM review phase. First-runs on repos with auto-detected test
+    // commands that don't exist (e.g. `npm test` on a Python repo) used to
+    // skip review entirely, returning zero useful output.
+    const engine = makeEngine([makeFinding({ id: 'e1', source: 'review-engine' })]);
+    const result = await runGuardrail({
+      touchedFiles: ['__mock_file_s4__.ts'],
+      config: { configVersion: 1, testCommand: 'this-command-does-not-exist-999' },
+      reviewEngine: engine,
+    });
+    assert.equal(result.status, 'fail');
+    assert.ok(result.phases.find(p => p.phase === 'review'), 'review phase should run despite failing test command');
+  });
+
+  it('S4-explicit-off: tests fail + runReviewOnTestFail=false → review skipped', async () => {
     const engine = makeEngine([makeFinding()]);
     const result = await runGuardrail({
       touchedFiles: [],
-      config: { configVersion: 1, testCommand: 'this-command-does-not-exist-999' },
+      config: {
+        configVersion: 1,
+        testCommand: 'this-command-does-not-exist-999',
+        pipeline: { runReviewOnTestFail: false },
+      },
       reviewEngine: engine,
     });
     assert.equal(result.status, 'fail');

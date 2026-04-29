@@ -41,7 +41,12 @@ export async function runGuardrail(input: RunInput): Promise<RunResult> {
   // reviewer flagged — the bugs the LLM is best at often ride alongside one a static
   // rule already caught.
   const runReviewOnStaticFail = pipelineCfg.runReviewOnStaticFail !== false;
-  const runReviewOnTestFail = pipelineCfg.runReviewOnTestFail === true;
+  // Default true (5.0.5+): when an auto-detected test command fails or is missing
+  // (e.g. `npm test` on a Python repo with no test script), skipping review made
+  // first-runs return zero useful output. Review on failing code is exactly when
+  // it's most useful. Users who explicitly set `runReviewOnTestFail: false` keep
+  // the strict behavior.
+  const runReviewOnTestFail = pipelineCfg.runReviewOnTestFail !== false;
 
   // Static-rules phase — tests always run afterward, regardless of status. The
   // runReviewOnStaticFail flag only gates the LLM review phase (matching its name);
