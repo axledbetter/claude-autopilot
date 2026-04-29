@@ -7,6 +7,7 @@ import { runReviewPhase } from '../core/pipeline/review-phase.ts';
 import { detectStack } from '../core/detect/stack.ts';
 import { loadIgnoreRules, parseConfigIgnore, applyIgnoreRules } from '../core/ignore/index.ts';
 import { saveCachedFindings } from '../core/persist/findings-cache.ts';
+import { appendCostLog } from '../core/persist/cost-log.ts';
 import type { GuardrailConfig } from '../core/config/types.ts';
 import { detectLLMKey, LLM_KEY_HINTS } from '../core/detect/llm-key.ts';
 
@@ -204,6 +205,18 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
 
   // Persist findings so `guardrail fix` can read them
   saveCachedFindings(cwd, findings);
+
+  // Persist run to cost log so `claude-autopilot costs` reflects scans, not
+  // just full pipeline runs. Previously scan never wrote to the log, so the
+  // costs report stayed frozen at whatever the last `run` invocation produced.
+  appendCostLog(cwd, {
+    timestamp: new Date().toISOString(),
+    files: files.length,
+    inputTokens: result.usage?.input ?? 0,
+    outputTokens: result.usage?.output ?? 0,
+    costUSD: result.costUSD ?? 0,
+    durationMs: result.durationMs,
+  });
 
   if (result.costUSD !== undefined) {
     console.log(fmt('dim', `  $${result.costUSD.toFixed(4)} · ${result.durationMs}ms`));

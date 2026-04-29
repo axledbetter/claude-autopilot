@@ -8,6 +8,13 @@ import { buildSystemPrompt, classifyError } from './prompt-builder.ts';
 const DEFAULT_MODEL = process.env.CODEX_MODEL ?? 'gpt-5.3-codex';
 const MAX_OUTPUT_TOKENS = 4096;
 
+// Per-million-token rates for gpt-5.3-codex (override via env for other models).
+// Computed client-side because the OpenAI Responses API returns token counts
+// but no $-cost field. Without this, every codex run logged costUSD=0 even
+// though tokens were tracked correctly.
+const COST_PER_M_INPUT = Number(process.env.CODEX_COST_INPUT_PER_M ?? 1.25);
+const COST_PER_M_OUTPUT = Number(process.env.CODEX_COST_OUTPUT_PER_M ?? 10.0);
+
 const SYSTEM_PROMPT_TEMPLATE = `You are a senior software architect providing feedback on designs, proposals, and ideas.
 
 The codebase context:
@@ -71,10 +78,16 @@ export const codexAdapter: ReviewEngine = {
     }
 
     const rawOutput = response.output_text ?? '';
+    const costUSD = response.usage
+      ? (response.usage.input_tokens / 1_000_000) * COST_PER_M_INPUT +
+        (response.usage.output_tokens / 1_000_000) * COST_PER_M_OUTPUT
+      : undefined;
     return {
       findings: parseReviewOutput(rawOutput, 'codex'),
       rawOutput,
-      usage: response.usage ? { input: response.usage.input_tokens, output: response.usage.output_tokens } : undefined,
+      usage: response.usage
+        ? { input: response.usage.input_tokens, output: response.usage.output_tokens, costUSD }
+        : undefined,
     };
   },
 };
