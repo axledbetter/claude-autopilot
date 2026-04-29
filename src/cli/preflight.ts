@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runSafe } from '../core/shell.ts';
 import { detectLLMKey, loadEnvFile, LLM_KEY_NAMES } from '../core/detect/llm-key.ts';
+import { findPackageRoot } from './_pkg-root.ts';
 
 const PASS = '\x1b[32m✓\x1b[0m';
 const FAIL = '\x1b[31m✗\x1b[0m';
@@ -115,15 +116,27 @@ export async function runDoctor(): Promise<DoctorResult> {
     message: nodeMajor < 22 ? `Node 22+ required — current: ${nodeVersion}. Install via nvm: nvm install 22` : undefined,
   });
 
-  // 2. tsx available
+  // 2. tsx available — checked in three places, in order:
+  //   a) consumer project: <cwd>/node_modules/.bin/tsx
+  //   b) this package's own bundled tsx (covers global installs — the package
+  //      ships its own node_modules; bin/_launcher.js uses the same lookup)
+  //   c) PATH fallback
+  // Previous version only checked (a) + (c), which false-positive-failed every
+  // global install since (b) is where tsx actually lives there.
+  const pkgRoot = findPackageRoot(import.meta.url);
+  const ownTsx = pkgRoot ? path.join(pkgRoot, 'node_modules', '.bin', 'tsx') : null;
   const localTsx = path.join(process.cwd(), 'node_modules', '.bin', 'tsx');
   const tsxVersion = fs.existsSync(localTsx)
     ? runSafe(localTsx, ['--version'])
-    : runSafe('tsx', ['--version']);
+    : ownTsx && fs.existsSync(ownTsx)
+      ? runSafe(ownTsx, ['--version'])
+      : runSafe('tsx', ['--version']);
   checks.push({
     name: 'tsx available',
     result: tsxVersion ? 'pass' : 'fail',
-    message: !tsxVersion ? 'tsx not found — run: npm install @delegance/claude-autopilot@alpha (includes tsx for dev builds)' : undefined,
+    message: !tsxVersion
+      ? 'tsx not found — reinstall: npm install -g @delegance/claude-autopilot@latest'
+      : undefined,
   });
 
   // 3. gh CLI authenticated
@@ -217,7 +230,7 @@ export async function runDoctor(): Promise<DoctorResult> {
 
   console.log('');
   if (blockers > 0) {
-    console.log(`\x1b[31m[doctor] ${blockers} blocker(s) — fix before running npx guardrail run\x1b[0m\n`);
+    console.log(`\x1b[31m[doctor] ${blockers} blocker(s) — fix before running claude-autopilot run\x1b[0m\n`);
   } else if (warnings > 0) {
     console.log(`\x1b[33m[doctor] ${warnings} warning(s) — pipeline will run but some steps may be skipped\x1b[0m\n`);
   } else {

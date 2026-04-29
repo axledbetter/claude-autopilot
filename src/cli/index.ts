@@ -29,6 +29,47 @@ import { runTestGen } from './test-gen.ts';
 import { runCouncilCmd } from './council.ts';
 import { runMigrateV4 } from './migrate-v4.ts';
 import { findPackageRoot } from './_pkg-root.ts';
+import { GuardrailError } from '../core/errors.ts';
+
+// Format unhandled errors as a one-line user-facing message instead of dumping a
+// Node stack trace. Auth/network failures are by far the most common path here
+// (bad/missing API key, rate limit, network blip) and surfacing the raw stack
+// reads as "the tool is broken" when it isn't.
+function formatTopLevelError(err: unknown): { message: string; exit: number } {
+  if (err instanceof GuardrailError) {
+    const provider = err.provider ? ` [${err.provider}]` : '';
+    const hint = err.code === 'auth'
+      ? '\n  hint: check your API key (ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY) or run: claude-autopilot doctor'
+      : err.code === 'rate_limit'
+        ? '\n  hint: rate-limited by provider — retry shortly or switch model in guardrail.config.yaml'
+        : err.code === 'invalid_config'
+          ? '\n  hint: check guardrail.config.yaml — claude-autopilot doctor'
+          : '';
+    return { message: `[claude-autopilot]${provider} ${err.code}: ${err.message}${hint}`, exit: 1 };
+  }
+  if (err instanceof Error) {
+    return { message: `[claude-autopilot] ${err.message}`, exit: 1 };
+  }
+  return { message: `[claude-autopilot] ${String(err)}`, exit: 1 };
+}
+
+process.on('unhandledRejection', err => {
+  const { message, exit } = formatTopLevelError(err);
+  process.stderr.write(`\x1b[31m${message}\x1b[0m\n`);
+  if (process.env.CLAUDE_AUTOPILOT_DEBUG === '1' && err instanceof Error && err.stack) {
+    process.stderr.write(`\x1b[2m${err.stack}\x1b[0m\n`);
+  }
+  process.exit(exit);
+});
+
+process.on('uncaughtException', err => {
+  const { message, exit } = formatTopLevelError(err);
+  process.stderr.write(`\x1b[31m${message}\x1b[0m\n`);
+  if (process.env.CLAUDE_AUTOPILOT_DEBUG === '1' && err.stack) {
+    process.stderr.write(`\x1b[2m${err.stack}\x1b[0m\n`);
+  }
+  process.exit(exit);
+});
 
 const args = process.argv.slice(2);
 
@@ -280,7 +321,7 @@ switch (subcommand) {
   }
 
   case 'init': {
-    console.log('\x1b[33m[init] guardrail init is deprecated — use: npx guardrail setup\x1b[0m\n');
+    // `init` and `setup` are aliases. Keep both supported — no nag banner.
     const force = args.includes('--force');
     await runSetup({ force });
     break;
