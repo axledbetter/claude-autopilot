@@ -769,6 +769,60 @@ Forbids:
 
 ---
 
+## Plan refinements from Codex review (must address inside referenced tasks)
+
+### Task 3.1 (alias resolver) — repo-boundary escape prevention [CRITICAL]
+- Add `realpath` canonicalization of `resolvesTo` before use
+- Reject absolute paths in alias map entries
+- Reject any resolved path that escapes the trusted root prefix (`<repo>/skills/` or installed package dir)
+- Reject symlink targets that point outside the trusted root
+- Tests: `..` traversal, symlink escape, absolute path injection — all must error
+
+### Task 3.4 (result parser) — subprocess identity binding [CRITICAL]
+- Dispatcher creates per-invocation temp dir with `0700` perms (not shared `/tmp/<file>.json`)
+- Add `nonce` field (random 32-byte hex) to `InvocationEnvelope` — required, echoed in `ResultArtifact`
+- Result parser rejects artifact with mismatched or missing nonce → `reasonCode: nonce-mismatch`
+- Verify result file owner == current uid + mtime within process lifetime window
+- Stdout fallback markers must include nonce in payload, not just invocationId
+- Tests: race condition with concurrent writer, stale file from prior run, owner mismatch
+
+### Task 3.2 (handshake) — formalize semver semantics
+- Define in `contract.ts`: runtime comparison uses strict semver ranges (`>=5.2 <6` style); `5.x` parsed as `>=5 <6`
+- `skill_runtime_api_version` requires exact major match against runtime's `envelope_contract_version` major
+- Pre-releases (`5.2.0-beta`) handled per semver: NOT considered satisfying `>=5.2.0` unless explicit pre-release range
+- Add table-driven tests: `5.2.0-beta` against `>=5.2.0` (fail), `5.2.5` against `>=5.2 <6` (pass), etc.
+
+### Task 3.6 (audit log) — cross-platform locking
+- Use `proper-lockfile` with retries + stale-lock recovery (5s threshold)
+- On Windows, fall back to atomic rename pattern (write to `<file>.tmp.<pid>` then rename)
+- Single-writer in-process queue when possible; advisory lock only for multi-process contention
+- Add Windows-specific test: 10 concurrent writers, no corruption, no deadlock
+
+### Task 3.5 (executor) — exec hardening
+- Document structured argv as the only non-deprecated path
+- Resolve `exec` strictly via `which`/`where` lookup; reject if not found in PATH
+- For workspace-local scripts, require explicit `./scripts/<name>` form (relative)
+- Tests: poisoned PATH, executable shadowing, missing binary
+
+### Task 8.1 (migrator) — collision handling
+- Archive suffix uses ISO timestamp + manifest fingerprint (sha256 first 8 chars): `skills/migrate.archive-2026-04-29T12-00-00Z-a3f2c1b8/`
+- If target archive name already exists → add monotonic counter
+- Migration report enumerates every moved/skipped path with reason
+- Tests: re-run idempotency, existing archive collision, user-edited skills
+
+### Task 6.x (env_file safety) — symlink + workspace boundary
+- Resolve `env_file` via `realpath` before reading
+- Verify resolved path is under current workspace root (not just lexically — actually filesystem-bounded)
+- Reject symlinks pointing outside workspace
+- Monorepo test: workspace A's stack.md cannot reference workspace B's `.env`
+
+### New Task 9.5 — multi-CI-provider detection
+- Unit fixtures simulating env vars for: GitHub Actions, GitLab CI, CircleCI, Buildkite, Jenkins
+- Each fixture asserts correct `ci_provider` in audit log
+- One non-GitHub integration smoke test (CircleCI env simulation) verifying prod gate enforcement
+
+---
+
 ## Acceptance criteria (spec § acceptance)
 
 - [ ] All 618 existing tests pass + ~90 new tests across phases
