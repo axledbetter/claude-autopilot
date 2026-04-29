@@ -66,11 +66,13 @@
     "js-yaml": "^4",
     "minimatch": ">=9",
     "openai": ">=4",
+    "proper-lockfile": "^4.1.2",
     "tsx": ">=4"
   },
   "devDependencies": {
     "@types/js-yaml": "^4",
     "@types/node": "^25",
+    "@types/proper-lockfile": "^4.1.4",
     "typescript": "^6"
   },
   "peerDependencies": {
