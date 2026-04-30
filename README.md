@@ -31,24 +31,31 @@ Every finding came with a concrete remediation (often a code patch or named libr
 
 ## Why this vs the alternatives
 
-AI coding tools fall into three buckets. Here's where claude-autopilot sits.
-
-| Tool | Shape | Hosted? | Model lock-in | Pipeline structure | You can intervene mid-flow? |
+| Tool | Where code lives | Pricing model | Models | Pipeline | Intervenable? |
 |---|---|---|---|---|---|
-| **Devin** (Cognition) | Autonomous agent | Yes (SaaS, $500/mo) | Cognition's stack | Opaque | No — watch a dashboard |
-| **GitHub Copilot Workspace** | Spec → plan → PR | Yes | Copilot only | Fixed, non-extensible | Edit the plan, that's it |
-| **Factory Droids** | Multi-agent workflow | Yes (per-seat) | Factory's stack | Fixed | Limited |
-| **Cursor BugBot / Copilot Review / CodeRabbit** | Async PR reviewer | Yes | Vendor's model | Single phase (review only) | N/A — post-hoc only |
-| **Aider / Cline / Cursor agent mode** | Interactive pair programming | Local | User's choice | None — single-shot prompts | Continuous |
-| **OpenHands / SWE-agent** | Open-ended agent framework | Local | User's choice | None — agent decides | Rare, research-grade |
-| **claude-autopilot** | **Opinionated local pipeline** | **Local** | **Any LLM (Claude / GPT / Gemini / Groq / Ollama)** | **Fixed but rewireable, skill-per-phase** | **Every phase. All state on disk.** |
+| **Devin** (Cognition) | Hosted sandbox | Per-ACU (cloud markup) | Cognition's stack | Opaque | No — dashboard only |
+| **Factory Droids** | Hosted | Per-task + seat | Factory's stack | Fixed | Limited |
+| **GitHub Copilot Workspace** | GitHub-hosted | Per-seat ($) | Copilot only | Fixed, non-extensible | Edit the plan |
+| **Cursor / Copilot agent mode** | Local IDE | Per-seat ($) | Vendor's model | None — single-shot | Continuous |
+| **Cursor BugBot / CodeRabbit** | Hosted | Per-PR or seat | Vendor's model | Review only | Post-hoc |
+| **Aider / Cline** | Local CLI | Free + your API key | User's choice | None | Continuous |
+| **OpenHands / SWE-agent** | Local research | Free | User's choice | Agent decides | Rare |
+| **claude-autopilot** | **Local CLI, your repo** | **Free + your existing Claude subscription** | **Multi-model per role (Claude + Codex + Gemini)** | **Skill-per-phase, rewireable** | **Every phase, all state on disk** |
 
-The architectural differences that matter most in practice:
+Three things only this product gives you:
 
-1. **Multi-model by design.** Claude writes code, Codex reviews the plan, bugbot triages PR findings. Different model for each role, swap any of them. The pipeline's phases are explicit contracts, not one opaque API call.
-2. **Your stack, not a sandbox.** It runs your `npm test`, your `prisma migrate`, your `gh pr create`, your `ruff check`. If it works in your terminal, it works in the pipeline.
-3. **Phase artifacts on disk, editable.** Every phase writes to a file you can open — `docs/specs/*.md`, `docs/plans/*.md`, a branch, a PR. Stop, edit by hand, resume, or re-run any phase in isolation.
-4. **Test-gated auto-revert as a first-class command.** `claude-autopilot fix --verify` patches a file, runs your full test suite, and reverts on failure. Built into the CLI, not a wrapper you write yourself.
+1. **Multi-model council.** Same design question goes to Claude + Codex + Gemini in parallel; a fourth model synthesizes the consensus. Different blind spots, different recommendations, one merged answer. **No other tool dispatches multi-model on a per-decision basis.**
+2. **Your code never leaves your machine.** No cloud sandbox. No SaaS markup. The `git push` that happens at the end is from your laptop. For private repos, regulated industries, or anyone who doesn't want their unfinished code on someone else's servers — this is the only autonomous-agent shape that fits.
+3. **Ships as a Claude Code skill, not a competing IDE.** `/brainstorm`, `/autopilot`, `/migrate`, `/validate` are first-class Claude Code commands. As Claude Code grows, autopilot rides that adoption. You don't switch tools to use it; it's already there.
+
+Plus the four practical differences:
+
+- **Multi-model by role.** Claude writes code, Codex reviews the plan, bugbot triages PR findings. Swap any of them.
+- **Your stack, not a sandbox.** Runs your `npm test`, your `prisma migrate`, your `gh pr create`. If it works in your terminal, it works in the pipeline.
+- **Phase artifacts on disk, editable.** Every phase writes to a file you can open — `docs/specs/*.md`, `docs/plans/*.md`, a branch, a PR. Stop, edit by hand, resume, or re-run any phase in isolation.
+- **Test-gated auto-revert.** `claude-autopilot fix --verify` patches a file, runs your tests, reverts on failure. Built into the CLI, not a wrapper.
+
+**Real numbers from a real run:** [DEMO.md](DEMO.md) — autonomous multi-file change on a Python codebase, **12 minutes, $2.20, zero manual intervention.**
 
 ## 30-second quickstart
 
