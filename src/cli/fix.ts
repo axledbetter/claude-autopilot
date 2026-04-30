@@ -79,9 +79,13 @@ export async function runFix(options: FixCommandOptions = {}): Promise<number> {
     return 0;
   }
   if (fixable.length === 0) {
-    console.log(fmt('yellow', `[fix] ${actionable.length} finding${actionable.length !== 1 ? 's' : ''} have file but no line — model output was line-less. Re-run scan with --ask "include line numbers" or run \`claude-autopilot run\` for richer extraction.`));
+    const verb = actionable.length === 1 ? 'has' : 'have';
+    const noun = actionable.length === 1 ? 'finding' : 'findings';
+    console.log(fmt('yellow', `[fix] ${actionable.length} ${noun} ${verb} file but no line — model output was line-less. Re-run scan with --ask "include line numbers" or run \`claude-autopilot run\` for richer extraction.`));
     for (const f of actionable) {
-      const sev = f.severity === 'critical' ? fmt('red', 'CRITICAL') : fmt('yellow', 'WARNING ');
+      const sev = f.severity === 'critical' ? fmt('red', 'CRITICAL')
+        : f.severity === 'warning' ? fmt('yellow', 'WARNING ')
+        : fmt('dim', 'NOTE    ');
       console.log(`  [${sev}] ${fmt('dim', f.file)} ${f.message}`);
     }
     return 0;
