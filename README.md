@@ -13,6 +13,8 @@ claude-autopilot brainstorm "add SSO with SAML for enterprise tenants"
 
 *No hosted agent. No per-seat subscription. Runs locally on your machine, against your real repo, using your API keys. Every phase is a Claude Code skill you can intervene in, rewire, or run by itself.*
 
+**See it work end-to-end:** [DEMO.md](DEMO.md) — one real autonomous run on a Python codebase. 12 minutes wall clock, $2.20 spend, 5 new tests, multi-file integration, zero manual intervention. Honest about what's bounded today.
+
 ---
 
 ## Benchmark

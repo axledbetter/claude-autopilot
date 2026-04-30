@@ -1,5 +1,102 @@
 # Changelog
 
+## v5.3.0 — Deploy phase (in flight, not yet shipped)
+
+### Added
+
+- **`deploy` phase** — adapter-agnostic deploy step that runs your existing deploy command, extracts the URL from stdout, optionally polls a `healthCheckUrl`, and (optionally) posts result to a PR. Closes the loop from "PR merged" to "PR merged + deployed + smoke-tested + URL on the PR".
+- **`deployCommand` + `healthCheckUrl` config keys** — anything that works in your terminal works as `deployCommand` (`vercel --prod`, `flyctl deploy`, `kubectl apply`, `gh workflow run`, `make deploy`).
+- **`claude-autopilot deploy [--dry-run|--command|--health-url|--pr <n>]`** — CLI surface. PR comment integration via `gh pr comment`.
+
+First-class provider adapters (Vercel/Fly/Render with API-level deploy IDs + rollback hooks) are queued for v5.4.
+
+## v5.2.2 — Demo polish
+
+### Fixed
+
+- **Cost log skips zero-token entries.** Setup-flow scans, dry-runs, and no-findings paths were polluting the log with empty rows that drowned real review entries in `claude-autopilot costs` output.
+- **`costs` shows scope.** Output now explicitly notes "per-project — scoped to `<cwd>/.guardrail-cache/costs.jsonl`" so users understand it's not a global aggregate.
+- **`pr` no longer hard-fails on missing config.** First-run on a fresh repo now auto-detects + prints a remediation line pointing at `setup`.
+
+### Added
+
+- **DEMO.md committed at repo root.** Real end-to-end pipeline run on randai-johnson (multi-file Python integration, 12 min wall clock, $2.20 spend, 5 new tests, zero manual intervention). Linkable from external docs / pitch material.
+
+## v5.2.1 — Stress-test polish
+
+### Fixed
+
+- **venv detection in tests phase.** `pytest -q` now resolves to `<project>/.venv/bin/pytest` (or `venv/`, `env/`) when present, so `claude-autopilot pr` no longer reports "tests failed" on Python repos with venv-installed pytest.
+- **`autoregress` 100% broken on global install** — the bridge resolved `SCRIPT` to `dist/scripts/autoregress.ts` under the compiled layout, but `scripts/` ships at the package root. Every invocation threw `ERR_MODULE_NOT_FOUND`. Now uses `findPackageRoot` + existence check.
+- **Council in python preset.** Python preset now ships a commented `council:` template (mirrors the generic preset). Out-of-the-box `init --preset python` no longer requires manual schema discovery.
+- **Regression-lane fixture top-level await.** CI workflow's `npx tsx -e "..."` blocks wrapped in `async () => {...}` so esbuild's CJS output accepts them. Plus expected-ledger.json updated to match v5.2.0's new version format.
+
+## v5.0.8 — Line extraction + fix gate
+
+### Fixed
+
+- **Parser extracts "line N" / "on line N" / "at line N" from prose** when not adjacent to a file ref. Previously findings shipped with file but no line, so `fix --dry-run` reported "no fixable findings" on a non-empty findings list.
+- **`fix` distinguishes actionable (file present) from fixable (file + line).** Dry-run surfaces actionable findings even when line-less, with a clear message about why the LLM-fix loop can't act on them.
+
+## v5.0.7 — File backfill + cost ledger consolidation
+
+### Fixed
+
+- **Single-file scan unconditionally backfills the file path.** The 5.0.6 fallback only triggered on `<unspecified>`, so prose-noise like `"n.r"` slipped through and broke `fix`.
+- **`pr-desc` and `council` now persist to the cost ledger.** Previously only `scan` and `run` were tracked, so `claude-autopilot costs` showed misleadingly low totals after multi-call sessions.
+- **Single-letter code extensions removed from bare-reference parser** (c/d/h/m/r/s) — they still match when backtick-wrapped, but bare matches like "n.r" no longer slip through.
+- **`appendCostLog` swallows write errors centrally.** Cost log is observability, not a contract — a read-only FS or full disk no longer crashes commands that already succeeded.
+
+## v5.0.6 — Setup YAML + branch fallback
+
+### Fixed
+
+- **`setup` no longer writes duplicate `testCommand` keys.** Several presets (go, python, python-fastapi, rails-postgres) ship with their own `testCommand:` line; `cli/setup.ts` was unconditionally appending another, producing invalid YAML that hard-failed every command after `setup` on those stacks.
+- **Single-file scan backfills file path** (initial fix; superseded by v5.0.7's unconditional version).
+- **Branch-derived PR titles default to `chore:` for unknown prefixes.** `autopilot-test/validate-weights` → `chore: validate weights` instead of `autopilot test validate weights` (which fails commitlint).
+
+## v5.0.5 — Python detect + parser hardening
+
+### Added
+
+- **`presets/python/`** — general Python config (pytest, ruff, hardcoded-secrets, common protected paths). Detector now picks it for any `pyproject.toml` or `requirements.txt` without FastAPI signals (was falling through to the JS/Generic preset).
+
+### Fixed
+
+- **Parser rejects "e.g" / "i.e" / "etc" prose as file refs.** The prior regex `\.[a-z]{1,6}` accepted any 1-6 letter suffix, so prose like "(e.g. dict, list)" was matched. Bare references now require a known code-file extension.
+- **`pr-desc` real titles.** Prompt now explicitly asks for a Title line; parser falls through to a branch-derived conventional-commit title (`fix/cost-tracker` → `fix: cost tracker`), then first summary bullet, then `chore: update` only as a last resort.
+- **`runReviewOnTestFail` default flipped to `true`.** Failed/missing test commands no longer silently kill the LLM review phase. Strict gating still available via explicit `false`.
+
+## v5.0.4 — Council Responses API
+
+### Fixed
+
+- **Council 404s on `gpt-5.3-codex` resolved.** Codex variants and o-series reasoning models are Responses-API-only — the council adapter only used `client.chat.completions`. Now branches by model name (`/codex|^o[1-9]|^gpt-5\.3-/`) to use `client.responses.create()` for those models. Fixes the multi-model differentiator for any user with only `OPENAI_API_KEY`.
+- **Generic preset ships a working council template.**
+
+## v5.0.3 — Cost tracker
+
+### Fixed
+
+- **Codex adapter computes `costUSD`** (was returning `usage` without a cost field, so every codex run logged $0).
+- **`scan` now persists to cost log** (was only `run` writing entries).
+
+## v5.0.2 — Post-install friction
+
+### Fixed
+
+- **preflight `tsx` false-positive eliminated.** Every fresh global install reported `✗ tsx available` blocker because the bundled tsx wasn't checked. Now uses `findPackageRoot(import.meta.url)`.
+- **Top-level `unhandledRejection` + `uncaughtException` handlers** format `GuardrailError` as a single-line red message instead of a Node stack trace. `CLAUDE_AUTOPILOT_DEBUG=1` re-enables stack.
+- **Tarball trimmed:** dropped `src/` + `*.map` from `files` array → 319 files / 182 kB packed (was 726 / 382 kB), -56% / -52%.
+- **Stale strings:** `@alpha` install hint → `@latest`; `npx guardrail run` blocker text → `claude-autopilot run`; init deprecation banner removed (both verbs work).
+
+## v5.0.1 — Types + tombstone
+
+### Fixed
+
+- **Ships `dist/src/index.d.ts`** for TypeScript consumers.
+- **Tombstone `@delegance/guardrail` package** publishes a forwarder pointing at the renamed package; pre-rename versions deprecated with migration message.
+
 ## v5.2.0 — Migrate skill generalization
 
 ### Added
