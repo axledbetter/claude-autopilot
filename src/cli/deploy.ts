@@ -1,8 +1,8 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { spawnSync } from 'node:child_process';
 import { loadConfig } from '../core/config/loader.ts';
 import { runDeployPhase, type DeployPhaseResult } from '../core/phases/deploy.ts';
+import { postPrComment, DEPLOY_COMMENT_MARKER } from './pr-comment.ts';
 
 const C = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
@@ -22,14 +22,13 @@ export interface DeployCommandOptions {
   dryRun?: boolean;
 }
 
-function postPrComment(prNumber: string, body: string, cwd: string): boolean {
-  const r = spawnSync('gh', ['pr', 'comment', prNumber, '--body', body], { cwd, encoding: 'utf8' });
-  return r.status === 0;
-}
-
 function formatComment(result: DeployPhaseResult, command: string): string {
   const status = result.status === 'pass' ? '✅ Deploy succeeded' : result.status === 'fail' ? '❌ Deploy failed' : '⊘ Deploy skipped';
   const lines: string[] = [
+    // Marker MUST be the first line so postPrComment's startswith() dedup
+    // works — repeated `deploy --pr 42` invocations will update the same
+    // comment instead of spamming new ones.
+    DEPLOY_COMMENT_MARKER,
     `## ${status}`,
     '',
     `**Command:** \`${command}\`  `,
@@ -105,9 +104,17 @@ export async function runDeploy(options: DeployCommandOptions = {}): Promise<num
 
   // Optional PR comment
   if (options.prNumber) {
-    const ok = postPrComment(options.prNumber, formatComment(result, deployCommand), cwd);
-    if (ok) console.log(fmt('dim', `  posted comment on PR #${options.prNumber}`));
-    else console.log(fmt('yellow', `  (could not post PR comment — is gh authenticated?)`));
+    try {
+      const { action } = await postPrComment(
+        parseInt(options.prNumber, 10),
+        formatComment(result, deployCommand),
+        cwd,
+        DEPLOY_COMMENT_MARKER,
+      );
+      console.log(fmt('dim', `  ${action} comment on PR #${options.prNumber}`));
+    } catch {
+      console.log(fmt('yellow', `  (could not post PR comment — is gh authenticated?)`));
+    }
   }
 
   return result.status === 'fail' ? 1 : 0;

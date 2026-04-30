@@ -32,10 +32,15 @@ export function detectPrNumber(cwd: string): number | null {
   return null;
 }
 
-/** Find the ID of a previously-posted autopilot comment, if any. */
-function findExistingCommentId(pr: number, cwd: string): number | null {
+/**
+ * Find the ID of a previously-posted comment matching `marker`, if any.
+ * Default marker is the review-comment marker; pass a different one for
+ * other comment types (e.g. deploy uses `<!-- guardrail-deploy -->`) so
+ * deploy + review comments don't collide on the same PR.
+ */
+function findExistingCommentId(pr: number, cwd: string, marker: string = COMMENT_MARKER): number | null {
   const raw = runSafe('gh', ['api', `repos/{owner}/{repo}/issues/${pr}/comments`,
-    '--jq', `[.[] | select(.body | startswith("${COMMENT_MARKER}")) | .id] | first`], { cwd });
+    '--jq', `[.[] | select(.body | startswith("${marker}")) | .id] | first`], { cwd });
   if (!raw) return null;
   const n = parseInt(raw.trim(), 10);
   return isNaN(n) ? null : n;
@@ -118,13 +123,19 @@ export function formatComment(
   return lines.join('\n');
 }
 
-/** Post or update the autopilot comment on the given PR. */
+/**
+ * Post or update a comment on the given PR. Dedup is keyed on `marker`:
+ * if an existing comment starting with `marker` exists, it gets PATCHed;
+ * otherwise a new comment is posted. The body MUST start with the same
+ * marker for upsert to work on subsequent runs.
+ */
 export async function postPrComment(
   pr: number,
   body: string,
   cwd: string,
+  marker: string = COMMENT_MARKER,
 ): Promise<{ action: 'created' | 'updated'; url: string | null }> {
-  const existingId = findExistingCommentId(pr, cwd);
+  const existingId = findExistingCommentId(pr, cwd, marker);
 
   if (existingId) {
     runSafe('gh', ['api', `repos/{owner}/{repo}/issues/comments/${existingId}`,
@@ -137,3 +148,7 @@ export async function postPrComment(
   const url = raw?.trim() ?? null;
   return { action: 'created', url };
 }
+
+/** Re-exported for callers that want to use a non-review marker. */
+export const REVIEW_COMMENT_MARKER = COMMENT_MARKER;
+export const DEPLOY_COMMENT_MARKER = '<!-- guardrail-deploy -->';
