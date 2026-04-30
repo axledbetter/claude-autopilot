@@ -1,6 +1,10 @@
 # @delegance/claude-autopilot
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![GitHub](https://img.shields.io/badge/GitHub-axledbetter%2Fclaude--autopilot-181717?logo=github)](https://github.com/axledbetter/claude-autopilot) [![npm](https://img.shields.io/npm/v/@delegance/claude-autopilot.svg)](https://www.npmjs.com/package/@delegance/claude-autopilot)
+
 **Autonomous development pipeline for Claude Code. Brainstorm → spec → plan → implement → migrate → validate → PR → review → merge — all from your terminal, on your codebase, with your test suite.**
+
+**Open source, MIT-licensed, runs on your machine with your API keys.** No hosted agent, no per-seat subscription — `npm install -g @delegance/claude-autopilot` and you're done.
 
 ```bash
 claude-autopilot brainstorm "add SSO with SAML for enterprise tenants"
@@ -339,6 +343,10 @@ ANTHROPIC_API_KEY=sk-ant-... claude-autopilot scan --all
 
 We do not claim 13/13 reflects every real-world repo — it's a reproducible upper bound on a fixture that exercises the categories we explicitly target.
 
+## Contributing
+
+Issues and PRs welcome — https://github.com/axledbetter/claude-autopilot/issues. The pipeline literally builds itself; many features in this repo were implemented by autopilot running against autopilot ([DEMO.md](DEMO.md) walks through six self-eat PRs with cost trajectory $10 → ~$2.50). Read [CONTRIBUTING.md](CONTRIBUTING.md) if it exists, otherwise: clone, `npm install`, `npm test`, open a PR.
+
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
