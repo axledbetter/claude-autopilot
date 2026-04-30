@@ -324,4 +324,81 @@ describe('VercelDeployAdapter.streamLogs', () => {
       { text: 'done', level: 'stdout' },
     ]);
   });
+
+  it('handles partial chunks across reads (a line split mid-event)', async () => {
+    const fullLine = JSON.stringify({ type: 'stdout', payload: { text: 'split-line' }, created: 1700000000000 });
+    const halfA = fullLine.slice(0, 20);
+    const halfB = fullLine.slice(20) + '\n';
+    const { fetch } = mockFetch([streamingRes(200, [halfA, halfB])]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const lines: string[] = [];
+    for await (const line of adapter.streamLogs!({ deployId: 'dpl_x' })) {
+      lines.push(line.text);
+    }
+    assert.deepEqual(lines, ['split-line']);
+  });
+
+  it('tolerates malformed JSON by skipping the bad line', async () => {
+    const good = JSON.stringify({ type: 'stdout', payload: { text: 'good-1' }, created: 1700000000000 }) + '\n';
+    const garbage = '{not really json' + '\n';
+    const good2 = JSON.stringify({ type: 'stdout', payload: { text: 'good-2' }, created: 1700000000001 }) + '\n';
+    const { fetch } = mockFetch([streamingRes(200, [good + garbage + good2])]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const lines: string[] = [];
+    for await (const line of adapter.streamLogs!({ deployId: 'dpl_x' })) {
+      lines.push(line.text);
+    }
+    assert.deepEqual(lines, ['good-1', 'good-2']);
+  });
+
+  it('handles SSE-style "data: {...}" prefix in addition to raw NDJSON', async () => {
+    const event = JSON.stringify({ type: 'stdout', payload: { text: 'sse-line' }, created: 1700000000000 });
+    const stream = `event: log\ndata: ${event}\n\n: heartbeat\nid: 42\n`;
+    const { fetch } = mockFetch([streamingRes(200, [stream])]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const lines: string[] = [];
+    for await (const line of adapter.streamLogs!({ deployId: 'dpl_x' })) {
+      lines.push(line.text);
+    }
+    assert.deepEqual(lines, ['sse-line']);
+  });
+
+  it('filters non-log event types (state, complete) so only stdout/stderr surface', async () => {
+    const stream = [
+      JSON.stringify({ type: 'state', payload: { state: 'BUILDING' }, created: 1 }) + '\n',
+      JSON.stringify({ type: 'complete', payload: {}, created: 2 }) + '\n',
+      JSON.stringify({ type: 'stdout', payload: { text: 'survivor' }, created: 3 }) + '\n',
+    ].join('');
+    const { fetch } = mockFetch([streamingRes(200, [stream])]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const lines: string[] = [];
+    for await (const line of adapter.streamLogs!({ deployId: 'dpl_x' })) {
+      lines.push(line.text);
+    }
+    assert.deepEqual(lines, ['survivor']);
+  });
 });
