@@ -138,6 +138,14 @@ export class VercelDeployAdapter implements DeployAdapter {
         { code: 'adapter_bug', provider: 'vercel' },
       );
     }
+    // Phase 2: fire onDeployStart so callers (e.g. --watch) can subscribe
+    // to logs in parallel with polling. Wrap in try/catch — a buggy callback
+    // must not crash the deploy.
+    try {
+      input.onDeployStart?.(created.id);
+    } catch {
+      /* swallow — observability concern only */
+    }
     return this.pollUntilTerminal(created.id, start, input.signal);
   }
 

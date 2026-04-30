@@ -232,4 +232,41 @@ describe('VercelDeployAdapter', () => {
     assert.match(calls[0]!.url, /teamId=team_xyz/);
     assert.match(calls[1]!.url, /teamId=team_xyz/);
   });
+
+  it('fires onDeployStart with the new deployment id immediately after POST', async () => {
+    const { fetch } = mockFetch([
+      res(200, { id: 'dpl_start', url: 'app.vercel.app' }),
+      res(200, { id: 'dpl_start', readyState: 'READY', url: 'app.vercel.app' }),
+    ]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const seen: string[] = [];
+    const result = await adapter.deploy({
+      onDeployStart: (id) => { seen.push(id); },
+    });
+    assert.deepEqual(seen, ['dpl_start']);
+    assert.equal(result.status, 'pass');
+  });
+
+  it('does not fire onDeployStart when create POST returns no id', async () => {
+    const { fetch } = mockFetch([res(200, { url: 'no-id.vercel.app' })]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const seen: string[] = [];
+    await assert.rejects(
+      adapter.deploy({ onDeployStart: (id) => { seen.push(id); } }),
+      /no deployment id/,
+    );
+    assert.deepEqual(seen, []);
+  });
 });
