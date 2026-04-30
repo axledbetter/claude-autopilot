@@ -131,7 +131,15 @@ export async function runSetup(options: SetupOptions = {}): Promise<void> {
   }
 
   let presetContent = await fsAsync.readFile(presetConfigPath, 'utf8');
-  presetContent = presetContent.trimEnd() + `\ntestCommand: "${detection.testCommand}"\n`;
+  // Only append testCommand if the preset doesn't already declare one — several
+  // presets (go, python, python-fastapi, rails-postgres) ship with their own
+  // testCommand line. Unconditionally appending produced duplicate YAML keys
+  // ("testCommand" twice in the same map), which yaml parsers reject. After
+  // 5.0.5 that broke `setup` on Python repos: every command after setup
+  // hard-failed until the user manually edited the file.
+  if (!/^testCommand\s*:/m.test(presetContent)) {
+    presetContent = presetContent.trimEnd() + `\ntestCommand: "${detection.testCommand}"\n`;
+  }
 
   // Apply profile overlay if specified
   if (options.profile) {

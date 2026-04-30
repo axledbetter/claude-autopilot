@@ -85,6 +85,15 @@ describe('parseDescription', () => {
     assert.equal(out.title, 'fix: auth session leak');
   });
 
+  it('defaults to chore: when slash-prefix is unknown but descriptive', () => {
+    // 5.0.5 stress test — branches like `autopilot-test/validate-weights` used
+    // to produce `autopilot test validate weights` (no conventional-commit
+    // prefix, fails commitlint). Now defaults to chore: with the post-slash
+    // segment as the description.
+    const out = parseDescription('## Summary\n- bullet', { branchName: 'autopilot-test/validate-weights-backtest' });
+    assert.equal(out.title, 'chore: validate weights backtest');
+  });
+
   it('derives title from first summary bullet when branch is unhelpful', () => {
     const out = parseDescription(
       '## Summary\n- adds caching to user lookup',

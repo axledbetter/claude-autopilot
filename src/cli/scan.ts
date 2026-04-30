@@ -154,6 +154,19 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
     gitSummary: focusHint,
   });
 
+  // Single-file scan fallback — when only one file was scanned, the LLM
+  // doesn't always repeat the file path in its findings (it knows the
+  // context). Backfill `<unspecified>` with the actual scan target so the
+  // `fix` command can match findings to real paths. Without this, a
+  // `claude-autopilot scan src/foo.ts` produces findings with file
+  // `<unspecified>` and `fix --severity all` reports "no fixable findings".
+  if (relFiles.length === 1) {
+    const onlyFile = relFiles[0]!;
+    for (const f of result.findings) {
+      if (!f.file || f.file === '<unspecified>') f.file = onlyFile;
+    }
+  }
+
   // Apply ignore rules
   const ignoreRules = [...loadIgnoreRules(cwd), ...parseConfigIgnore(config.ignore)];
   const findings = applyIgnoreRules(result.findings, ignoreRules);
