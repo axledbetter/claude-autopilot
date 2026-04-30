@@ -24,6 +24,8 @@ export const GUARDRAIL_CONFIG_SCHEMA = {
     staticRulesParallel: { type: 'boolean' },
     stack: { type: 'string' },
     testCommand: { type: ['string', 'null'] },
+    deployCommand: { type: ['string', 'null'] },
+    healthCheckUrl: { type: ['string', 'null'] },
     thresholds: {
       type: 'object',
       properties: {

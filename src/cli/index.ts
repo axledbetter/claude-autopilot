@@ -167,8 +167,8 @@ These are aliases for the flat subcommands; they still work without the 'advance
   args.shift(); // drop 'advanced'
 }
 
-const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'migrate', 'migrate-doctor', 'brainstorm', 'help', '--help', '-h'] as const;
-const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity', 'prompt', 'context-file', 'path'];
+const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'migrate', 'migrate-doctor', 'deploy', 'brainstorm', 'help', '--help', '-h'] as const;
+const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity', 'prompt', 'context-file', 'path', 'pr', 'command', 'health-url'];
 
 // Bare invocation — no subcommand, no flags → show welcome guide
 if (args.length === 0) {
@@ -279,6 +279,7 @@ Commands:
   council      Multi-model review — dispatch the diff to N models and synthesize consensus
   mcp          MCP server for Claude / ChatGPT integration
   autoregress  Snapshot regression tests (run|diff|update|generate)
+  deploy       Run deployCommand from config, capture URL, optionally poll health check + post to PR
   lsp          Language server — publishes findings as LSP diagnostics (stdin/stdout)
   worker       Persistent review daemon for multi-terminal parallel usage (start|stop|status)
   test-gen     Detect uncovered exports and generate test cases using the LLM
@@ -678,6 +679,20 @@ switch (subcommand) {
     const { runMcp } = await import('./mcp.ts');
     const configPath = flag('config');
     await runMcp({ cwd: process.cwd(), configPath });
+    break;
+  }
+
+  case 'deploy': {
+    const { runDeploy } = await import('./deploy.ts');
+    const code = await runDeploy({
+      cwd: process.cwd(),
+      configPath: flag('config'),
+      prNumber: flag('pr'),
+      command: flag('command'),
+      healthUrl: flag('health-url'),
+      dryRun: boolFlag('dry-run'),
+    });
+    process.exit(code);
     break;
   }
 

@@ -22,6 +22,19 @@ export interface GuardrailConfig {
   staticRulesParallel?: boolean;
   stack?: string;
   testCommand?: string | null;
+  /**
+   * Shell command that deploys the project. Adapter-agnostic — anything that
+   * works in your terminal (vercel --prod, flyctl deploy, kubectl apply, gh
+   * workflow run release.yml, make deploy). The deploy phase captures stdout,
+   * extracts the first https?:// URL it finds, and reports as the deploy URL.
+   * Set to null/omit to skip the phase entirely. Added in v5.3.0.
+   */
+  deployCommand?: string | null;
+  /**
+   * Optional URL to poll after a successful deploy (e.g. /healthz endpoint).
+   * Phase polls until 200 OK or 60s timeout; reports fail if neither.
+   */
+  healthCheckUrl?: string | null;
   thresholds?: {
     bugbotAutoFix?: number;
     bugbotProposePatch?: number;
