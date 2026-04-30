@@ -57,4 +57,15 @@ describe('runDeployPhase', () => {
     assert.match(result.output ?? '', /marker\.txt/);
     fs.rmSync(dir, { recursive: true });
   });
+
+  // Bugbot HIGH on PR #56 — only stdout was captured on failure, so deploy
+  // failures hid the actual diagnostic (most CLIs write errors to stderr).
+  it('captures stderr in failure output, not just stdout', async () => {
+    const result = await runDeployPhase({
+      deployCommand: 'echo "stdout-line"; echo "stderr-line" 1>&2; exit 7',
+    });
+    assert.equal(result.status, 'fail');
+    assert.match(result.output ?? '', /stdout-line/);
+    assert.match(result.output ?? '', /stderr-line/);
+  });
 });

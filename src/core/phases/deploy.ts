@@ -31,12 +31,18 @@ function extractDeployUrl(output: string): string | undefined {
 
 async function pollHealthCheck(url: string, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
+  // Per-request budget. Without this, fetch() can hang indefinitely at the OS
+  // TCP layer when the endpoint accepts the connection but never responds —
+  // common during a bad deploy. The outer loop's deadline check would never
+  // fire because no iteration ever completes. Cap each request at 5s and let
+  // the loop retry until the overall budget runs out.
+  const PER_REQUEST_MS = 5000;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(url, { method: 'GET' });
+      const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(PER_REQUEST_MS) });
       if (res.ok) return true;
     } catch {
-      // Network errors are expected during cold-start — keep polling
+      // Network errors / aborts are expected during cold-start — keep polling
     }
     await new Promise(r => setTimeout(r, 2000));
   }
@@ -60,11 +66,18 @@ export async function runDeployPhase(input: DeployPhaseInput): Promise<DeployPha
       stdio: ['ignore', 'pipe', 'pipe'],
     });
   } catch (err) {
-    const errOutput = (err as { stdout?: string; stderr?: string }).stdout ?? '';
+    // Most deploy CLIs write errors to stderr (npm, vercel, flyctl, kubectl).
+    // The prior version captured only stdout, so the resulting `output` was
+    // typically just the "Deploy command failed" prefix with no diagnostics.
+    // Concat both streams so users see the actual failure reason.
+    const errObj = err as { stdout?: string | Buffer; stderr?: string | Buffer; message?: string };
+    const stdout = errObj.stdout?.toString() ?? '';
+    const stderr = errObj.stderr?.toString() ?? '';
+    const combined = [stdout, stderr].filter(Boolean).join('\n').trim() || errObj.message || 'no output';
     return {
       phase: 'deploy',
       status: 'fail',
-      output: `Deploy command failed: ${input.deployCommand}\n${errOutput}`,
+      output: `Deploy command failed: ${input.deployCommand}\n${combined}`,
       durationMs: Date.now() - start,
     };
   }

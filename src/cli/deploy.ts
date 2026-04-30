@@ -48,25 +48,33 @@ export async function runDeploy(options: DeployCommandOptions = {}): Promise<num
   const cwd = options.cwd ?? process.cwd();
   const configPath = options.configPath ?? path.join(cwd, 'guardrail.config.yaml');
 
-  let deployCommand = options.command;
-  let healthCheckUrl = options.healthUrl;
-  if (!deployCommand) {
-    if (!fs.existsSync(configPath)) {
-      console.error(fmt('red', `[deploy] guardrail.config.yaml not found and no --command given.`));
-      console.error(fmt('dim', `         Either pass \`--command "your deploy command"\` or run \`claude-autopilot setup\` first.`));
-      return 1;
-    }
+  // Load config when present, regardless of whether --command was given. CLI
+  // flags override individual config fields; --command shouldn't bypass the
+  // entire config and silently drop the user's `healthCheckUrl`. (Bugbot MED
+  // on PR #56 flagged this — `flyctl deploy --command "flyctl deploy --strategy=immediate"`
+  // would lose the health check the user had set in their committed config.)
+  let configDeployCommand: string | null | undefined;
+  let configHealthCheckUrl: string | null | undefined;
+  if (fs.existsSync(configPath)) {
     try {
       const config = await loadConfig(configPath);
-      deployCommand = config.deployCommand ?? undefined;
-      healthCheckUrl = healthCheckUrl ?? config.healthCheckUrl ?? undefined;
+      configDeployCommand = config.deployCommand;
+      configHealthCheckUrl = config.healthCheckUrl;
     } catch (err) {
       console.error(fmt('red', `[deploy] Could not load config: ${err instanceof Error ? err.message : String(err)}`));
       return 1;
     }
   }
 
+  const deployCommand = options.command ?? configDeployCommand ?? undefined;
+  const healthCheckUrl = options.healthUrl ?? configHealthCheckUrl ?? undefined;
+
   if (!deployCommand) {
+    if (!fs.existsSync(configPath)) {
+      console.error(fmt('red', `[deploy] guardrail.config.yaml not found and no --command given.`));
+      console.error(fmt('dim', `         Either pass \`--command "your deploy command"\` or run \`claude-autopilot setup\` first.`));
+      return 1;
+    }
     console.error(fmt('yellow', `[deploy] No \`deployCommand\` set in guardrail.config.yaml and no --command given. Skipping.`));
     console.error(fmt('dim', `         Add \`deployCommand: "vercel --prod"\` (or your equivalent) to enable.`));
     return 0;
