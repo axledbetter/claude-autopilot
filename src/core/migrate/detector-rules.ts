@@ -63,6 +63,7 @@ export const DETECTION_RULES: DetectionRule[] = [
     requireAll: ['prisma/schema.prisma'],
     excludeIf: ['prisma/migrations'],
     defaultSkill: 'migrate@1',
+    defaultCommand: { exec: 'prisma', args: ['db', 'push'] },
     promptOnSelect: true,
   },
   {
@@ -83,6 +84,7 @@ export const DETECTION_RULES: DetectionRule[] = [
     requireAny: ['drizzle.config.ts', 'drizzle.config.js'],
     excludeIf: ['drizzle/migrations'],
     defaultSkill: 'migrate@1',
+    defaultCommand: { exec: 'drizzle-kit', args: ['push'] },
     promptOnSelect: true,
   },
   {
@@ -101,6 +103,9 @@ export const DETECTION_RULES: DetectionRule[] = [
     confidence: 'high',
     requireAll: ['go.mod', 'migrate'],
     defaultSkill: 'migrate@1',
+    // Conventional invocation; users with non-standard layouts will edit
+    // the generated stack.md (e.g. different -path or DSN flag).
+    defaultCommand: { exec: 'migrate', args: ['-database', '$DATABASE_URL', '-path', 'migrations', 'up'] },
     promptOnSelect: false,
   },
   {
@@ -157,6 +162,7 @@ export const DETECTION_RULES: DetectionRule[] = [
     requireAll: [],
     requireAny: ['ormconfig.json', 'ormconfig.ts', 'ormconfig.js', 'data-source.ts'],
     defaultSkill: 'migrate@1',
+    defaultCommand: { exec: 'typeorm', args: ['migration:run'] },
     promptOnSelect: true,
   },
   {
