@@ -34,6 +34,7 @@ export interface RunDeployOptions {
  */
 export async function runDeploy(opts: RunDeployOptions): Promise<number> {
   const cwd = opts.cwd ?? process.cwd();
+  const explicitConfig = opts.configPath !== undefined;
   const configPath = opts.configPath ?? path.join(cwd, 'guardrail.config.yaml');
 
   let configBlock: DeployConfig | undefined;
@@ -45,6 +46,14 @@ export async function runDeploy(opts: RunDeployOptions): Promise<number> {
       console.error(formatErr('failed to load config', err));
       return 1;
     }
+  } else if (explicitConfig) {
+    // Bugbot HIGH on PR #59 — when user explicitly passes --config <path> and
+    // the file doesn't exist, silently skipping leads to misleading downstream
+    // errors ("no deploy adapter configured", "missing project") when the real
+    // problem is the config file. The default-path case stays silent (it's OK
+    // to run without a config), but explicit user-provided paths must error.
+    console.error(`\x1b[31m[deploy] config file not found: ${configPath}\x1b[0m`);
+    return 1;
   }
 
   // Merge: CLI override beats config. We still want config-supplied
