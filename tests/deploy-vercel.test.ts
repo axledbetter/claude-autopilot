@@ -497,3 +497,154 @@ describe('VercelDeployAdapter.streamLogs', () => {
     assert.equal(calls.length, 2);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 3 — rollback + listDeployments
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('VercelDeployAdapter.rollback', () => {
+  it('promotes a specific deploy when `to` is provided', async () => {
+    const { fetch, calls } = mockFetch([
+      res(200, { id: 'dpl_target', url: 'app-target.vercel.app' }),
+    ]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const result = await adapter.rollback!({ to: 'dpl_target' });
+    assert.equal(result.status, 'pass');
+    assert.equal(result.deployId, 'dpl_target');
+    assert.equal(result.rolledBackTo, 'dpl_target');
+    assert.equal(result.deployUrl, 'https://app-target.vercel.app');
+    assert.ok(result.buildLogsUrl?.includes('dpl_target'));
+    // One POST to /v13/deployments/dpl_target/promote, no list call.
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]!.init?.method, 'POST');
+    assert.match(calls[0]!.url, /\/v13\/deployments\/dpl_target\/promote/);
+  });
+
+  it('looks up the previous prod deploy when `to` is omitted', async () => {
+    // First call: list endpoint returns three READY deploys, newest first.
+    // Second call: the promote POST.
+    const { fetch, calls } = mockFetch([
+      res(200, {
+        deployments: [
+          { id: 'dpl_current', state: 'READY', createdAt: 3000, url: 'cur.vercel.app' },
+          { id: 'dpl_previous', state: 'READY', createdAt: 2000, url: 'prev.vercel.app' },
+          { id: 'dpl_older', state: 'READY', createdAt: 1000 },
+        ],
+      }),
+      res(200, { id: 'dpl_previous', url: 'prev.vercel.app' }),
+    ]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const result = await adapter.rollback!({});
+    assert.equal(result.status, 'pass');
+    assert.equal(result.rolledBackTo, 'dpl_previous');
+    assert.equal(calls.length, 2);
+    assert.match(calls[0]!.url, /\/v6\/deployments\?/);
+    assert.match(calls[1]!.url, /\/v13\/deployments\/dpl_previous\/promote/);
+  });
+
+  it('throws GuardrailError(no_previous_deploy) when only the current deploy exists', async () => {
+    const { fetch } = mockFetch([
+      res(200, {
+        deployments: [
+          { id: 'dpl_only', state: 'READY', createdAt: 3000 },
+        ],
+      }),
+    ]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    await assert.rejects(
+      adapter.rollback!({}),
+      (err: unknown) => {
+        if (!(err instanceof GuardrailError)) return false;
+        assert.equal(err.code, 'no_previous_deploy');
+        assert.equal(err.provider, 'vercel');
+        return true;
+      },
+    );
+  });
+
+  it('throws GuardrailError(auth) on 401 from promote', async () => {
+    const { fetch } = mockFetch([res(401, { error: { message: 'token expired' } })]);
+    const adapter = new VercelDeployAdapter({
+      token: 'bad_tok',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    await assert.rejects(
+      adapter.rollback!({ to: 'dpl_x' }),
+      (err: unknown) => {
+        if (!(err instanceof GuardrailError)) return false;
+        assert.equal(err.code, 'auth');
+        assert.equal(err.provider, 'vercel');
+        return true;
+      },
+    );
+  });
+
+  it('throws GuardrailError(invalid_config) on 404 from promote', async () => {
+    const { fetch } = mockFetch([res(404, { error: { message: 'deployment not found' } })]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    await assert.rejects(
+      adapter.rollback!({ to: 'dpl_ghost' }),
+      (err: unknown) => {
+        if (!(err instanceof GuardrailError)) return false;
+        assert.equal(err.code, 'invalid_config');
+        return true;
+      },
+    );
+  });
+});
+
+describe('VercelDeployAdapter.listDeployments', () => {
+  it('issues GET /v6/deployments with projectId, limit, target=production query params', async () => {
+    const { fetch, calls } = mockFetch([
+      res(200, {
+        deployments: [
+          { id: 'dpl_a', state: 'READY', createdAt: 3000, url: 'a.vercel.app' },
+          { id: 'dpl_b', state: 'READY', createdAt: 2000, url: 'b.vercel.app' },
+        ],
+      }),
+    ]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const items = await adapter.listDeployments(5);
+    assert.equal(items.length, 2);
+    assert.equal(items[0]!.id, 'dpl_a');
+    assert.equal(calls.length, 1);
+    assert.match(calls[0]!.url, /\/v6\/deployments\?/);
+    assert.match(calls[0]!.url, /projectId=my-app/);
+    assert.match(calls[0]!.url, /limit=5/);
+    assert.match(calls[0]!.url, /target=production/);
+    assert.equal(calls[0]!.init?.method, 'GET');
+  });
+});

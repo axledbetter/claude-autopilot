@@ -31,7 +31,7 @@ import { runMigrateV4 } from './migrate-v4.ts';
 import { runMigrateDoctor } from './migrate-doctor.ts';
 import { initMigrate, NoMigrationToolDetectedError } from './init-migrate.ts';
 import { dispatch as runMigrateDispatch } from '../core/migrate/dispatcher.ts';
-import { runDeploy } from './deploy.ts';
+import { runDeploy, runDeployRollback, runDeployStatus } from './deploy.ts';
 import { findPackageRoot } from './_pkg-root.ts';
 import { GuardrailError } from '../core/errors.ts';
 
@@ -270,7 +270,7 @@ Commands:
   init         Scaffold guardrail.config.yaml + auto-detect migrate stack (writes .autopilot/stack.md)
   migrate      Run database migrations via the stack-aware dispatcher
   migrate doctor   Validate .autopilot/stack.md and skill manifests (alias: migrate-doctor)
-  deploy       Deploy via configured adapter (vercel | generic) — Phase 1: deploy + status
+  deploy       Deploy via configured adapter (vercel | generic) — also: rollback, status
   setup        Auto-detect stack, write config, install pre-push hook
   doctor       Check prerequisites (alias: preflight)
   preflight    Check prerequisites (alias: doctor)
@@ -340,6 +340,13 @@ Options (deploy):
   --ref <ref>                  Git ref (branch / tag) to deploy
   --sha <commit>               Specific commit SHA to deploy
   --watch                      Stream build logs to stderr in real time (Vercel only)
+  --to <deploy-id>             Target deploy ID for 'deploy rollback'
+
+Subcommands (deploy):
+  deploy                       Deploy via configured adapter
+  deploy rollback              Roll back to previous prod deploy
+  deploy rollback --to <id>    Roll back to a specific deploy
+  deploy status                Show current prod + last 5 builds
 `);
 }
 
@@ -763,6 +770,32 @@ switch (subcommand) {
     const adapterArg = flag('adapter');
     if (adapterArg && !['vercel', 'generic'].includes(adapterArg)) {
       console.error(`\x1b[31m[claude-autopilot] --adapter must be "vercel" or "generic"\x1b[0m`);
+      process.exit(1);
+    }
+    // Phase 3 — `deploy rollback` and `deploy status` subverbs. The first
+    // non-flag positional after `deploy` selects the verb. The historic
+    // `claude-autopilot deploy` (no subverb) keeps calling runDeploy.
+    const subverb = args[1] && !args[1].startsWith('--') ? args[1] : undefined;
+    if (subverb === 'rollback') {
+      const to = flag('to');
+      const code = await runDeployRollback({
+        configPath: config,
+        adapterOverride: adapterArg as 'vercel' | 'generic' | undefined,
+        to,
+      });
+      process.exit(code);
+    }
+    if (subverb === 'status') {
+      const code = await runDeployStatus({
+        configPath: config,
+        adapterOverride: adapterArg as 'vercel' | 'generic' | undefined,
+      });
+      process.exit(code);
+    }
+    if (subverb !== undefined) {
+      console.error(
+        `\x1b[31m[claude-autopilot] unknown deploy subverb "${subverb}" — valid: rollback, status\x1b[0m`,
+      );
       process.exit(1);
     }
     const ref = flag('ref');

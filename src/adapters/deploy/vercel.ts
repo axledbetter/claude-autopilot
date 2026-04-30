@@ -16,6 +16,7 @@ import type {
   DeployInput,
   DeployLogLine,
   DeployResult,
+  DeployRollbackInput,
   DeployStatusInput,
   DeployStatusResult,
   DeployStreamLogsInput,
@@ -39,6 +40,21 @@ interface VercelDeployResponse {
   url?: string;
   state?: VercelState;
   readyState?: VercelState;
+}
+
+/**
+ * Single entry from `GET /v6/deployments`. Vercel's list response wraps
+ * these under `{ deployments: [...] }`. We only surface the fields the
+ * rollback + status flows need; callers MUST treat all fields beyond `id`
+ * as best-effort (older deployments occasionally omit `createdAt` and
+ * `state` is not always populated for super-recent in-flight builds).
+ */
+export interface VercelDeployListItem {
+  id: string;
+  url?: string;
+  state?: VercelState;
+  /** Milliseconds since epoch — Vercel returns this as a number. */
+  createdAt?: number;
 }
 
 export interface VercelDeployAdapterOptions {
@@ -220,9 +236,111 @@ export class VercelDeployAdapter implements DeployAdapter {
     }
   }
 
+  /**
+   * Phase 3 — promote a previously-built deployment to production.
+   *
+   * Two modes:
+   * - `input.to` set → promote that deploy ID directly. Cheapest path.
+   * - `input.to` omitted → look up the previous prod deploy via
+   *   `listDeployments(5)` and promote it. Throws `no_previous_deploy`
+   *   when there's nothing to roll back to (project with one deploy,
+   *   or every prior deploy is in ERROR/CANCELED state).
+   *
+   * Always-query is intentional: we never cache deploy IDs locally, so a
+   * promote performed from the Vercel dashboard between our deploy and
+   * our rollback is still observable.
+   */
+  async rollback(input: DeployRollbackInput): Promise<DeployResult> {
+    const start = this.now();
+    let targetId = input.to;
+    if (!targetId) {
+      const prev = await this.findPreviousProdDeployment(input.signal);
+      if (!prev) {
+        throw new GuardrailError(
+          `No previous production deployment found for project "${this.project}" to roll back to`,
+          { code: 'no_previous_deploy', provider: 'vercel' },
+        );
+      }
+      targetId = prev.id;
+    }
+    const url = this.urlWithTeam(
+      `${VERCEL_API_BASE}/v13/deployments/${encodeURIComponent(targetId)}/promote`,
+    );
+    const res = await this.fetchWithRetry(url, {
+      method: 'POST',
+      headers: this.headers(),
+      body: '{}',
+      signal: input.signal,
+    });
+    await this.assertOkOrThrow(res, 'promote deployment');
+    // Promote responses are typically empty (204) or echo the deployment.
+    // Be defensive — parse if there's a body, otherwise carry on with the
+    // ID alone.
+    let data: VercelDeployResponse | undefined;
+    try {
+      data = (await res.json()) as VercelDeployResponse;
+    } catch {
+      data = undefined;
+    }
+    return {
+      status: 'pass',
+      deployId: targetId,
+      rolledBackTo: targetId,
+      deployUrl: data?.url ? `https://${data.url}` : undefined,
+      buildLogsUrl: this.buildLogsUrl(targetId),
+      durationMs: this.now() - start,
+      output: `Vercel deployment ${targetId} promoted to production`,
+    };
+  }
+
+  /**
+   * Phase 3 — list recent production deployments for the configured
+   * project. Used by the `deploy status` CLI subcommand and by the
+   * `findPreviousProdDeployment()` helper backing `rollback()`.
+   *
+   * The list endpoint is `/v6/deployments` (v13 is for individual
+   * deployments). `target=production` filters out preview builds; `limit`
+   * caps the result set — Vercel returns newest-first so a small limit
+   * is sufficient for both rollback target detection and the CLI status
+   * display (defaults to 5).
+   */
+  async listDeployments(limit = 5, signal?: AbortSignal): Promise<VercelDeployListItem[]> {
+    const url = this.urlWithTeam(
+      `${VERCEL_API_BASE}/v6/deployments` +
+        `?projectId=${encodeURIComponent(this.project)}` +
+        `&limit=${encodeURIComponent(String(limit))}` +
+        `&target=production`,
+    );
+    const res = await this.fetchWithRetry(url, {
+      method: 'GET',
+      headers: this.headers(),
+      signal,
+    });
+    await this.assertOkOrThrow(res, 'list deployments');
+    const data = (await res.json()) as { deployments?: VercelDeployListItem[] };
+    return Array.isArray(data.deployments) ? data.deployments : [];
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // private helpers
   // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Returns the deployment immediately preceding the current production
+   * deployment, or `null` if no rollback target exists.
+   *
+   * "Preceding" means: among deployments with `state === 'READY'` (so we
+   * never roll back to a known-broken build), sorted newest-first by
+   * `createdAt`, the second entry. The first entry is the current prod
+   * deploy and we drop it.
+   */
+  private async findPreviousProdDeployment(signal?: AbortSignal): Promise<VercelDeployListItem | null> {
+    const items = await this.listDeployments(5, signal);
+    const ready = items.filter((d) => d.state === 'READY');
+    ready.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+    if (ready.length < 2) return null;
+    return ready[1] ?? null;
+  }
 
   private async pollUntilTerminal(
     deployId: string,
