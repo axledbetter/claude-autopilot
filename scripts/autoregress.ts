@@ -6,7 +6,7 @@ import * as os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { selectSnapshots } from './snapshots/impact-selector.ts';
-import OpenAI from 'openai';
+import { loadOpenAI } from '../src/adapters/sdk-loader.ts';
 import { buildImportMap } from './snapshots/import-scanner.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -230,6 +230,7 @@ async function cmdGenerate(args: string[]): Promise<number> {
 
   console.log(`[autoregress generate] generating snapshots for ${srcFiles.length} file(s)`);
 
+  const OpenAI = await loadOpenAI();
   const client = new OpenAI({ apiKey });
   let sourceCommit = 'unknown';
   try {
