@@ -286,6 +286,117 @@ describe('runDeploy auto-rollback on health-check failure', () => {
     }
   });
 
+  it('with --pr and clean pass: posts simple "Deploy succeeded" comment via gh', async () => {
+    const dir = makeTmp();
+    writeConfig(
+      dir,
+      'configVersion: 1\ndeploy:\n  adapter: vercel\n  project: my-app\n  healthCheckUrl: https://app.test/healthz\n',
+    );
+    const fakeFetch: typeof fetch = async () => new Response('ok', { status: 200 });
+    const fakeAdapter: DeployAdapter = {
+      name: 'vercel',
+      async deploy() {
+        return {
+          status: 'pass',
+          deployId: 'dpl_new',
+          deployUrl: 'https://new.vercel.app',
+          durationMs: 1,
+        };
+      },
+    };
+    const ghCalls: Array<{ args: string[]; body?: string }> = [];
+    const fakeGh = (args: string[], opts?: { body?: string; cwd?: string }) => {
+      ghCalls.push({ args, body: opts?.body });
+      // Lookup call returns empty (no existing comment).
+      if (args[0] === 'api' && /comments$/.test(args[1] ?? '')) return '';
+      // Post call returns a fake URL.
+      return 'https://github.com/test/repo/pull/42#issuecomment-1';
+    };
+    try {
+      const code = await runDeploy({
+        cwd: dir,
+        adapterFactory: () => fakeAdapter,
+        fetchImpl: fakeFetch,
+        sleepImpl: async () => {},
+        pr: 42,
+        ghImpl: fakeGh,
+      });
+      assert.equal(code, 0);
+      // Two gh calls: lookup + post.
+      assert.ok(ghCalls.length >= 2, `expected ≥2 gh calls, got ${ghCalls.length}`);
+      const postCall = ghCalls.find((c) => c.body !== undefined);
+      assert.ok(postCall, 'one gh call carried a body (the post/PATCH)');
+      assert.match(postCall!.body!, /<!-- claude-autopilot-deploy -->/);
+      assert.match(postCall!.body!, /Deploy succeeded/);
+      assert.match(postCall!.body!, /dpl_new/);
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  it('with --pr and auto-rollback: comment shows both deploy IDs and rollback row', async () => {
+    const dir = makeTmp();
+    writeConfig(
+      dir,
+      [
+        'configVersion: 1',
+        'deploy:',
+        '  adapter: vercel',
+        '  project: my-app',
+        '  healthCheckUrl: https://app.test/healthz',
+        '  rollbackOn:',
+        '    - healthCheckFailure',
+        '',
+      ].join('\n'),
+    );
+    const fakeFetch: typeof fetch = async () => new Response('down', { status: 503 });
+    const fakeAdapter: DeployAdapter = {
+      name: 'vercel',
+      async deploy() {
+        return {
+          status: 'pass',
+          deployId: 'dpl_new',
+          deployUrl: 'https://new.vercel.app',
+          durationMs: 1,
+        };
+      },
+      async rollback() {
+        return {
+          status: 'pass',
+          deployId: 'dpl_prev',
+          rolledBackTo: 'dpl_prev',
+          deployUrl: 'https://prev.vercel.app',
+          durationMs: 30,
+        };
+      },
+    };
+    const ghBodies: string[] = [];
+    const fakeGh = (args: string[], opts?: { body?: string; cwd?: string }) => {
+      if (opts?.body) ghBodies.push(opts.body);
+      if (args[0] === 'api' && /comments$/.test(args[1] ?? '')) return '';
+      return 'https://github.com/test/repo/pull/42#issuecomment-2';
+    };
+    try {
+      const code = await runDeploy({
+        cwd: dir,
+        adapterFactory: () => fakeAdapter,
+        fetchImpl: fakeFetch,
+        sleepImpl: async () => {},
+        pr: 42,
+        ghImpl: fakeGh,
+      });
+      assert.equal(code, 1, 'auto-rollback case still exits 1 — original deploy failed');
+      assert.equal(ghBodies.length, 1, 'one comment posted');
+      const body = ghBodies[0]!;
+      assert.match(body, /<!-- claude-autopilot-deploy -->/, 'comment uses deploy marker');
+      assert.match(body, /dpl_new/, 'failed deploy ID present');
+      assert.match(body, /dpl_prev/, 'rolled-back-to ID present');
+      assert.match(body, /Auto-rollback|auto-rolled/i);
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
   it('edge: adapter does not support rollback → warning, no crash, exit 1', async () => {
     const dir = makeTmp();
     writeConfig(
