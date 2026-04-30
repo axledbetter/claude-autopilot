@@ -112,6 +112,24 @@ export const GUARDRAIL_CONFIG_SCHEMA = {
       },
       additionalProperties: false,
     },
+    deploy: {
+      type: 'object',
+      required: ['adapter'],
+      additionalProperties: false,
+      properties: {
+        adapter: { enum: ['vercel', 'generic'] },
+        project: { type: 'string' },
+        team: { type: 'string' },
+        target: { enum: ['production', 'preview'] },
+        deployCommand: { type: 'string' },
+        watchBuildLogs: { type: 'boolean' },
+        rollbackOn: {
+          type: 'array',
+          items: { enum: ['healthCheckFailure', 'smokeTestFailure'] },
+        },
+        healthCheckUrl: { type: 'string' },
+      },
+    },
     'schema-alignment': {
       type: 'object',
       properties: {
