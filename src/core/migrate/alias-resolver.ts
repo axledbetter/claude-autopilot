@@ -14,11 +14,9 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { AliasEntry } from './types.ts';
 import { TRUSTED_SKILL_ROOTS } from './contract.ts';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { findPackageRoot } from '../../cli/_pkg-root.ts';
 
 export interface ResolveOptions {
   repoRoot: string;
@@ -53,11 +51,18 @@ interface AliasMap {
 }
 
 function loadAliasMap(repoRoot: string): AliasMap | null {
+  // Lookup precedence:
+  //   1. repoRoot/presets/aliases.lock.json — repo-local override (e.g. monorepo)
+  //   2. <package-root>/presets/aliases.lock.json — installed package
+  // findPackageRoot walks up from this module looking for the package.json
+  // declaring '@delegance/claude-autopilot', so it works under both source and
+  // compiled (dist/) layouts. Earlier code used __dirname + '../../..' which
+  // landed at <install>/dist/presets/ in the published tarball (presets/ ships
+  // at the package root, not under dist/).
+  const pkgRoot = findPackageRoot(import.meta.url);
   const candidates = [
     path.join(repoRoot, 'presets', 'aliases.lock.json'),
-    // installed package fallback: this file lives in dist/src/core/migrate/
-    // when shipped, so the presets dir is three levels up.
-    path.resolve(__dirname, '..', '..', '..', 'presets', 'aliases.lock.json'),
+    ...(pkgRoot ? [path.join(pkgRoot, 'presets', 'aliases.lock.json')] : []),
   ];
   for (const p of candidates) {
     if (fs.existsSync(p)) {

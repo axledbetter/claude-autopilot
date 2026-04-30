@@ -12,13 +12,18 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import Ajv, { type ErrorObject } from 'ajv';
 import * as yaml from 'js-yaml';
+import { requirePackageRoot } from '../../cli/_pkg-root.ts';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SCHEMA_PATH = path.resolve(__dirname, '../../../presets/schemas/migrate.schema.json');
-const ALIASES_PATH = path.resolve(__dirname, '../../../presets/aliases.lock.json');
+// Resolve presets/ relative to the canonical package root so this works under
+// both the source layout (src/core/migrate/*.ts) and the compiled/published
+// layout (dist/src/core/migrate/*.js where presets/ ships at the package root,
+// not under dist/). The previous __dirname + '../../..' resolution landed at
+// <install>/dist/presets/... in the published tarball — file does not exist.
+const PKG_ROOT = requirePackageRoot(import.meta.url);
+const SCHEMA_PATH = path.resolve(PKG_ROOT, 'presets', 'schemas', 'migrate.schema.json');
+const ALIASES_PATH = path.resolve(PKG_ROOT, 'presets', 'aliases.lock.json');
 
 export interface ValidationError {
   message: string;
