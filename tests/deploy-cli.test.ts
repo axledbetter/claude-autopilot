@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { runDeploy } from '../src/cli/deploy.ts';
+import { runDeploy, runDeployRollback, runDeployStatus } from '../src/cli/deploy.ts';
 import type { DeployAdapter } from '../src/adapters/deploy/types.ts';
+import type { VercelDeployListItem } from '../src/adapters/deploy/vercel.ts';
 
 function makeTmp(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ap-deploy-cli-'));
@@ -142,6 +143,128 @@ describe('runDeploy --watch', () => {
       assert.equal(code, 0);
       assert.equal(streamCalls, 0);
     } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 3 — `deploy rollback` and `deploy status` CLI subverbs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('runDeployRollback CLI', () => {
+  it('exits 0 and prints rolledBackTo on success', async () => {
+    const dir = makeTmp();
+    fs.writeFileSync(
+      path.join(dir, 'guardrail.config.yaml'),
+      'configVersion: 1\ndeploy:\n  adapter: vercel\n  project: my-app\n',
+    );
+    const stdoutLines: string[] = [];
+    const origLog = console.log;
+    console.log = (msg: string) => { stdoutLines.push(msg); };
+
+    let rollbackArg: { to?: string } | undefined;
+    const fakeAdapter: DeployAdapter = {
+      name: 'vercel',
+      async deploy() { return { status: 'pass', durationMs: 0 }; },
+      async rollback(input) {
+        rollbackArg = input;
+        return {
+          status: 'pass',
+          deployId: 'dpl_target',
+          rolledBackTo: 'dpl_target',
+          deployUrl: 'https://target.vercel.app',
+          buildLogsUrl: 'https://vercel.com/me/my-app/dpl_target',
+          durationMs: 42,
+        };
+      },
+    };
+
+    try {
+      const code = await runDeployRollback({
+        cwd: dir,
+        to: 'dpl_target',
+        adapterFactory: () => fakeAdapter,
+      });
+      assert.equal(code, 0);
+      assert.deepEqual(rollbackArg, { to: 'dpl_target' });
+      const all = stdoutLines.join('\n');
+      assert.match(all, /rolledBackTo=dpl_target/);
+      assert.match(all, /status=pass/);
+      assert.match(all, /adapter=vercel/);
+    } finally {
+      console.log = origLog;
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  it('exits 1 when adapter does not implement rollback', async () => {
+    const dir = makeTmp();
+    fs.writeFileSync(
+      path.join(dir, 'guardrail.config.yaml'),
+      'configVersion: 1\ndeploy:\n  adapter: generic\n  deployCommand: echo http://x.test\n',
+    );
+    const origErr = console.error;
+    let stderr = '';
+    console.error = (msg: string) => { stderr += msg + '\n'; };
+
+    const fakeAdapter: DeployAdapter = {
+      name: 'generic',
+      async deploy() { return { status: 'pass', durationMs: 0 }; },
+      // No rollback method — generic adapter omits it by design.
+    };
+
+    try {
+      const code = await runDeployRollback({
+        cwd: dir,
+        adapterFactory: () => fakeAdapter,
+      });
+      assert.equal(code, 1);
+      assert.match(stderr, /does not support rollback/);
+      assert.match(stderr, /generic/);
+    } finally {
+      console.error = origErr;
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+});
+
+describe('runDeployStatus CLI', () => {
+  it('exits 0 and prints current prod plus recent builds', async () => {
+    const dir = makeTmp();
+    fs.writeFileSync(
+      path.join(dir, 'guardrail.config.yaml'),
+      'configVersion: 1\ndeploy:\n  adapter: vercel\n  project: my-app\n',
+    );
+    const stdoutLines: string[] = [];
+    const origLog = console.log;
+    console.log = (msg: string) => { stdoutLines.push(msg); };
+
+    const items: VercelDeployListItem[] = [
+      { id: 'dpl_a', state: 'READY', createdAt: 5000, url: 'a.vercel.app' },
+      { id: 'dpl_b', state: 'READY', createdAt: 4000, url: 'b.vercel.app' },
+      { id: 'dpl_c', state: 'READY', createdAt: 3000, url: 'c.vercel.app' },
+    ];
+    const fakeAdapter: DeployAdapter & { listDeployments(limit?: number): Promise<VercelDeployListItem[]> } = {
+      name: 'vercel',
+      async deploy() { return { status: 'pass', durationMs: 0 }; },
+      async listDeployments() { return items; },
+    };
+
+    try {
+      const code = await runDeployStatus({
+        cwd: dir,
+        adapterFactory: () => fakeAdapter,
+      });
+      assert.equal(code, 0);
+      const all = stdoutLines.join('\n');
+      assert.match(all, /status — adapter=vercel/);
+      assert.match(all, /current: dpl_a/);
+      assert.match(all, /recent builds:/);
+      assert.match(all, /dpl_b/);
+      assert.match(all, /dpl_c/);
+    } finally {
+      console.log = origLog;
       fs.rmSync(dir, { recursive: true });
     }
   });
