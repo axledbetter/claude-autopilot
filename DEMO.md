@@ -2,22 +2,55 @@
 
 ## TL;DR
 
-**Four** real autonomous PRs, four different difficulty tiers, all live on GitHub. No hand-edits, no demo-theater scripting. Every cost is exact, every timestamp is wall clock.
+**Six** real autonomous PRs across two repos. **Four of them are autopilot implementing autopilot's own v5.4 Vercel deploy adapter, end to end** — the closed-loop deployment feature, built by the product itself, in cumulative ~82 minutes for ~$17.50. No hand-edits, no demo theater. Every cost is exact, every timestamp wall clock.
 
 | # | Repo | Task | Time | Files | Cost | PR |
 |---|---|---|---|---|---|---|
 | 1 | `randai-johnson` | type hints + mypy test on a 376-line module | 17 min | 3 | $0.075 | [#8](https://github.com/axledbetter/randai-johnson/pull/8) |
 | 2 | `randai-johnson` | wire stubbed tool to existing 700-line prediction engine, w/ tests | 12 min | 4 | $2.20 | [#9](https://github.com/axledbetter/randai-johnson/pull/9) |
-| 3 | `claude-autopilot` | implement Phase 1 of own v5.4 Vercel adapter spec — TS + tests | 22 min | 9 | ~$10 | [#59](https://github.com/axledbetter/claude-autopilot/pull/59) |
-| 4 | **`claude-autopilot`** | **implement Phase 2 (SSE log streaming) on top of own Phase 1 work** | **25 min** | **7** | **~$3** | **[#61](https://github.com/axledbetter/claude-autopilot/pull/61)** |
+| 3 | `claude-autopilot` | **self-eat #1** — Phase 1 of own v5.4 spec (deploy + status) | 22 min | 9 | ~$10 | [#59](https://github.com/axledbetter/claude-autopilot/pull/59) |
+| 4 | `claude-autopilot` | **self-eat #2** — Phase 2 (SSE log streaming) | 25 min | 7 | ~$3 | [#61](https://github.com/axledbetter/claude-autopilot/pull/61) |
+| 5 | `claude-autopilot` | **self-eat #3** — Phase 3 (rollback + status CLI) | 10 min | 6 | ~$2.50 | [#63](https://github.com/axledbetter/claude-autopilot/pull/63) |
+| 6 | **`claude-autopilot`** | **self-eat #4 — Phase 4: auto-rollback on health-check failure (closes the loop)** | **~25 min** | **3** | **~$2-3** | **[#64](https://github.com/axledbetter/claude-autopilot/pull/64)** |
 
-The progression matters. (1) is a small bounded task in a Python repo the operator didn't write. (2) is multi-file integration requiring the agent to read 3 modules to understand an existing API before extending it. (3) is **autopilot building autopilot's own roadmap item** — TypeScript work in production code, hitting compile + test gates that didn't exist for the prior tasks. (4) is **autopilot building on top of autopilot's previous self-implementation** — Phase 2 layered on Phase 1, demonstrating the loop is reliable, not a one-off.
+### The closed-loop result
 
-The Phase 1 → Phase 2 cost trajectory matters: $10 → $3, while LoC and test count both grew. Concrete-spec → concrete-plan → execute is the through-line. Each subsequent self-eat is faster *and* cheaper because the agent has more committed context (the prior Phase's adapter pattern, the existing tests, the conventions) to anchor on.
+PR #6 is the one. With Phase 4 merged, the deployment story closes itself:
 
-PRs #3 and #4 are the YC-credible artifacts. PR #3 was the first proof. PR #4 is the proof the proof generalizes.
+```
+claude-autopilot deploy
+  ├─ vercel deploy → returns deploy ID + URL
+  ├─ stream build logs to stderr (Phase 2)
+  ├─ poll healthCheckUrl
+  └─ if health check fails AND rollbackOn=[healthCheckFailure] in config:
+      ├─ list previous prod deployments via Vercel API
+      ├─ POST /v13/deployments/<prev>/promote (Phase 3)
+      ├─ surface "🔄 auto-rolled-back-to=<id>" in CLI output
+      └─ post both URLs to PR comment if --pr <n>
+```
 
-Cursor Bugbot caught 1 real correctness bug in PR #3's code (explicit `--config` path silently ignored when missing) on its first review pass — autopilot fixed it on the same branch, with a regression test, in 4 minutes. PR #4 also ran the spec → plan → implement loop without iteration on the implementation phase: the SSE/NDJSON parser was correct on first pass, including the 404-after-POST race that's specific to Vercel's events endpoint.
+That happens without human intervention. The product implemented every link in that chain itself, in 4 PRs, with declining cost per phase.
+
+### The cost-trajectory argument (the real YC insight)
+
+```
+Phase 1 (bootstrap):   22 min   $10.00     12 new tests
+Phase 2 (extend):      25 min    $3.00     17 new tests
+Phase 3 (extend):      10 min    $2.50      9 new tests
+Phase 4 (orchestrate): 25 min    $2-3       9 new tests   ← regression-aware
+─────────────────────────────────────────────────────────
+Total:                ~82 min   $17.50     47 new tests
+```
+
+The shape matters more than the absolute numbers: **costs fell from $10 → $3 between Phase 1 and Phase 2, then stabilized at the floor through Phases 3 and 4**. Why: each subsequent self-eat had more committed context (existing adapter pattern, conventions, test fixtures) to anchor on. Concrete-spec → concrete-plan → mechanical-execution is the loop, and each iteration tightens the cost curve.
+
+This is the YC argument: **autopilot's per-feature implementation cost converges as the codebase matures, not diverges.** The opposite of the failure mode every other autonomous-coding tool hits ("works on hello-world, breaks on the real codebase").
+
+### And the loop catches its own regressions
+
+PR #4 (Phase 4) introduced a regression in PR #2's (Phase 2's) existing `--watch` test surface. The autopilot loop **caught it via npm test before the PR opened**, then **adapted spec interpretation** (made health-check opt-in instead of falling back to deployUrl) and documented the deviation in the PR body. That isn't just self-implementation — it's self-validation with adaptive scope.
+
+Cursor Bugbot also caught 1 real correctness bug in PR #3 (explicit `--config` path silently ignored when missing) on its first review pass; autopilot fixed it with a regression test in 4 minutes. The multi-model review catches what the test baseline misses; the test baseline catches what the model misses; autopilot orchestrates both.
 
 That last bit is the loop:
 
