@@ -26,7 +26,8 @@ export async function runCosts(cwd = process.cwd()): Promise<number> {
   const log = readCostLog(cwd);
 
   if (log.length === 0) {
-    console.log(fmt('yellow', '[costs] No run history found — run `guardrail run` first.'));
+    console.log(fmt('yellow', `[costs] No run history found in ${cwd} — run \`guardrail run\` first.`));
+    console.log(fmt('dim', `        (Costs are scoped per-project. \`cd\` to the project before checking.)`));
     return 0;
   }
 
@@ -40,13 +41,14 @@ export async function runCosts(cwd = process.cwd()): Promise<number> {
   const totalOutput = log.reduce((s, e) => s + e.outputTokens, 0);
   const recentCost = recent.reduce((s, e) => s + e.costUSD, 0);
 
-  console.log(`\n${fmt('bold', '[costs]')}\n`);
+  console.log(`\n${fmt('bold', '[costs]')} ${fmt('dim', cwd)}\n`);
 
   // Summary row
   console.log(fmt('bold', 'Summary'));
   console.log(`  All-time runs:   ${log.length}`);
   console.log(`  All-time cost:   ${fmtUSD(totalCost)}  (${fmtTokens(totalInput)} in / ${fmtTokens(totalOutput)} out)`);
   console.log(`  Last 7 days:     ${fmtUSD(recentCost)}  (${recent.length} run${recent.length !== 1 ? 's' : ''})`);
+  console.log(fmt('dim', `  (per-project — scoped to ${cwd}/.guardrail-cache/costs.jsonl)`));
   console.log('');
 
   // Last 10 runs table
