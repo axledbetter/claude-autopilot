@@ -1,4 +1,5 @@
 import type { SchemaAlignmentConfig } from '../schema-alignment/types.ts';
+import type { DeployConfig } from '../../adapters/deploy/types.ts';
 
 export interface AdapterReference {
   adapter: string;
@@ -84,6 +85,11 @@ export interface GuardrailConfig {
     componentLibrary?: string | { tokens?: string; guide?: string };
   };
   'schema-alignment'?: SchemaAlignmentConfig;
+  /**
+   * Deploy phase configuration. Optional — when absent, the deploy phase is a
+   * no-op. See `src/adapters/deploy/types.ts` for the full DeployConfig shape.
+   */
+  deploy?: DeployConfig;
   cache?: Record<string, unknown>;
   persistence?: Record<string, unknown>;
   concurrency?: Record<string, unknown>;

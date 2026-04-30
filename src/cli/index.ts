@@ -31,6 +31,7 @@ import { runMigrateV4 } from './migrate-v4.ts';
 import { runMigrateDoctor } from './migrate-doctor.ts';
 import { initMigrate, NoMigrationToolDetectedError } from './init-migrate.ts';
 import { dispatch as runMigrateDispatch } from '../core/migrate/dispatcher.ts';
+import { runDeploy } from './deploy.ts';
 import { findPackageRoot } from './_pkg-root.ts';
 import { GuardrailError } from '../core/errors.ts';
 
@@ -167,8 +168,8 @@ These are aliases for the flat subcommands; they still work without the 'advance
   args.shift(); // drop 'advanced'
 }
 
-const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'migrate', 'migrate-doctor', 'brainstorm', 'help', '--help', '-h'] as const;
-const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity', 'prompt', 'context-file', 'path'];
+const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'migrate', 'migrate-doctor', 'deploy', 'brainstorm', 'help', '--help', '-h'] as const;
+const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity', 'prompt', 'context-file', 'path', 'adapter', 'ref', 'sha'];
 
 // Bare invocation — no subcommand, no flags → show welcome guide
 if (args.length === 0) {
@@ -269,6 +270,7 @@ Commands:
   init         Scaffold guardrail.config.yaml + auto-detect migrate stack (writes .autopilot/stack.md)
   migrate      Run database migrations via the stack-aware dispatcher
   migrate doctor   Validate .autopilot/stack.md and skill manifests (alias: migrate-doctor)
+  deploy       Deploy via configured adapter (vercel | generic) — Phase 1: deploy + status
   setup        Auto-detect stack, write config, install pre-push hook
   doctor       Check prerequisites (alias: preflight)
   preflight    Check prerequisites (alias: doctor)
@@ -331,6 +333,12 @@ Options (migrate):
 
 Options (migrate doctor / migrate-doctor):
   --fix                Apply auto-fixable mutations (legacy stack.md, skills/migrate/, schema_version)
+
+Options (deploy):
+  --adapter <vercel|generic>   Override deploy.adapter from config
+  --config <path>              Path to config file
+  --ref <ref>                  Git ref (branch / tag) to deploy
+  --sha <commit>               Specific commit SHA to deploy
 `);
 }
 
@@ -746,6 +754,25 @@ switch (subcommand) {
     // Single-verb alias for `migrate doctor`. Documented for users whose shells
     // or CI configs handle multi-word verbs awkwardly.
     await runMigrateDoctorCLI();
+    break;
+  }
+
+  case 'deploy': {
+    const config = flag('config');
+    const adapterArg = flag('adapter');
+    if (adapterArg && !['vercel', 'generic'].includes(adapterArg)) {
+      console.error(`\x1b[31m[claude-autopilot] --adapter must be "vercel" or "generic"\x1b[0m`);
+      process.exit(1);
+    }
+    const ref = flag('ref');
+    const commitSha = flag('sha');
+    const code = await runDeploy({
+      configPath: config,
+      adapterOverride: adapterArg as 'vercel' | 'generic' | undefined,
+      ref,
+      commitSha,
+    });
+    process.exit(code);
     break;
   }
 
