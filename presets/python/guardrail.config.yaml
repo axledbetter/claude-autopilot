@@ -22,3 +22,14 @@ chunking:
 pipeline:
   runReviewOnStaticFail: true
   runReviewOnTestFail: true
+# Optional: multi-model council. Uncomment + set ANTHROPIC_API_KEY and/or
+# OPENAI_API_KEY. Both APIs supported — chat-completions and Responses API
+# for codex/o-series models (auto-detected by name).
+# Usage: claude-autopilot council --prompt "..." --context-file <path>
+# council:
+#   models:
+#     - { adapter: claude, model: claude-opus-4-7, label: opus }
+#     - { adapter: openai, model: gpt-5.3-codex,  label: codex }
+#   synthesizer: { adapter: claude, model: claude-sonnet-4-6, label: synth }
+#   timeout_ms: 30000
+#   min_successful_responses: 1
