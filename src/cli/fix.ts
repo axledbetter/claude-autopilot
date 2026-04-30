@@ -61,15 +61,33 @@ export async function runFix(options: FixCommandOptions = {}): Promise<number> {
     return 0;
   }
 
-  const fixable = findings.filter(f => {
-    if (!f.line || !f.file || f.file === '<unspecified>' || f.file === '<pipeline>') return false;
+  // Two gates:
+  //  - "actionable": has a real file path. Surfaced in dry-run so the user sees
+  //    findings even when the LLM didn't pin a line number.
+  //  - "fixable": also has a line. The LLM-fix loop needs both to extract a
+  //    code snippet around the finding location.
+  const actionable = findings.filter(f => {
+    if (!f.file || f.file === '<unspecified>' || f.file === '<pipeline>') return false;
     if (severityFilter === 'all') return true;
     if (severityFilter === 'critical') return f.severity === 'critical';
     return f.severity === 'critical' || f.severity === 'warning';
   });
+  const fixable = actionable.filter(f => f.line && f.line > 0);
 
+  if (actionable.length === 0) {
+    console.log(fmt('yellow', `[fix] No actionable findings (severity=${severityFilter}, need file path).`));
+    return 0;
+  }
   if (fixable.length === 0) {
-    console.log(fmt('yellow', `[fix] No fixable findings (severity=${severityFilter}, need file+line).`));
+    const verb = actionable.length === 1 ? 'has' : 'have';
+    const noun = actionable.length === 1 ? 'finding' : 'findings';
+    console.log(fmt('yellow', `[fix] ${actionable.length} ${noun} ${verb} file but no line — model output was line-less. Re-run scan with --ask "include line numbers" or run \`claude-autopilot run\` for richer extraction.`));
+    for (const f of actionable) {
+      const sev = f.severity === 'critical' ? fmt('red', 'CRITICAL')
+        : f.severity === 'warning' ? fmt('yellow', 'WARNING ')
+        : fmt('dim', 'NOTE    ');
+      console.log(`  [${sev}] ${fmt('dim', f.file)} ${f.message}`);
+    }
     return 0;
   }
 

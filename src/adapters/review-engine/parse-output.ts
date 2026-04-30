@@ -42,9 +42,21 @@ const FILE_REF = new RegExp(
   'i',
 );
 
+// Matches "line 42", "on line 42", "at line 42" — used as a fallback when the
+// LLM mentions a line number separately from the file ref. Critical for `fix`:
+// without a line, the fixer can't extract a code snippet, so findings without
+// `line` got silently dropped from `fix --dry-run` (the path-only finding case
+// was the most-cited demo torpedo from the 5.0.7 stress test).
+const LINE_REF = /\b(?:on |at )?line\s+(\d+)\b/i;
+
 function extractFileRef(text: string): { file: string; line?: number } {
   const m = text.match(FILE_REF);
-  if (!m) return { file: '<unspecified>' };
+  if (!m) {
+    // No file ref at all — but maybe the body still has "line N" prose we can
+    // surface. Caller treats file `<unspecified>` as a sentinel either way.
+    const lm = text.match(LINE_REF);
+    return lm ? { file: '<unspecified>', line: parseInt(lm[1]!, 10) } : { file: '<unspecified>' };
+  }
   const raw = (m[1] ?? m[2])!;
   // Skip version strings (v1.2.3), bare dotfile extensions with no path
   // separator, and known prose abbreviations that slipped through the regex
@@ -55,10 +67,15 @@ function extractFileRef(text: string): { file: string; line?: number } {
     (!raw.includes('/') && raw.startsWith('.') && raw.split('.').length === 2) ||
     /^(?:e\.g|i\.e|etc|vs|cf|al|U\.S|U\.K)$/i.test(raw)
   ) {
-    return { file: '<unspecified>' };
+    const lm = text.match(LINE_REF);
+    return lm ? { file: '<unspecified>', line: parseInt(lm[1]!, 10) } : { file: '<unspecified>' };
   }
-  const line = m[3] ? parseInt(m[3], 10) : undefined;
-  return { file: raw, line };
+  // Prefer the colon-line from the file ref (`foo.ts:42`); fall back to a
+  // separately-mentioned line ("line 42") only when the file ref didn't carry one.
+  const colonLine = m[3] ? parseInt(m[3], 10) : undefined;
+  if (colonLine !== undefined) return { file: raw, line: colonLine };
+  const lm = text.match(LINE_REF);
+  return lm ? { file: raw, line: parseInt(lm[1]!, 10) } : { file: raw };
 }
 
 // Accepts any of: `### [CRITICAL] title`, `### CRITICAL title`, `### **CRITICAL** title`,

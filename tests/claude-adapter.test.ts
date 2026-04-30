@@ -205,6 +205,40 @@ See config.etc, or whatever.
     assert.equal(findings[0]!.file, '<unspecified>');
   });
 
+  // 5.0.8 — line numbers can appear separately from the file ref. Without this
+  // fallback, findings shipped with file but no line, which kills `fix`
+  // (the fixer needs both for snippet extraction). This was the last YC-demo
+  // torpedo from the 5.0.7 stress test.
+  it('extracts "line N" from prose when not adjacent to file ref', async () => {
+    const { parseReviewOutput } = await import('../src/adapters/review-engine/parse-output.ts');
+    const output = `### [WARNING] Hardcoded secret
+In \`src/config.ts\`, on line 42 there's an API key in plaintext.
+**Suggestion:** Move to env.`;
+    const findings = parseReviewOutput(output, 'test');
+    assert.equal(findings[0]!.file, 'src/config.ts');
+    assert.equal(findings[0]!.line, 42);
+  });
+
+  it('prefers colon-line from file ref over separately-mentioned line', async () => {
+    const { parseReviewOutput } = await import('../src/adapters/review-engine/parse-output.ts');
+    const output = `### [WARNING] Issue
+In \`src/foo.ts:7\` there's a problem; also see line 99 of the same file.
+**Suggestion:** Fix.`;
+    const findings = parseReviewOutput(output, 'test');
+    assert.equal(findings[0]!.file, 'src/foo.ts');
+    assert.equal(findings[0]!.line, 7);
+  });
+
+  it('extracts "at line N" pattern', async () => {
+    const { parseReviewOutput } = await import('../src/adapters/review-engine/parse-output.ts');
+    const output = `### [NOTE] Style issue
+The file \`utils/helpers.ts\` has a problem at line 18.
+**Suggestion:** Refactor.`;
+    const findings = parseReviewOutput(output, 'test');
+    assert.equal(findings[0]!.file, 'utils/helpers.ts');
+    assert.equal(findings[0]!.line, 18);
+  });
+
   // Bugbot HIGH on PR #49 — JS regex alternation is leftmost-first, so when
   // shorter extensions appear before longer ones with the same prefix
   // (`c` before `cpp`, `h` before `hpp`, `md` before `mdx`, `m` before `mm`,
