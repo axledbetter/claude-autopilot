@@ -17,3 +17,23 @@ export function applyRedaction(text: string, patterns: readonly string[]): strin
 export function containsSecret(text: string, patterns: readonly string[]): boolean {
   return patterns.some(p => new RegExp(p).test(text));
 }
+
+/**
+ * Convenience wrapper around {@link applyRedaction} that defaults to the
+ * built-in {@link DEFAULT_REDACTION_PATTERNS} list and accepts an optional
+ * caller-supplied extension. Designed for adapter `output` fields and other
+ * "last N lines" surfaces where a pattern list is rarely available at the
+ * call site (the v5.6 spec § "Log redaction" requires this for all new
+ * adapters).
+ *
+ * Pass extra patterns when the caller has loaded
+ * `config.persistence.redactionPatterns`; otherwise omit the argument and
+ * the defaults handle the well-known token shapes.
+ */
+export function redactLogLines(text: string, patterns?: readonly string[]): string {
+  if (!text) return text;
+  const merged = patterns && patterns.length > 0
+    ? [...DEFAULT_REDACTION_PATTERNS, ...patterns]
+    : DEFAULT_REDACTION_PATTERNS;
+  return applyRedaction(text, merged);
+}

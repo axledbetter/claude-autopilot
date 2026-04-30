@@ -3,7 +3,8 @@
 export type ErrorCode =
   | 'auth' | 'rate_limit' | 'transient_network' | 'invalid_config'
   | 'adapter_bug' | 'user_input' | 'budget_exceeded' | 'concurrency_lock' | 'superseded'
-  | 'no_previous_deploy';
+  | 'no_previous_deploy'
+  | 'not_found';
 
 export interface GuardrailErrorOptions {
   code: ErrorCode;
@@ -18,6 +19,9 @@ const DEFAULT_RETRYABLE: Record<ErrorCode, boolean> = {
   adapter_bug: false, user_input: false, budget_exceeded: false,
   concurrency_lock: false, superseded: false,
   no_previous_deploy: false,
+  // 404 — caller-fixable (slug typo, wrong scope). Not retryable; the
+  // resource won't materialize on its own.
+  not_found: false,
 };
 
 export class GuardrailError extends Error {

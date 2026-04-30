@@ -127,6 +127,35 @@ export interface DeployLogLine {
 }
 
 /**
+ * Self-described capability surface for an adapter.
+ *
+ * Codex review of v5.6 (#4) flagged that Render's REST polling and Fly's
+ * WebSocket streaming offer materially different log-streaming experiences,
+ * and pretending they're equivalent degrades user trust. CLI surfaces (and
+ * downstream consumers) inspect this struct to print a one-line notice when
+ * `--watch` is invoked against a `polling`-mode adapter, and to choose between
+ * native vs simulated rollback messaging in the PR comment.
+ *
+ * The field is optional — adapters that don't declare capabilities are
+ * treated as `streamMode: 'none'`, `nativeRollback: false` for safety.
+ */
+export interface DeployAdapterCapabilities {
+  /**
+   * How `streamLogs()` (when implemented) delivers lines:
+   * - `websocket` — real-time, push-based, near-zero gap between line emit and consumer receive
+   * - `polling` — REST-paginated polling cursor, lines may arrive in batches with short gaps
+   * - `none` — no log-streaming surface at all
+   */
+  streamMode?: 'websocket' | 'polling' | 'none';
+  /**
+   * `true` when the platform exposes a single "promote prior release" verb
+   * (Vercel's `/promote`, Fly's `/rollback`); `false` when rollback must be
+   * simulated by re-deploying a previous successful image/commit (Render).
+   */
+  nativeRollback?: boolean;
+}
+
+/**
  * The DeployAdapter contract.
  *
  * `deploy` is required. `status` and `rollback` are optional so adapters that
@@ -136,6 +165,12 @@ export interface DeployLogLine {
 export interface DeployAdapter {
   /** Stable identifier — surfaced in CLI output and logs. */
   readonly name: string;
+  /**
+   * Optional self-description of the adapter's streaming + rollback shape.
+   * See {@link DeployAdapterCapabilities} for semantics. CLI consumers use
+   * this to decide whether to print the polling-mode notice on `--watch`.
+   */
+  readonly capabilities?: DeployAdapterCapabilities;
   deploy(input: DeployInput): Promise<DeployResult>;
   status?(input: DeployStatusInput): Promise<DeployStatusResult>;
   rollback?(input: DeployRollbackInput): Promise<DeployResult>;
@@ -159,8 +194,11 @@ export interface DeployAdapter {
  * The factory in `./index.ts` enforces these rules at construction time.
  */
 export interface DeployConfig {
-  /** Which adapter to use. Phase 1 ships `vercel` + `generic`. */
-  adapter: 'vercel' | 'generic';
+  /**
+   * Which adapter to use. v5.4 shipped `vercel` + `generic`; v5.6 Phase 1
+   * adds `fly`. The Render adapter lands in Phase 2 of v5.6.
+   */
+  adapter: 'vercel' | 'fly' | 'generic';
 
   // Vercel-specific
   /** Vercel project ID or slug. Required when `adapter === 'vercel'`. */
@@ -169,6 +207,18 @@ export interface DeployConfig {
   team?: string;
   /** Deploy target. Default: `production`. */
   target?: 'production' | 'preview';
+
+  // Fly-specific (Phase 1 of v5.6)
+  /** Fly app slug. Required when `adapter === 'fly'`. */
+  app?: string;
+  /**
+   * Pre-pushed image reference, e.g. `registry.fly.io/my-app:deployment-01`.
+   * Required when `adapter === 'fly'` — the Fly adapter does not build the
+   * image; pushing is the user's responsibility (`fly deploy --build-only --push`).
+   */
+  image?: string;
+  /** Optional Fly region pin (e.g. `ord`). Falls back to the app's default region. */
+  region?: string;
 
   // Generic-specific
   /** Shell command to run for the deploy (e.g. `vercel --prod`). Required when `adapter === 'generic'`. */
