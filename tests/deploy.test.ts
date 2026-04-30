@@ -68,4 +68,18 @@ describe('runDeployPhase', () => {
     assert.match(result.output ?? '', /stdout-line/);
     assert.match(result.output ?? '', /stderr-line/);
   });
+
+  // Bugbot MED on PR #56 round 2 — when health check failed, the synthetic
+  // "Deploy succeeded but health check failed" message overwrote the real
+  // deploy command output, hiding the actual logs in PR comments.
+  it('preserves deploy command output when health check fails', async () => {
+    const result = await runDeployPhase({
+      deployCommand: 'echo "DEPLOY_LOG_MARKER: build #42"',
+      healthCheckUrl: 'https://invalid.localhost.example/healthz',
+    });
+    assert.equal(result.status, 'fail');
+    assert.equal(result.healthOk, false);
+    assert.match(result.output ?? '', /health check failed/);
+    assert.match(result.output ?? '', /DEPLOY_LOG_MARKER: build #42/);
+  });
 });
