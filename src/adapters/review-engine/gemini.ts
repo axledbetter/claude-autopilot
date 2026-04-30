@@ -1,9 +1,9 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { parseReviewOutput } from './parse-output.ts';
 import { GuardrailError } from '../../core/errors.ts';
 import type { Capabilities } from '../base.ts';
 import type { ReviewEngine, ReviewInput, ReviewOutput } from './types.ts';
 import { buildSystemPrompt, classifyError } from './prompt-builder.ts';
+import { loadGoogleGenerativeAI } from '../sdk-loader.ts';
 
 const DEFAULT_MODEL = 'gemini-2.5-pro-preview-05-06';
 const MAX_OUTPUT_TOKENS = 4096;
@@ -66,6 +66,7 @@ export const geminiAdapter: ReviewEngine = {
     const model = (input.context as Record<string, unknown> | undefined)?.['model'] as string | undefined ?? DEFAULT_MODEL;
     const prompt = buildSystemPrompt(input, PROMPT_TEMPLATE).replace('{CONTENT}', input.content);
 
+    const GoogleGenerativeAI = await loadGoogleGenerativeAI();
     const genAI = new GoogleGenerativeAI(apiKey);
     const genModel = genAI.getGenerativeModel({
       model,

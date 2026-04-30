@@ -692,7 +692,22 @@ switch (subcommand) {
   }
 
   case 'mcp': {
-    const { runMcp } = await import('./mcp.ts');
+    let runMcp: (opts: { cwd: string; configPath?: string }) => Promise<void>;
+    try {
+      ({ runMcp } = await import('./mcp.ts'));
+    } catch (err: unknown) {
+      const code = (err as { code?: string }).code;
+      const msg = (err as Error).message ?? String(err);
+      // The mcp module imports @modelcontextprotocol/sdk at the top — if the
+      // package was installed with --omit=optional the dynamic import surfaces
+      // ERR_MODULE_NOT_FOUND naming the SDK. Translate to a friendly hint.
+      if ((code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND') && /modelcontextprotocol/.test(msg)) {
+        console.error('\x1b[31m[claude-autopilot] mcp subcommand requires @modelcontextprotocol/sdk\x1b[0m');
+        console.error('  install: npm install @modelcontextprotocol/sdk');
+        process.exit(1);
+      }
+      throw err;
+    }
     const configPath = flag('config');
     await runMcp({ cwd: process.cwd(), configPath });
     break;

@@ -1,7 +1,7 @@
-import OpenAI from 'openai';
 import { GuardrailError } from '../../core/errors.ts';
 import { classifyError } from '../review-engine/prompt-builder.ts';
 import type { CouncilAdapter, CouncilConsultResult } from './types.ts';
+import { loadOpenAI } from '../sdk-loader.ts';
 
 const SYSTEM_PROMPT = `You are a technical advisor reviewing a software design decision. Evaluate the provided context and question critically. Be direct and specific. Surface tradeoffs, risks, and your recommendation.`;
 const MAX_OUTPUT_TOKENS = 2048;
@@ -30,6 +30,7 @@ export function makeOpenAICouncilAdapter(model: string, label: string): CouncilA
       if (!apiKey) {
         throw new GuardrailError('OPENAI_API_KEY not set', { code: 'auth', provider: 'openai' });
       }
+      const OpenAI = await loadOpenAI();
       const client = new OpenAI({ apiKey });
       const userInput = `## Context\n\n${context}\n\n## Question\n\n${prompt}`;
       try {

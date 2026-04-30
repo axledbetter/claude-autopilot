@@ -1,9 +1,10 @@
-import Anthropic from '@anthropic-ai/sdk';
+import type AnthropicNS from '@anthropic-ai/sdk';
 import { GuardrailError } from '../../core/errors.ts';
 import type { Capabilities } from '../base.ts';
 import type { ReviewEngine, ReviewInput, ReviewOutput } from './types.ts';
 import { parseReviewOutput } from './parse-output.ts';
 import { buildSystemPrompt, classifyError } from './prompt-builder.ts';
+import { loadAnthropic } from '../sdk-loader.ts';
 
 const DEFAULT_MODEL = 'claude-opus-4-7';
 const MAX_OUTPUT_TOKENS = 4096;
@@ -58,8 +59,9 @@ export const claudeAdapter: ReviewEngine = {
     const model = (input.context as Record<string, unknown> | undefined)?.['model'] as string | undefined ?? DEFAULT_MODEL;
     const systemPrompt = buildSystemPrompt(input, SYSTEM_PROMPT_TEMPLATE);
 
+    const Anthropic = await loadAnthropic();
     const client = new Anthropic({ apiKey });
-    let response: Anthropic.Message;
+    let response: AnthropicNS.Message;
     try {
       response = await client.messages.create({
         model,
@@ -79,7 +81,7 @@ export const claudeAdapter: ReviewEngine = {
 
     const rawOutput = response.content
       .filter(b => b.type === 'text')
-      .map(b => (b as Anthropic.TextBlock).text)
+      .map(b => (b as AnthropicNS.TextBlock).text)
       .join('');
 
     const costUSD = response.usage
