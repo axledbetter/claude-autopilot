@@ -28,6 +28,17 @@ export interface DeployInput {
   meta?: Record<string, string>;
   /** Abort signal — adapters MUST honor this for any in-flight HTTP / spawn work. */
   signal?: AbortSignal;
+  /**
+   * Fired exactly once with the platform-native deploy ID as soon as it's
+   * known. Adapters that obtain the ID synchronously (Vercel returns it from
+   * the create-deployment POST) MUST call this immediately after the POST
+   * resolves but before polling begins. Adapters with no discrete ID (the
+   * generic shell adapter) do NOT call it.
+   *
+   * Consumers use this to start side-channel work in parallel with the
+   * deploy — most notably log streaming via `--watch`.
+   */
+  onDeployStart?: (deployId: string) => void;
 }
 
 /**
@@ -86,6 +97,36 @@ export interface DeployRollbackInput {
 }
 
 /**
+ * Input to a one-shot log-streaming subscription.
+ *
+ * Returned `AsyncIterable` yields `DeployLogLine`s as the platform emits
+ * them. Consumers iterate with `for await ... of`. Cancellation is via the
+ * `signal` — once aborted, the underlying transport is torn down and the
+ * iterator finishes (or throws `AbortError`, depending on adapter).
+ */
+export interface DeployStreamLogsInput {
+  deployId: string;
+  signal?: AbortSignal;
+}
+
+/**
+ * A single log line surfaced from the platform.
+ *
+ * Fields beyond `timestamp` and `text` are best-effort — adapters populate
+ * what they have. Consumers MUST NOT rely on `level` or `source` being set.
+ */
+export interface DeployLogLine {
+  /** Milliseconds since epoch — from the platform if provided, else when received locally. */
+  timestamp: number;
+  /** Build phase or component (e.g. 'build', 'deploy'). Optional. */
+  source?: string;
+  /** 'info' | 'warn' | 'error' | 'stdout' | 'stderr' — adapter-defined. Optional. */
+  level?: string;
+  /** Log text, no trailing newline. */
+  text: string;
+}
+
+/**
  * The DeployAdapter contract.
  *
  * `deploy` is required. `status` and `rollback` are optional so adapters that
@@ -98,6 +139,13 @@ export interface DeployAdapter {
   deploy(input: DeployInput): Promise<DeployResult>;
   status?(input: DeployStatusInput): Promise<DeployStatusResult>;
   rollback?(input: DeployRollbackInput): Promise<DeployResult>;
+  /**
+   * Subscribe to real-time build logs. Optional — adapters without a
+   * platform API for log streaming (e.g. the generic shell adapter) omit
+   * this method, and the `undefined` is the canonical "not supported"
+   * signal for callers.
+   */
+  streamLogs?(input: DeployStreamLogsInput): AsyncIterable<DeployLogLine>;
 }
 
 /**

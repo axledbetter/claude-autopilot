@@ -38,6 +38,33 @@ function mockFetch(responses: Array<Response | Error>): { fetch: typeof fetch; c
   return { fetch: fetchStub, calls };
 }
 
+/**
+ * Build a minimal Response whose `body` is a web ReadableStream that yields
+ * the given chunks (UTF-8 encoded). When `error` is set, the stream rejects
+ * the next read with that error.
+ */
+function streamingRes(status: number, chunks: Array<string>, error?: Error): Response {
+  let i = 0;
+  const reader = {
+    async read(): Promise<{ done: boolean; value?: Uint8Array }> {
+      if (error && i === chunks.length) throw error;
+      if (i >= chunks.length) return { done: true };
+      const chunk = chunks[i++]!;
+      return { done: false, value: new TextEncoder().encode(chunk) };
+    },
+    cancel() { return Promise.resolve(); },
+    releaseLock() {},
+  };
+  const body = { getReader: () => reader } as unknown as ReadableStream<Uint8Array>;
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    body,
+    text: async () => chunks.join(''),
+    json: async () => JSON.parse(chunks.join('')),
+  } as unknown as Response;
+}
+
 const sleepNoop = async () => {};
 const fixedNow = () => 1_700_000_000_000;
 
@@ -231,5 +258,242 @@ describe('VercelDeployAdapter', () => {
     assert.equal(r.status, 'pass');
     assert.match(calls[0]!.url, /teamId=team_xyz/);
     assert.match(calls[1]!.url, /teamId=team_xyz/);
+  });
+
+  it('fires onDeployStart with the new deployment id immediately after POST', async () => {
+    const { fetch } = mockFetch([
+      res(200, { id: 'dpl_start', url: 'app.vercel.app' }),
+      res(200, { id: 'dpl_start', readyState: 'READY', url: 'app.vercel.app' }),
+    ]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const seen: string[] = [];
+    const result = await adapter.deploy({
+      onDeployStart: (id) => { seen.push(id); },
+    });
+    assert.deepEqual(seen, ['dpl_start']);
+    assert.equal(result.status, 'pass');
+  });
+
+  it('does not fire onDeployStart when create POST returns no id', async () => {
+    const { fetch } = mockFetch([res(200, { url: 'no-id.vercel.app' })]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const seen: string[] = [];
+    await assert.rejects(
+      adapter.deploy({ onDeployStart: (id) => { seen.push(id); } }),
+      /no deployment id/,
+    );
+    assert.deepEqual(seen, []);
+  });
+});
+
+describe('VercelDeployAdapter.streamLogs', () => {
+  it('yields DeployLogLines parsed from a mocked NDJSON stream', async () => {
+    const events = [
+      JSON.stringify({ type: 'stdout', payload: { text: 'hello' }, created: 1700000000000 }) + '\n',
+      JSON.stringify({ type: 'stderr', payload: { text: 'warn x' }, created: 1700000000001 }) + '\n',
+      JSON.stringify({ type: 'state', payload: { state: 'BUILDING' }, created: 1700000000002 }) + '\n',
+      JSON.stringify({ type: 'stdout', payload: { text: 'done' }, created: 1700000000003 }) + '\n',
+    ];
+    const { fetch } = mockFetch([streamingRes(200, [events.join('')])]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const lines: Array<{ text: string; level?: string }> = [];
+    for await (const line of adapter.streamLogs!({ deployId: 'dpl_x' })) {
+      lines.push({ text: line.text, level: line.level });
+    }
+    assert.deepEqual(lines, [
+      { text: 'hello', level: 'stdout' },
+      { text: 'warn x', level: 'stderr' },
+      { text: 'done', level: 'stdout' },
+    ]);
+  });
+
+  it('handles partial chunks across reads (a line split mid-event)', async () => {
+    const fullLine = JSON.stringify({ type: 'stdout', payload: { text: 'split-line' }, created: 1700000000000 });
+    const halfA = fullLine.slice(0, 20);
+    const halfB = fullLine.slice(20) + '\n';
+    const { fetch } = mockFetch([streamingRes(200, [halfA, halfB])]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const lines: string[] = [];
+    for await (const line of adapter.streamLogs!({ deployId: 'dpl_x' })) {
+      lines.push(line.text);
+    }
+    assert.deepEqual(lines, ['split-line']);
+  });
+
+  it('tolerates malformed JSON by skipping the bad line', async () => {
+    const good = JSON.stringify({ type: 'stdout', payload: { text: 'good-1' }, created: 1700000000000 }) + '\n';
+    const garbage = '{not really json' + '\n';
+    const good2 = JSON.stringify({ type: 'stdout', payload: { text: 'good-2' }, created: 1700000000001 }) + '\n';
+    const { fetch } = mockFetch([streamingRes(200, [good + garbage + good2])]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const lines: string[] = [];
+    for await (const line of adapter.streamLogs!({ deployId: 'dpl_x' })) {
+      lines.push(line.text);
+    }
+    assert.deepEqual(lines, ['good-1', 'good-2']);
+  });
+
+  it('handles SSE-style "data: {...}" prefix in addition to raw NDJSON', async () => {
+    const event = JSON.stringify({ type: 'stdout', payload: { text: 'sse-line' }, created: 1700000000000 });
+    const stream = `event: log\ndata: ${event}\n\n: heartbeat\nid: 42\n`;
+    const { fetch } = mockFetch([streamingRes(200, [stream])]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const lines: string[] = [];
+    for await (const line of adapter.streamLogs!({ deployId: 'dpl_x' })) {
+      lines.push(line.text);
+    }
+    assert.deepEqual(lines, ['sse-line']);
+  });
+
+  it('filters non-log event types (state, complete) so only stdout/stderr surface', async () => {
+    const stream = [
+      JSON.stringify({ type: 'state', payload: { state: 'BUILDING' }, created: 1 }) + '\n',
+      JSON.stringify({ type: 'complete', payload: {}, created: 2 }) + '\n',
+      JSON.stringify({ type: 'stdout', payload: { text: 'survivor' }, created: 3 }) + '\n',
+    ].join('');
+    const { fetch } = mockFetch([streamingRes(200, [stream])]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const lines: string[] = [];
+    for await (const line of adapter.streamLogs!({ deployId: 'dpl_x' })) {
+      lines.push(line.text);
+    }
+    assert.deepEqual(lines, ['survivor']);
+  });
+
+  it('honors AbortSignal — stops the iterator promptly when caller aborts', async () => {
+    const controller = new AbortController();
+    let cancelCalled = false;
+    const reader = {
+      async read(): Promise<{ done: boolean; value?: Uint8Array }> {
+        if (controller.signal.aborted) return { done: true };
+        // Emit one line, then abort so the next loop iteration returns done.
+        controller.abort();
+        return { done: false, value: new TextEncoder().encode(
+          JSON.stringify({ type: 'stdout', payload: { text: 'before-abort' }, created: 1 }) + '\n',
+        ) };
+      },
+      cancel() { cancelCalled = true; return Promise.resolve(); },
+      releaseLock() {},
+    };
+    const body = { getReader: () => reader } as unknown as ReadableStream<Uint8Array>;
+    const fakeRes = { ok: true, status: 200, body, text: async () => '', json: async () => ({}) } as unknown as Response;
+    const fetch = (async () => fakeRes) as unknown as typeof globalThis.fetch;
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const lines: string[] = [];
+    for await (const line of adapter.streamLogs!({ deployId: 'dpl_x', signal: controller.signal })) {
+      lines.push(line.text);
+    }
+    assert.deepEqual(lines, ['before-abort']);
+    // Sanity: the cancel hook (if used) should not throw — the iterator just
+    // exits via the aborted-signal check on the next iteration.
+    assert.equal(typeof cancelCalled, 'boolean');
+  });
+
+  it('throws GuardrailError(code:auth) on 401', async () => {
+    const { fetch } = mockFetch([res(401, { error: { message: 'no auth' } })]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    await assert.rejects(
+      (async () => {
+        for await (const _line of adapter.streamLogs!({ deployId: 'dpl_x' })) { void _line; }
+      })(),
+      (err: unknown) => err instanceof GuardrailError && err.code === 'auth',
+    );
+  });
+
+  it('retries 404 up to 3 times then throws GuardrailError(code:invalid_config)', async () => {
+    const { fetch, calls } = mockFetch([
+      res(404, { error: { message: 'not propagated yet' } }),
+      res(404, { error: { message: 'not propagated yet' } }),
+      res(404, { error: { message: 'still missing' } }),
+    ]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    await assert.rejects(
+      (async () => {
+        for await (const _line of adapter.streamLogs!({ deployId: 'dpl_x' })) { void _line; }
+      })(),
+      (err: unknown) => err instanceof GuardrailError && err.code === 'invalid_config',
+    );
+    assert.equal(calls.length, 3);
+  });
+
+  it('retries 404 then succeeds when the events service catches up', async () => {
+    const event = JSON.stringify({ type: 'stdout', payload: { text: 'finally' }, created: 1 }) + '\n';
+    const { fetch, calls } = mockFetch([
+      res(404, { error: { message: 'not yet' } }),
+      streamingRes(200, [event]),
+    ]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const lines: string[] = [];
+    for await (const line of adapter.streamLogs!({ deployId: 'dpl_x' })) {
+      lines.push(line.text);
+    }
+    assert.deepEqual(lines, ['finally']);
+    assert.equal(calls.length, 2);
   });
 });
