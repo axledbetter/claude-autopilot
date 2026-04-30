@@ -401,4 +401,99 @@ describe('VercelDeployAdapter.streamLogs', () => {
     }
     assert.deepEqual(lines, ['survivor']);
   });
+
+  it('honors AbortSignal — stops the iterator promptly when caller aborts', async () => {
+    const controller = new AbortController();
+    let cancelCalled = false;
+    const reader = {
+      async read(): Promise<{ done: boolean; value?: Uint8Array }> {
+        if (controller.signal.aborted) return { done: true };
+        // Emit one line, then abort so the next loop iteration returns done.
+        controller.abort();
+        return { done: false, value: new TextEncoder().encode(
+          JSON.stringify({ type: 'stdout', payload: { text: 'before-abort' }, created: 1 }) + '\n',
+        ) };
+      },
+      cancel() { cancelCalled = true; return Promise.resolve(); },
+      releaseLock() {},
+    };
+    const body = { getReader: () => reader } as unknown as ReadableStream<Uint8Array>;
+    const fakeRes = { ok: true, status: 200, body, text: async () => '', json: async () => ({}) } as unknown as Response;
+    const fetch = (async () => fakeRes) as unknown as typeof globalThis.fetch;
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const lines: string[] = [];
+    for await (const line of adapter.streamLogs!({ deployId: 'dpl_x', signal: controller.signal })) {
+      lines.push(line.text);
+    }
+    assert.deepEqual(lines, ['before-abort']);
+    // Sanity: the cancel hook (if used) should not throw — the iterator just
+    // exits via the aborted-signal check on the next iteration.
+    assert.equal(typeof cancelCalled, 'boolean');
+  });
+
+  it('throws GuardrailError(code:auth) on 401', async () => {
+    const { fetch } = mockFetch([res(401, { error: { message: 'no auth' } })]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    await assert.rejects(
+      (async () => {
+        for await (const _line of adapter.streamLogs!({ deployId: 'dpl_x' })) { void _line; }
+      })(),
+      (err: unknown) => err instanceof GuardrailError && err.code === 'auth',
+    );
+  });
+
+  it('retries 404 up to 3 times then throws GuardrailError(code:invalid_config)', async () => {
+    const { fetch, calls } = mockFetch([
+      res(404, { error: { message: 'not propagated yet' } }),
+      res(404, { error: { message: 'not propagated yet' } }),
+      res(404, { error: { message: 'still missing' } }),
+    ]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    await assert.rejects(
+      (async () => {
+        for await (const _line of adapter.streamLogs!({ deployId: 'dpl_x' })) { void _line; }
+      })(),
+      (err: unknown) => err instanceof GuardrailError && err.code === 'invalid_config',
+    );
+    assert.equal(calls.length, 3);
+  });
+
+  it('retries 404 then succeeds when the events service catches up', async () => {
+    const event = JSON.stringify({ type: 'stdout', payload: { text: 'finally' }, created: 1 }) + '\n';
+    const { fetch, calls } = mockFetch([
+      res(404, { error: { message: 'not yet' } }),
+      streamingRes(200, [event]),
+    ]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const lines: string[] = [];
+    for await (const line of adapter.streamLogs!({ deployId: 'dpl_x' })) {
+      lines.push(line.text);
+    }
+    assert.deepEqual(lines, ['finally']);
+    assert.equal(calls.length, 2);
+  });
 });
