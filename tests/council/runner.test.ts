@@ -7,9 +7,9 @@ import type { CouncilAdapter } from '../../src/adapters/council/types.ts';
 function makeAdapter(label: string, response: string, delayMs = 0): CouncilAdapter {
   return {
     label,
-    async consult(): Promise<string> {
+    async consult() {
       if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
-      return response;
+      return { text: response, usage: { input: 10, output: 5, costUSD: 0.0001 } };
     },
   };
 }
@@ -17,7 +17,7 @@ function makeAdapter(label: string, response: string, delayMs = 0): CouncilAdapt
 function makeFailingAdapter(label: string): CouncilAdapter {
   return {
     label,
-    async consult(): Promise<string> { throw new Error('api error'); },
+    async consult() { throw new Error('api error'); },
   };
 }
 
@@ -37,7 +37,7 @@ describe('runCouncil', () => {
   it('R1: all succeed — status success, synthesis present', async () => {
     const adapters = [makeAdapter('A', 'response A'), makeAdapter('B', 'response B')];
     const synthesizer = makeAdapter('Synth', 'the synthesis text');
-    const result = await runCouncil(baseConfig, adapters, synthesizer, 'test prompt', 'context doc');
+    const { result } = await runCouncil(baseConfig, adapters, synthesizer, 'test prompt', 'context doc');
     assert.equal(result.schema_version, 1);
     assert.equal(result.status, 'success');
     assert.equal(result.responses.length, 2);
@@ -50,7 +50,7 @@ describe('runCouncil', () => {
     // A takes 600ms, timeout is 500ms → A times out; B succeeds; min=1 → quorum met
     const adapters = [makeAdapter('A', 'response A', 600), makeAdapter('B', 'response B')];
     const synthesizer = makeAdapter('Synth', 'synthesis text');
-    const result = await runCouncil(baseConfig, adapters, synthesizer, 'test prompt', 'context doc');
+    const { result } = await runCouncil(baseConfig, adapters, synthesizer, 'test prompt', 'context doc');
     assert.equal(result.status, 'success');
     const timedOut = result.responses.find(r => r.label === 'A');
     const ok = result.responses.find(r => r.label === 'B');
@@ -62,7 +62,7 @@ describe('runCouncil', () => {
   it('R3: all models fail — status failed, no synthesis', async () => {
     const adapters = [makeFailingAdapter('A'), makeFailingAdapter('B')];
     const synthesizer = makeAdapter('Synth', 'synthesis');
-    const result = await runCouncil(baseConfig, adapters, synthesizer, 'test prompt', 'context doc');
+    const { result } = await runCouncil(baseConfig, adapters, synthesizer, 'test prompt', 'context doc');
     assert.equal(result.status, 'failed');
     assert.equal(result.synthesis, undefined);
     assert.ok(result.responses.every(r => r.status === 'error'));
@@ -72,7 +72,7 @@ describe('runCouncil', () => {
     const strictConfig = { ...baseConfig, minSuccessfulResponses: 2 };
     const adapters = [makeFailingAdapter('A'), makeAdapter('B', 'ok B')];
     const synthesizer = makeAdapter('Synth', 'synthesis');
-    const result = await runCouncil(strictConfig, adapters, synthesizer, 'test prompt', 'context');
+    const { result } = await runCouncil(strictConfig, adapters, synthesizer, 'test prompt', 'context');
     assert.equal(result.status, 'failed');
     assert.equal(result.synthesis, undefined);
   });
@@ -80,7 +80,7 @@ describe('runCouncil', () => {
   it('R5: synthesis throws — status partial, responses present', async () => {
     const adapters = [makeAdapter('A', 'response A'), makeAdapter('B', 'response B')];
     const failSynth = makeFailingAdapter('Synth');
-    const result = await runCouncil(baseConfig, adapters, failSynth, 'test prompt', 'context doc');
+    const { result } = await runCouncil(baseConfig, adapters, failSynth, 'test prompt', 'context doc');
     assert.equal(result.status, 'partial');
     assert.equal(result.responses.filter(r => r.status === 'ok').length, 2);
     assert.equal(result.synthesis, undefined);
@@ -89,7 +89,7 @@ describe('runCouncil', () => {
   it('R6: latencyMs is measured for each response', async () => {
     const adapters = [makeAdapter('A', 'r', 50), makeAdapter('B', 'r', 50)];
     const synthesizer = makeAdapter('Synth', 's');
-    const result = await runCouncil(baseConfig, adapters, synthesizer, 'q', 'ctx');
+    const { result } = await runCouncil(baseConfig, adapters, synthesizer, 'q', 'ctx');
     // Timer jitter on fast CI can fire setTimeout(50) at ~45ms; we only need to
     // verify latency is *measured*, not that it equals the delay to the ms.
     assert.ok(

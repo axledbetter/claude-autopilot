@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import { GuardrailError } from '../../core/errors.ts';
 import { classifyError } from '../review-engine/prompt-builder.ts';
-import type { CouncilAdapter } from './types.ts';
+import type { CouncilAdapter, CouncilConsultResult } from './types.ts';
 
 const SYSTEM_PROMPT = `You are a technical advisor reviewing a software design decision. Evaluate the provided context and question critically. Be direct and specific. Surface tradeoffs, risks, and your recommendation.`;
 const MAX_OUTPUT_TOKENS = 2048;
@@ -17,10 +17,15 @@ function isResponsesOnlyModel(model: string): boolean {
   return /codex|^o[1-9]|^gpt-5\.3-/i.test(model);
 }
 
+// Per-million-token rates for gpt-5.3-codex (override via env for other models).
+// Mirrors the review-engine codex adapter's pricing.
+const COST_PER_M_INPUT = Number(process.env.CODEX_COST_INPUT_PER_M ?? 1.25);
+const COST_PER_M_OUTPUT = Number(process.env.CODEX_COST_OUTPUT_PER_M ?? 10.0);
+
 export function makeOpenAICouncilAdapter(model: string, label: string): CouncilAdapter {
   return {
     label,
-    async consult(prompt: string, context: string): Promise<string> {
+    async consult(prompt: string, context: string): Promise<CouncilConsultResult> {
       const apiKey = process.env.OPENAI_API_KEY;
       if (!apiKey) {
         throw new GuardrailError('OPENAI_API_KEY not set', { code: 'auth', provider: 'openai' });
@@ -35,7 +40,14 @@ export function makeOpenAICouncilAdapter(model: string, label: string): CouncilA
             input: userInput,
             max_output_tokens: MAX_OUTPUT_TOKENS,
           });
-          return response.output_text ?? '';
+          const usage = response.usage ? {
+            input: response.usage.input_tokens,
+            output: response.usage.output_tokens,
+            costUSD:
+              (response.usage.input_tokens / 1_000_000) * COST_PER_M_INPUT +
+              (response.usage.output_tokens / 1_000_000) * COST_PER_M_OUTPUT,
+          } : undefined;
+          return { text: response.output_text ?? '', usage };
         }
         const response = await client.chat.completions.create({
           model,
@@ -45,7 +57,14 @@ export function makeOpenAICouncilAdapter(model: string, label: string): CouncilA
             { role: 'user', content: userInput },
           ],
         });
-        return response.choices[0]?.message?.content ?? '';
+        const usage = response.usage ? {
+          input: response.usage.prompt_tokens,
+          output: response.usage.completion_tokens,
+          costUSD:
+            (response.usage.prompt_tokens / 1_000_000) * COST_PER_M_INPUT +
+            (response.usage.completion_tokens / 1_000_000) * COST_PER_M_OUTPUT,
+        } : undefined;
+        return { text: response.choices[0]?.message?.content ?? '', usage };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         const code = classifyError(message);
