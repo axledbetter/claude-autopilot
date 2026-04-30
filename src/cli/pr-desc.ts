@@ -135,22 +135,17 @@ export async function runPrDesc(options: PrDescOptions): Promise<PrDescResult> {
     process.stdout.write(formatted + '\n');
   }
 
-  // Persist to cost log AFTER the output is emitted. Bugbot HIGH on PR #51:
-  // if appendCostLog throws (read-only FS, full disk, permission), the user
-  // pays for the LLM call but never sees the result. Mirrors the
-  // output-then-log ordering in scan.ts and council.ts.
-  try {
-    appendCostLog(options._cwd ?? process.cwd(), {
-      timestamp: new Date().toISOString(),
-      files: 1,
-      inputTokens: usage?.input ?? 0,
-      outputTokens: usage?.output ?? 0,
-      costUSD: usage?.costUSD ?? 0,
-      durationMs: Date.now() - start,
-    });
-  } catch {
-    // Cost log is observability, not a contract — never block PR description on it.
-  }
+  // Persist to cost log AFTER the output is emitted. The function itself
+  // swallows write errors (see core/persist/cost-log.ts) so a read-only FS
+  // or full disk doesn't kill commands that already succeeded.
+  appendCostLog(options._cwd ?? process.cwd(), {
+    timestamp: new Date().toISOString(),
+    files: 1,
+    inputTokens: usage?.input ?? 0,
+    outputTokens: usage?.output ?? 0,
+    costUSD: usage?.costUSD ?? 0,
+    durationMs: Date.now() - start,
+  });
 
   if (options.post) {
     return createPr(title, body, options.yes ?? false);
