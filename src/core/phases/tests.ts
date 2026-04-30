@@ -1,4 +1,6 @@
 import { execSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import type { Finding } from '../findings/types.ts';
 
 export interface TestsPhaseInput {
@@ -13,6 +15,23 @@ export interface TestsPhaseResult {
   findings: Finding[];
   output?: string;
   durationMs: number;
+}
+
+// Detects a Python venv next to the project and prepends its bin/ to PATH so
+// commands like `pytest -q` resolve to the venv's binary instead of failing
+// with "command not found" or hitting an unrelated system Python. Surfaced by
+// the 5.0.8 e2e test on randai-johnson — claude-autopilot pr ran the test
+// command from PATH and reported "tests failed" even though the venv-installed
+// pytest passed cleanly.
+function venvAwareEnv(cwd?: string): NodeJS.ProcessEnv {
+  const root = cwd ?? process.cwd();
+  for (const candidate of ['.venv', 'venv', 'env']) {
+    const binDir = path.join(root, candidate, 'bin');
+    if (fs.existsSync(path.join(binDir, 'python')) || fs.existsSync(path.join(binDir, 'python3'))) {
+      return { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}` };
+    }
+  }
+  return process.env;
 }
 
 export async function runTestsPhase(input: TestsPhaseInput): Promise<TestsPhaseResult> {
@@ -31,6 +50,7 @@ export async function runTestsPhase(input: TestsPhaseInput): Promise<TestsPhaseR
       timeout: 120000,
       shell: process.env.SHELL ?? "/bin/sh",
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: venvAwareEnv(input.cwd),
     });
   } catch {
     const finding: Finding = {
