@@ -341,6 +341,7 @@ Options (deploy):
   --sha <commit>               Specific commit SHA to deploy
   --watch                      Stream build logs to stderr in real time (Vercel only)
   --to <deploy-id>             Target deploy ID for 'deploy rollback'
+  --pr <n>                     Post upserting deploy summary comment on the PR
 
 Subcommands (deploy):
   deploy                       Deploy via configured adapter
@@ -801,12 +802,25 @@ switch (subcommand) {
     const ref = flag('ref');
     const commitSha = flag('sha');
     const watch = boolFlag('watch');
+    const prRaw = flag('pr');
+    let prNum: number | undefined;
+    if (prRaw !== undefined) {
+      const n = parseInt(prRaw, 10);
+      if (Number.isNaN(n) || n <= 0) {
+        console.error(
+          `\x1b[31m[claude-autopilot] --pr must be a positive integer, got "${prRaw}"\x1b[0m`,
+        );
+        process.exit(1);
+      }
+      prNum = n;
+    }
     const code = await runDeploy({
       configPath: config,
       adapterOverride: adapterArg as 'vercel' | 'generic' | undefined,
       ref,
       commitSha,
       watch,
+      pr: prNum,
     });
     process.exit(code);
     break;

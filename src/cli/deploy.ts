@@ -10,10 +10,12 @@
 // adapter.status/rollback) and not implemented here.
 
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { GuardrailError } from '../core/errors.ts';
 import { loadConfig } from '../core/config/loader.ts';
+import { runSafe } from '../core/shell.ts';
 import { createDeployAdapter } from '../adapters/deploy/index.ts';
 import type { DeployAdapter, DeployConfig, DeployResult } from '../adapters/deploy/types.ts';
 import type { VercelDeployListItem } from '../adapters/deploy/vercel.ts';
@@ -47,6 +49,24 @@ export interface RunDeployOptions {
    * MUST NOT set this.
    */
   adapterFactory?: (config: DeployConfig) => DeployAdapter;
+  /**
+   * Test seam — injected `fetch` implementation for the post-deploy health
+   * check. Defaults to `globalThis.fetch`.
+   */
+  fetchImpl?: typeof fetch;
+  /**
+   * Test seam — injected sleep function used between health-check retries.
+   * Defaults to `setTimeout`-based sleep. Pass `async () => {}` from tests.
+   */
+  sleepImpl?: (ms: number) => Promise<void>;
+  /** GitHub PR number — when set, post upserting deploy summary comment. */
+  pr?: number;
+  /**
+   * Test seam — injected `gh` CLI runner. Receives argv plus an optional
+   * stdin `body` (passed via `gh ... --body-file -`). Returns stdout.
+   * Defaults to `core/shell.runSafe`.
+   */
+  ghImpl?: (args: string[], opts?: { body?: string; cwd?: string }) => string;
 }
 
 /**
@@ -110,11 +130,14 @@ export async function runDeploy(opts: RunDeployOptions): Promise<number> {
   const adapter = merged.adapter;
 
   let result: DeployResult;
+  let healthOutcome: HealthCheckOutcome = { status: 'skipped' };
   let streamController: AbortController | undefined;
   let streamPromise: Promise<void> | undefined;
+  let deployAdapterRef: DeployAdapter | undefined;
   try {
     const factory = opts.adapterFactory ?? createDeployAdapter;
     const deployAdapter = factory(merged);
+    deployAdapterRef = deployAdapter;
 
     // --watch: opt into log streaming. We start the stream from inside an
     // onDeployStart callback so it begins as soon as the platform returns
@@ -158,6 +181,74 @@ export async function runDeploy(opts: RunDeployOptions): Promise<number> {
     if (streamPromise) {
       try { await streamPromise; } catch { /* already logged */ }
     }
+
+    // Phase 4 — post-deploy health check. Skipped when deploy itself failed
+    // OR when no explicit `healthCheckUrl` is configured. We deliberately do
+    // NOT fall back to `result.deployUrl`: silently probing the deploy URL
+    // would change behavior for everyone upgrading to Phase 4 (their deploys
+    // would suddenly fail if the URL is preview-only or rate-limited). Health
+    // checks are opt-in via config. The spec explicitly leaves room for a
+    // future `healthCheckUrl: auto` mode that interpolates from `deployUrl`.
+    if (result.status === 'pass') {
+      const healthUrl = merged.healthCheckUrl;
+      if (healthUrl) {
+        healthOutcome = await runHealthCheck({
+          url: healthUrl,
+          fetchImpl: opts.fetchImpl ?? globalThis.fetch,
+          sleepImpl: opts.sleepImpl ?? defaultSleep,
+        });
+        if (healthOutcome.status === 'fail') {
+          const triggers = merged.rollbackOn ?? [];
+          const wantRollback = triggers.includes('healthCheckFailure');
+          if (wantRollback) {
+            if (typeof deployAdapter.rollback === 'function') {
+              try {
+                const rb = await deployAdapter.rollback({});
+                if (rb.status === 'pass') {
+                  result = {
+                    ...result,
+                    status: 'fail',
+                    rolledBackTo: rb.rolledBackTo ?? rb.deployId,
+                    output: `Deploy passed; health check failed (${healthOutcome.lastError}); auto-rolled back to ${rb.rolledBackTo ?? rb.deployId ?? '<unknown>'}.`,
+                  };
+                  printAutoRollback(deployAdapter.name, healthOutcome, rb);
+                } else {
+                  result = {
+                    ...result,
+                    status: 'fail',
+                    output: `Deploy passed; health check failed; auto-rollback ALSO failed: ${rb.output ?? '<no output>'}`,
+                  };
+                  printAutoRollbackFailed(rb.output ?? 'rollback returned non-pass');
+                }
+              } catch (err) {
+                const msg = (err as Error)?.message ?? String(err);
+                result = {
+                  ...result,
+                  status: 'fail',
+                  output: `Deploy passed; health check failed; auto-rollback ERRORED: ${msg}`,
+                };
+                printAutoRollbackFailed(msg);
+              }
+            } else {
+              console.error(
+                `\x1b[33m[deploy] rollbackOn=[healthCheckFailure] configured but adapter "${deployAdapter.name}" does not support rollback\x1b[0m`,
+              );
+              result = {
+                ...result,
+                status: 'fail',
+                output: `Deploy passed but health check failed: ${healthOutcome.lastError} at ${healthOutcome.url} (adapter does not support rollback)`,
+              };
+            }
+          } else {
+            result = {
+              ...result,
+              status: 'fail',
+              output: `Deploy passed but health check failed: ${healthOutcome.lastError} at ${healthOutcome.url}`,
+            };
+          }
+        }
+      }
+    }
   } catch (err) {
     streamController?.abort();
     if (streamPromise) {
@@ -168,6 +259,24 @@ export async function runDeploy(opts: RunDeployOptions): Promise<number> {
   }
 
   printResult(adapter, result);
+
+  if (opts.pr !== undefined) {
+    try {
+      postDeployPrComment({
+        pr: opts.pr,
+        cwd: opts.cwd ?? process.cwd(),
+        adapterName: deployAdapterRef?.name ?? adapter,
+        result,
+        healthOutcome,
+        ghImpl: opts.ghImpl ?? defaultGhImpl,
+      });
+    } catch (err) {
+      console.error(
+        `\x1b[33m[deploy] failed to post PR comment: ${(err as Error)?.message ?? String(err)}\x1b[0m`,
+      );
+    }
+  }
+
   if (result.status === 'pass') return 0;
   if (result.status === 'in-progress') return 2;
   return 1;
@@ -337,3 +446,200 @@ function formatAge(createdAtMs: number): string {
   const days = Math.floor(hours / 24);
   return `${days}d`;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 4 — post-deploy health check + auto-rollback orchestration.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Outcome of the post-deploy health check.
+ * - `pass`: at least one attempt returned 2xx within the retry budget.
+ * - `fail`: all 3 attempts failed (non-2xx, network error, or per-attempt timeout).
+ * - `skipped`: no `healthCheckUrl` resolvable (no config + no deployUrl).
+ */
+type HealthCheckOutcome =
+  | { status: 'pass'; url: string }
+  | { status: 'fail'; url: string; lastError: string }
+  | { status: 'skipped' };
+
+interface HealthCheckOptions {
+  url: string;
+  fetchImpl: typeof fetch;
+  sleepImpl: (ms: number) => Promise<void>;
+}
+
+/**
+ * Probe a URL up to 3 times with 2s backoff between attempts. 2xx → pass.
+ * Per-attempt timeout is 10s. Network errors are treated as failures and
+ * retried.
+ */
+async function runHealthCheck(opts: HealthCheckOptions): Promise<HealthCheckOutcome> {
+  const { url, fetchImpl, sleepImpl } = opts;
+  let lastError = '';
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10_000);
+    try {
+      const res = await fetchImpl(url, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (res.status >= 200 && res.status < 300) {
+        return { status: 'pass', url };
+      }
+      lastError = `HTTP ${res.status}`;
+    } catch (err) {
+      clearTimeout(timer);
+      lastError = (err as Error)?.message ?? String(err);
+    }
+    if (attempt < 3) await sleepImpl(2000);
+  }
+  return { status: 'fail', url, lastError };
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Print the distinct yellow auto-rollback marker. Called only after the
+ * adapter's `rollback({})` returned `pass` — i.e. the previous prod deploy
+ * has been promoted and is now serving traffic.
+ */
+function printAutoRollback(
+  adapter: string,
+  hc: Extract<HealthCheckOutcome, { status: 'fail' }>,
+  rb: DeployResult,
+): void {
+  const yellow = '\x1b[33m';
+  const dim = '\x1b[2m';
+  const reset = '\x1b[0m';
+  const target = rb.rolledBackTo ?? rb.deployId ?? '<unknown>';
+  console.log(
+    `${yellow}🔄 [deploy] auto-rolled-back-to=${target} via=${adapter} health-check-url=${hc.url}${reset}`,
+  );
+  console.log(
+    `${dim}   reason: health check failed 3x against ${hc.url} (${hc.lastError})${reset}`,
+  );
+  if (rb.deployUrl) {
+    console.log(`${dim}   current: ${rb.deployUrl}${reset}`);
+  }
+}
+
+/**
+ * Print the auto-rollback failure marker. Called when the rollback attempt
+ * itself errors or returns non-pass — the original (failing) deploy is
+ * still in place and the operator must intervene.
+ */
+function printAutoRollbackFailed(reason: string): void {
+  const yellow = '\x1b[33m';
+  const dim = '\x1b[2m';
+  const reset = '\x1b[0m';
+  console.log(`${yellow}🔄 [deploy] auto-rollback FAILED — original deploy left in place${reset}`);
+  console.log(`${dim}   reason: ${reason}${reset}`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 4 — `--pr <n>` deploy summary comment.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DEPLOY_COMMENT_MARKER = '<!-- claude-autopilot-deploy -->';
+
+interface DeployCommentInput {
+  pr: number;
+  cwd: string;
+  adapterName: string;
+  result: DeployResult;
+  healthOutcome: HealthCheckOutcome;
+  ghImpl: (args: string[], opts?: { body?: string; cwd?: string }) => string;
+}
+
+/** Build the markdown body for the deploy summary comment. Pure, side-effect-free. */
+function buildDeployCommentBody(input: Omit<DeployCommentInput, 'ghImpl' | 'cwd' | 'pr'>): string {
+  const { adapterName, result, healthOutcome } = input;
+  const lines: string[] = [DEPLOY_COMMENT_MARKER];
+  if (result.rolledBackTo) {
+    lines.push('## ❌ Deploy auto-rolled back', '');
+    lines.push('| Step | Status | URL / ID |');
+    lines.push('|---|:---:|---|');
+    lines.push(
+      `| New deploy \`${result.deployId ?? 'unknown'}\` | ✅ built | ${result.deployUrl ?? '—'} |`,
+    );
+    if (healthOutcome.status === 'fail') {
+      lines.push(`| Health check | ❌ failed | ${healthOutcome.url} |`);
+    }
+    lines.push(
+      `| Auto-rollback to \`${result.rolledBackTo}\` | ✅ promoted | (current production) |`,
+    );
+  } else if (result.status === 'pass') {
+    lines.push('## ✅ Deploy succeeded', '');
+    lines.push('| Field | Value |');
+    lines.push('|---|---|');
+    lines.push(`| Deploy ID | \`${result.deployId ?? 'unknown'}\` |`);
+    if (result.deployUrl) lines.push(`| URL | ${result.deployUrl} |`);
+    if (healthOutcome.status === 'pass') {
+      lines.push(`| Health check | ✅ ${healthOutcome.url} |`);
+    }
+  } else {
+    lines.push('## ❌ Deploy failed', '');
+    lines.push('| Field | Value |');
+    lines.push('|---|---|');
+    if (result.deployId) lines.push(`| Deploy ID | \`${result.deployId}\` |`);
+    if (result.deployUrl) lines.push(`| URL | ${result.deployUrl} |`);
+    if (result.output) lines.push(`| Reason | ${result.output.replace(/\n/g, ' ')} |`);
+  }
+  lines.push('', `*adapter=${adapterName} · duration=${(result.durationMs / 1000).toFixed(1)}s*`);
+  return lines.join('\n');
+}
+
+/**
+ * Upsert the deploy summary comment on a PR. Looks up an existing comment
+ * anchored on `DEPLOY_COMMENT_MARKER` and PATCHes it; otherwise creates
+ * a new one. The marker is distinct from `<!-- guardrail-review -->` so
+ * deploy and review comments coexist.
+ */
+function postDeployPrComment(input: DeployCommentInput): void {
+  const { pr, cwd, ghImpl } = input;
+  const body = buildDeployCommentBody(input);
+  const lookup = ghImpl(
+    [
+      'api',
+      `repos/{owner}/{repo}/issues/${pr}/comments`,
+      '--jq',
+      `[.[] | select(.body | startswith("${DEPLOY_COMMENT_MARKER}")) | .id] | first`,
+    ],
+    { cwd },
+  );
+  const existingId = lookup.trim();
+  if (existingId && /^\d+$/.test(existingId)) {
+    ghImpl(
+      [
+        'api',
+        `repos/{owner}/{repo}/issues/comments/${existingId}`,
+        '--method',
+        'PATCH',
+        '--field',
+        'body=@-',
+      ],
+      { cwd, body },
+    );
+  } else {
+    ghImpl(['pr', 'comment', String(pr), '--body-file', '-'], { cwd, body });
+  }
+}
+
+/**
+ * Default `gh` runner — wraps `core/shell.runSafe` and passes `body` (when
+ * present) via stdin. We translate the placeholder argv tokens `@-` and `-`
+ * into `--body-file <tmp>` style is unnecessary because `runSafe` already
+ * supports `input: string` which `gh` consumes when given `--body-file -`
+ * or `--field body=@-`.
+ */
+function defaultGhImpl(args: string[], opts?: { body?: string; cwd?: string }): string {
+  const result = runSafe('gh', args, { cwd: opts?.cwd, input: opts?.body });
+  return result ?? '';
+}
+
+// `os` is used by future temp-file fallbacks; kept imported so adding one
+// later doesn't perturb the import block. Reference it once to avoid
+// "unused import" warnings under strict linters.
+void os;
+
