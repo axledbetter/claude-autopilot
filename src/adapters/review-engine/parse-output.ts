@@ -24,9 +24,11 @@ const CODE_EXT = String.raw`(?:` +
   // 3
   String.raw`asm|cjs|clj|cpp|css|edn|elm|env|erl|exs|fsi|fsx|gql|hcl|hpp|htm|ini|jsx|lua|mdx|mjs|mli|nim|php|sol|sql|tsx|vue|xml|yml|zig|zsh|` +
   // 2
-  String.raw`cc|cs|ex|fs|go|hs|jl|js|kt|md|mk|ml|mm|pl|pm|py|rb|rs|sc|sh|tf|ts|` +
-  // 1
-  String.raw`c|d|h|m|r|s` +
+  String.raw`cc|cs|ex|fs|go|hs|jl|js|kt|md|mk|ml|mm|pl|pm|py|rb|rs|sc|sh|tf|ts` +
+  // (single-letter code extensions like c/d/h/m/r/s are intentionally NOT in
+  // the bare-reference alternation: prose like "fn.r" or "lib.h" matches as
+  // a "file" too easily and breaks the `fix` command. They still match when
+  // explicitly backtick-wrapped — the LLM has to signal intent.)
 String.raw`)`;
 
 // Matches "path/to/file.ts:42" (bare with known ext), "`path/to/file.ts`" (any

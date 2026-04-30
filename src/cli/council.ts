@@ -9,6 +9,7 @@ import { makeOpenAICouncilAdapter } from '../adapters/council/openai.ts';
 import type { CouncilAdapter } from '../adapters/council/types.ts';
 import type { CouncilModelEntry } from '../core/council/types.ts';
 import { GuardrailError } from '../core/errors.ts';
+import { appendCostLog } from '../core/persist/cost-log.ts';
 
 function makeAdapter(entry: CouncilModelEntry): CouncilAdapter {
   switch (entry.adapter) {
@@ -72,10 +73,11 @@ export async function runCouncilCmd(opts: {
 
   const adapters = councilConfig.models.map(makeAdapter);
   const synthesizer = opts.noSynthesize
-    ? { label: 'none', consult: async () => '' } as CouncilAdapter
+    ? { label: 'none', consult: async () => ({ text: '' }) } as CouncilAdapter
     : makeAdapter(councilConfig.synthesizer);
 
-  const result = await runCouncil(
+  const start = Date.now();
+  const { result, usage } = await runCouncil(
     councilConfig,
     adapters,
     synthesizer,
@@ -89,6 +91,18 @@ export async function runCouncilCmd(opts: {
   }
 
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+
+  // Persist to cost log so `claude-autopilot costs` reflects council runs
+  // (previously dropped — only scan + run pipeline were tracked, leading to
+  // misleadingly low lifetime totals after a council-heavy session).
+  appendCostLog(cwd, {
+    timestamp: new Date().toISOString(),
+    files: 0,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    costUSD: usage.costUSD,
+    durationMs: Date.now() - start,
+  });
 
   if (result.status === 'failed') return 2;
   if (result.status === 'partial') return 1;

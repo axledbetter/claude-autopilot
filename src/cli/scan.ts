@@ -154,16 +154,17 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
     gitSummary: focusHint,
   });
 
-  // Single-file scan fallback — when only one file was scanned, the LLM
-  // doesn't always repeat the file path in its findings (it knows the
-  // context). Backfill `<unspecified>` with the actual scan target so the
-  // `fix` command can match findings to real paths. Without this, a
-  // `claude-autopilot scan src/foo.ts` produces findings with file
-  // `<unspecified>` and `fix --severity all` reports "no fixable findings".
+  // Single-file scan: every finding is about that file (or its imports).
+  // The LLM sometimes emits prose tokens like "n.r" or "fn.c" that the parser
+  // greedily matches as a file ref, producing junk paths that break `fix`.
+  // For single-file scan we KNOW the file — overwrite unconditionally rather
+  // than only filling `<unspecified>`. The 5.0.6 fallback was conditional on
+  // `<unspecified>` and missed the prose-noise case, leaving findings with
+  // bogus `n.r` paths that broke `fix --severity all` ("no fixable findings").
   if (relFiles.length === 1) {
     const onlyFile = relFiles[0]!;
     for (const f of result.findings) {
-      if (!f.file || f.file === '<unspecified>') f.file = onlyFile;
+      f.file = onlyFile;
     }
   }
 

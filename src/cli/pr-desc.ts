@@ -1,6 +1,7 @@
 import type { Finding } from '../core/findings/types.ts';
 import * as fs from 'node:fs';
 import { execSync, spawnSync } from 'node:child_process';
+import { appendCostLog } from '../core/persist/cost-log.ts';
 
 export interface PrDescOptions {
   base?: string;
@@ -11,8 +12,12 @@ export interface PrDescOptions {
   _branchName?: string;
   _cachedFindings?: Finding[];
   _reviewEngine?: {
-    review(input: { content: string; kind: string }): Promise<{ rawOutput: string }>;
+    review(input: { content: string; kind: string }): Promise<{
+      rawOutput: string;
+      usage?: { input: number; output: number; costUSD?: number };
+    }>;
   };
+  _cwd?: string;
 }
 
 export interface PrDescResult {
@@ -112,8 +117,21 @@ export async function runPrDesc(options: PrDescOptions): Promise<PrDescResult> {
   const findings = options._cachedFindings ?? loadCachedFindings();
   const prompt = buildPrompt(branchName, truncateDiff(diff), summarizeFindings(findings));
 
-  const engine = options._reviewEngine ?? (await resolveEngine() as unknown as { review(input: { content: string; kind: string }): Promise<{ rawOutput: string }> });
-  const { rawOutput } = await engine.review({ content: prompt, kind: 'pr-diff' });
+  const engine = options._reviewEngine ?? (await resolveEngine() as unknown as PrDescOptions['_reviewEngine'])!;
+  const start = Date.now();
+  const { rawOutput, usage } = await engine.review({ content: prompt, kind: 'pr-diff' });
+  // Persist to cost log so `claude-autopilot costs` reflects pr-desc invocations,
+  // not just `scan`/`run`. Without this, `costs` showed misleadingly low totals
+  // after a session that included multiple pr-desc / council / scan calls — exactly
+  // the YC demo scenario where lifetime cost is the second-most-asked question.
+  appendCostLog(options._cwd ?? process.cwd(), {
+    timestamp: new Date().toISOString(),
+    files: 1,
+    inputTokens: usage?.input ?? 0,
+    outputTokens: usage?.output ?? 0,
+    costUSD: usage?.costUSD ?? 0,
+    durationMs: Date.now() - start,
+  });
   // Extract first non-empty bullet from the model's Summary section as a
   // last-resort title fallback when the model didn't emit `Title: ...`.
   const firstSummaryLine = rawOutput.split('\n')
