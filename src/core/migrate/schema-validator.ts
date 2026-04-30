@@ -13,6 +13,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import Ajv, { type ErrorObject } from 'ajv';
+import addFormats from 'ajv-formats';
 import * as yaml from 'js-yaml';
 import { requirePackageRoot } from '../../cli/_pkg-root.ts';
 
@@ -48,6 +49,12 @@ function loadStableIds(): Set<string> {
 
 function buildValidator() {
   const ajv = new Ajv({ strict: false, allErrors: true });
+  // Register standard formats (date-time, uri, email, etc.) so the schema's
+  // `format: "date-time"` constraint is actually validated rather than warned-
+  // about-and-ignored on every CLI invocation. Pre-5.2.3 every command printed:
+  //   "unknown format \"date-time\" ignored in schema at path #/.../detected_at"
+  // — twice, since the validator is built lazily in two paths.
+  addFormats(ajv);
   const stableIds = loadStableIds();
 
   // Custom keyword: validates that the value is one of the registered stable IDs.
