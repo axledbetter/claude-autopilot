@@ -32,9 +32,15 @@ export async function runPr(options: PrCommandOptions = {}): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
   const configPath = options.configPath ?? path.join(cwd, 'guardrail.config.yaml');
 
+  // 5.2.2 — pr previously hard-failed when guardrail.config.yaml was missing
+  // ("not found at <path>"). The first-run UX surprised users running
+  // `claude-autopilot pr <n>` on a fresh repo: setup hadn't been invoked, and
+  // the error didn't say to invoke it. Now matches `run`'s behavior — defer
+  // config-loading to the underlying runCommand, which auto-detects stack +
+  // testCommand when the file is missing.
   if (!fs.existsSync(configPath)) {
-    console.error(fmt('red', `[pr] guardrail.config.yaml not found at ${configPath}`));
-    return 1;
+    console.log(fmt('dim', `[pr] guardrail.config.yaml not found — auto-detecting from stack signals.`));
+    console.log(fmt('dim', `     Run \`claude-autopilot setup\` first to commit a config.`));
   }
 
   // Resolve PR number

@@ -14,6 +14,14 @@ export interface CostLogEntry {
 }
 
 export function appendCostLog(cwd: string, entry: CostLogEntry): void {
+  // Skip no-op entries that only pollute the report — runs that didn't
+  // actually invoke an LLM (dry-runs, no-findings paths, "no code files at
+  // path" early returns). Without this filter, randai's costs.jsonl picked up
+  // 6 zero-token zero-duration entries from setup-flow scans, drowning the
+  // 4 real review entries in `claude-autopilot costs` output.
+  if (entry.inputTokens === 0 && entry.outputTokens === 0 && entry.costUSD === 0) {
+    return;
+  }
   // Cost log is observability, not a contract. A failed write (read-only FS,
   // full disk, permission error) must NEVER block the caller — every callsite
   // calls this *after* its primary output is emitted, and a throw here would
