@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "aliases": [
+    {
+      "stableId": "migrate@1",
+      "resolvesTo": "skills/migrate/",
+      "rawAliases": ["migrate"]
+    },
+    {
+      "stableId": "migrate.supabase@1",
+      "resolvesTo": "skills/migrate-supabase/",
+      "rawAliases": ["migrate-supabase"]
+    },
+    {
+      "stableId": "none@1",
+      "resolvesTo": "skills/migrate-none/",
+      "rawAliases": ["none", "skip"]
+    }
+  ]
+}

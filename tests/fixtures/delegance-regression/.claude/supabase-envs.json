@@ -1,0 +1,3 @@
+{
+  "dev": { "dbUrl": "$POSTGRES_URL" }
+}

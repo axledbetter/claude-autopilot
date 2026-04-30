@@ -1,5 +1,47 @@
 # Changelog
 
+## v5.2.0 — Migrate skill generalization
+
+### Added
+
+- **Generalized migrate phase** — `migrate@1` (thin orchestrator), `migrate.supabase@1` (rich Delegance runner, paths now parameterized via stack.md), `none@1` (no-op for `--skip-migrate`). Pipeline reads `.autopilot/stack.md` to dispatch the right skill.
+- **Auto-detection at init** — `claude-autopilot init` walks the repo, sniffs for Prisma / Drizzle / Rails / Go-migrate / Flyway / dbmate / Alembic / Django / Ecto / TypeORM / Supabase signals, writes a stack.md non-interactively when there's a single high-confidence match. Prompts otherwise.
+- **Stack.md schema validation** with security rules: shell metachars rejected in command args, env_file paths confined under project_root, dev_command-as-prod-command blocked.
+- **Versioned alias map** (`presets/aliases.lock.json`) with stable IDs (`migrate@1`, `migrate.supabase@1`, `none@1`) so future renames don't break user configs.
+- **Skill manifest version handshake** — every skill ships `skill.manifest.json` declaring `skill_runtime_api_version`, `min_runtime`, `max_runtime`. Dispatcher fails closed on incompatibility with explicit upgrade hints.
+- **Hash-chained audit log** at `.autopilot/audit.log` (JSONL, monotonic seq + SHA-256 prev_hash chain) for every migrate dispatch. `claude-autopilot doctor` validates the chain.
+- **Per-policy enforcement points** — `allow_prod_in_ci`, `require_clean_git`, `require_manual_approval`, `require_dry_run_first`. CI prod migrations require all 4 of: `--yes` flag, `AUTOPILOT_CI_POLICY=allow-prod`, `AUTOPILOT_TARGET_ENV=<env>`, stack.md `policy.allow_prod_in_ci: true`. Plus a recognized CI provider env (or `AUTOPILOT_CI_PROVIDER` override).
+- **Structured argv execution** — commands stored as `{ exec, args[] }` and executed via `spawn(shell:false)`. No shell injection vector. Legacy string form deprecated, auto-migrated by `doctor --fix`.
+- **`migrate doctor`** with read-only mode (default) and `--fix` mode for safe auto-corrections.
+- **Monorepo support** — per-workspace `.autopilot/stack.md` plus root `.autopilot/manifest.yaml` for cross-workspace coordination.
+- **Legacy migrate skill migrator** — automatically archives the existing `skills/migrate/` (legacy Delegance Supabase shape) to `skills/migrate.backup-<ISO>/` on `doctor --fix`, replaces with the thin shape.
+- **Multi-CI provider detection** — GitHub Actions, GitLab CI, CircleCI, Buildkite, Jenkins recognized out of the box. `AUTOPILOT_CI_PROVIDER` override for self-hosted.
+- **Delegance regression CI lane** — required GitHub Actions job that runs the full migrate-supabase flow against an anonymized fixture, asserting byte-for-byte ledger compatibility with pre-dispatcher behavior.
+
+### Changed
+
+- `skills/autopilot/SKILL.md` Step 4 (Migrate) rewritten to describe the envelope-based dispatcher contract instead of invoking `/migrate` directly.
+
+### Backward-compat
+
+- Delegance's existing `npx tsx scripts/supabase/migrate.ts` CLI invocation still works unchanged. The script now ALSO honors the autopilot dispatcher when invoked with `AUTOPILOT_ENVELOPE` + `AUTOPILOT_RESULT_PATH` env vars; falls back to legacy CLI parsing otherwise.
+- The old `skills/migrate/` legacy SKILL.md is preserved (and will be auto-archived on first `doctor --fix` post-upgrade).
+
+### Migration guide for existing users
+
+```bash
+# Upgrade
+npm install -g @delegance/claude-autopilot@5.2.0
+
+# Audit current state (read-only, exits non-zero if migration needed)
+claude-autopilot doctor
+
+# Apply auto-fixes (archives legacy /migrate skill, writes new stack.md)
+claude-autopilot doctor --fix
+```
+
+Existing `npx tsx scripts/supabase/migrate.ts <file> --env dev` workflows are unaffected.
+
 ## [5.0.0] — 2026-04-27
 
 First GA release after a five-alpha soak cycle. Promotes `5.0.0-alpha.5` to GA unchanged on the code side; the only diff is the version bump, README rebranding away from `@alpha` channel guidance, and a new "Reproducing the benchmark" section.

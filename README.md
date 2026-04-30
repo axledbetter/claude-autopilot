@@ -78,11 +78,15 @@ Each phase is a Claude Code skill (`.claude/skills/<name>/SKILL.md`). You can in
 | **Plan** | `writing-plans` | Breaks spec into phased, checklist-shaped implementation plan | Claude |
 | **Plan review** | `codex-review` | Second model critiques the plan before you execute it | Codex / GPT-5 |
 | **Implement** | `subagent-driven-development` | Executes plan in a git worktree, one phase at a time, with per-phase tests | Claude |
-| **Migrate** | `migrate` | Runs database migrations dev → QA → prod with per-env validation | Deterministic |
+| **Migrate** | `migrate` | Dispatches to the configured migration skill (see [Migrate phase](#migrate-phase)) — runs your migration tool dev → QA → prod with per-env validation | Deterministic |
 | **Validate** | `validate` | Static rules + tests + type check + security scan + LLM review | Any |
 | **PR** | `commit-push-pr` | Opens the PR with auto-generated title, summary, and test plan | Claude |
 | **Review** | `review-2pass` / `council` | Multi-model review of the diff (critical pass + informational pass) | Multiple |
 | **Triage** | `bugbot` | Fetches automated reviewer findings, auto-fixes real bugs, dismisses false positives | Claude |
+
+### Migrate phase
+
+Configure your migration tool in `.autopilot/stack.md`. The pipeline reads stack.md, dispatches to the configured skill (`migrate@1` for generic; `migrate.supabase@1` for rich Supabase ledger; `none@1` to skip), and runs your tool with full safety: structured argv (no shell injection), 4-flag CI prod gate, hash-chained audit log. Run `claude-autopilot init` to auto-detect your stack. See [docs/skills/rich-migrate-contract.md](docs/skills/rich-migrate-contract.md) for the skill contract and [docs/skills/version-compatibility.md](docs/skills/version-compatibility.md) for the version model.
 
 ## What's distinctive
 

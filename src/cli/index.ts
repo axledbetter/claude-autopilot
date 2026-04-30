@@ -28,6 +28,9 @@ import { runWorker } from './worker.ts';
 import { runTestGen } from './test-gen.ts';
 import { runCouncilCmd } from './council.ts';
 import { runMigrateV4 } from './migrate-v4.ts';
+import { runMigrateDoctor } from './migrate-doctor.ts';
+import { initMigrate, NoMigrationToolDetectedError } from './init-migrate.ts';
+import { dispatch as runMigrateDispatch } from '../core/migrate/dispatcher.ts';
 import { findPackageRoot } from './_pkg-root.ts';
 import { GuardrailError } from '../core/errors.ts';
 
@@ -164,7 +167,7 @@ These are aliases for the flat subcommands; they still work without the 'advance
   args.shift(); // drop 'advanced'
 }
 
-const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'brainstorm', 'help', '--help', '-h'] as const;
+const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'migrate', 'migrate-doctor', 'brainstorm', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity', 'prompt', 'context-file', 'path'];
 
 // Bare invocation — no subcommand, no flags → show welcome guide
@@ -222,6 +225,32 @@ function boolFlag(name: string): boolean {
   return args.includes(`--${name}`);
 }
 
+/**
+ * Run the migrate-doctor with shared CLI formatting and exit handling.
+ *
+ * Both `migrate doctor` (two-word) and `migrate-doctor` (single-verb alias)
+ * resolve to this helper to keep their behavior locked together.
+ */
+async function runMigrateDoctorCLI(): Promise<never> {
+  const fix = args.includes('--fix');
+  const result = await runMigrateDoctor({ repoRoot: process.cwd(), fix });
+  for (const r of result.results) {
+    const mark = r.result.ok ? '\x1b[32m✓\x1b[0m' : '\x1b[31m✗\x1b[0m';
+    console.log(`${mark} ${r.name}${r.result.message ? ` — ${r.result.message}` : ''}`);
+    if (!r.result.ok && r.result.fixHint) {
+      console.log(`  \x1b[2mhint: ${r.result.fixHint}\x1b[0m`);
+    }
+  }
+  if (result.mutations && result.mutations.length > 0) {
+    console.log(`\n\x1b[1mFixes applied:\x1b[0m`);
+    for (const m of result.mutations) console.log(`  - ${m}`);
+  }
+  if (result.migrationReportPath) {
+    console.log(`\n\x1b[2mMigration report: ${result.migrationReportPath}\x1b[0m`);
+  }
+  process.exit(result.allOk ? 0 : 1);
+}
+
 function printUsage(): void {
   console.log(`
 Usage: claude-autopilot <command> [options]  (legacy alias: guardrail)
@@ -237,7 +266,9 @@ Commands:
   fix          Auto-fix cached findings using the configured LLM
   costs        Show per-run cost summary
   ci           Opinionated CI entrypoint (post comments + SARIF)
-  init         Scaffold guardrail.config.yaml from a preset
+  init         Scaffold guardrail.config.yaml + auto-detect migrate stack (writes .autopilot/stack.md)
+  migrate      Run database migrations via the stack-aware dispatcher
+  migrate doctor   Validate .autopilot/stack.md and skill manifests (alias: migrate-doctor)
   setup        Auto-detect stack, write config, install pre-push hook
   doctor       Check prerequisites (alias: preflight)
   preflight    Check prerequisites (alias: doctor)
@@ -292,6 +323,14 @@ Options (autoregress):
   --since <ref>            Git ref for changed-files detection
   --snapshot <slug>        Target a single snapshot
   --files <a,b,c>          Explicit file list for generate (skips git detection)
+
+Options (migrate):
+  --env <name>         Target environment from .autopilot/stack.md (default: dev)
+  --dry-run            Run skill in dry-run mode (no side effects)
+  --yes                Required to apply prod migrations in CI
+
+Options (migrate doctor / migrate-doctor):
+  --fix                Apply auto-fixable mutations (legacy stack.md, skills/migrate/, schema_version)
 `);
 }
 
@@ -324,6 +363,40 @@ switch (subcommand) {
     // `init` and `setup` are aliases. Keep both supported — no nag banner.
     const force = args.includes('--force');
     await runSetup({ force });
+
+    // After the existing init/setup logic, sniff for a migration tool and write
+    // .autopilot/stack.md. Non-interactive: high-confidence single matches are
+    // auto-selected; ambiguity / no-match downgrades to a TODO 'none@1' shape so
+    // we don't block the user. (Interactive prompts come from the autopilot skill,
+    // not the CLI.)
+    try {
+      const result = await initMigrate({
+        repoRoot: process.cwd(),
+        force,
+      });
+      for (const ws of result.workspaces) {
+        const rel = ws.workspace === process.cwd() ? '.' : ws.workspace;
+        console.log(`\x1b[2m[init-migrate] ${ws.action} ${rel}/.autopilot/stack.md (skill: ${ws.skill})\x1b[0m`);
+      }
+    } catch (err) {
+      if (err instanceof NoMigrationToolDetectedError) {
+        // No high-confidence match — fall back to skipMigrate shape so the user
+        // can edit it later. This matches the auto-detection contract documented
+        // in the v5.2.0 CHANGELOG.
+        try {
+          await initMigrate({
+            repoRoot: process.cwd(),
+            force,
+            skipMigrate: true,
+          });
+          console.log(`\x1b[33m[init-migrate] No migration tool detected — wrote 'none@1' stack.md (edit .autopilot/stack.md to configure)\x1b[0m`);
+        } catch (fallbackErr) {
+          console.error(`\x1b[31m[init-migrate] failed: ${(fallbackErr as Error).message}\x1b[0m`);
+        }
+      } else {
+        console.error(`\x1b[31m[init-migrate] failed: ${(err as Error).message}\x1b[0m`);
+      }
+    }
     break;
   }
 
@@ -615,6 +688,64 @@ switch (subcommand) {
       undo: boolFlag('undo'),
     });
     process.exit(code);
+    break;
+  }
+
+  case 'migrate': {
+    // Two-word `migrate doctor` is dispatched here before the generic migrate
+    // path so we don't try to read a stack.md or pick an env when the user is
+    // really asking for the doctor. `migrate-doctor` (single verb, below) is
+    // an equivalent alias.
+    if (args[1] === 'doctor') {
+      await runMigrateDoctorCLI();
+      break;
+    }
+
+    // Plain `migrate [--env <name>] [--dry-run] [--yes]` → dispatcher.
+    const envName = flag('env') ?? 'dev';
+    const dryRun = boolFlag('dry-run');
+    const yesFlag = boolFlag('yes');
+
+    // Read package version for the runtime handshake.
+    const root = findPackageRoot(import.meta.url);
+    let runtimeVersion = 'unknown';
+    if (root) {
+      try {
+        const nodeFs = await import('node:fs');
+        const nodePath = await import('node:path');
+        const pkg = JSON.parse(nodeFs.readFileSync(nodePath.join(root, 'package.json'), 'utf8')) as { version: string };
+        runtimeVersion = pkg.version;
+      } catch {
+        /* fall through with 'unknown' — handshake will fail closed */
+      }
+    }
+
+    const result = await runMigrateDispatch({
+      repoRoot: process.cwd(),
+      env: envName,
+      yesFlag,
+      nonInteractive: !process.stdin.isTTY,
+      currentRuntimeVersion: runtimeVersion,
+      dryRun,
+    });
+
+    const ok = result.status === 'applied' || result.status === 'skipped';
+    const color = ok ? '\x1b[32m' : '\x1b[31m';
+    console.log(`${color}[migrate] status=${result.status} reason=${result.reasonCode}\x1b[0m`);
+    if (result.appliedMigrations.length > 0) {
+      console.log(`  applied: ${result.appliedMigrations.join(', ')}`);
+    }
+    if (result.nextActions.length > 0) {
+      console.log(`  next: ${result.nextActions.join('; ')}`);
+    }
+    process.exit(ok ? 0 : 1);
+    break;
+  }
+
+  case 'migrate-doctor': {
+    // Single-verb alias for `migrate doctor`. Documented for users whose shells
+    // or CI configs handle multi-word verbs awkwardly.
+    await runMigrateDoctorCLI();
     break;
   }
 

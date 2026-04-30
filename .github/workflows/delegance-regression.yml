@@ -1,0 +1,79 @@
+name: Delegance regression
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+jobs:
+  delegance-regression:
+    name: Delegance migrate flow regression
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: pg
+          POSTGRES_DB: delegance_regression
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install postgres driver for fixture
+        # `postgres` is not a runtime dependency of claude-autopilot — it's only
+        # needed by the regression fixture's mini-migrator. Install it ad-hoc
+        # so we don't pollute the published package's dependency surface.
+        run: npm install --no-save postgres@^3
+
+      - run: npm run build
+
+      - name: Bootstrap ledger table
+        env:
+          POSTGRES_URL: postgres://postgres:pg@localhost:5432/delegance_regression
+        run: |
+          npx tsx -e "
+          import postgres from 'postgres';
+          const sql = postgres(process.env.POSTGRES_URL);
+          await sql\`CREATE TABLE IF NOT EXISTS _schema_migrations (id SERIAL PRIMARY KEY, version TEXT NOT NULL, checksum TEXT NOT NULL, environment TEXT NOT NULL, applied_at TIMESTAMPTZ DEFAULT now(), applied_by TEXT DEFAULT 'claude-autopilot', success BOOLEAN NOT NULL, execution_ms INTEGER, error_message TEXT, UNIQUE(environment, version))\`;
+          await sql.end();
+          "
+
+      - name: Run dispatcher against fixture
+        env:
+          POSTGRES_URL: postgres://postgres:pg@localhost:5432/delegance_regression
+        run: npx tsx tests/fixtures/delegance-regression/regression-runner.ts
+
+      - name: Verify expected ledger snapshot
+        env:
+          POSTGRES_URL: postgres://postgres:pg@localhost:5432/delegance_regression
+        run: |
+          npx tsx -e "
+          import postgres from 'postgres';
+          import * as fs from 'node:fs';
+          const sql = postgres(process.env.POSTGRES_URL);
+          const rows = await sql\`SELECT version, environment, success FROM _schema_migrations ORDER BY id\`;
+          const expected = JSON.parse(fs.readFileSync('tests/fixtures/delegance-regression/expected-ledger.json', 'utf8'));
+          const actual = rows.map((r) => ({ version: r.version, environment: r.environment, success: r.success }));
+          if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+            console.error('Expected:', JSON.stringify(expected, null, 2));
+            console.error('Got:', JSON.stringify(actual, null, 2));
+            process.exit(1);
+          }
+          await sql.end();
+          console.log('Ledger matches expected snapshot');
+          "
