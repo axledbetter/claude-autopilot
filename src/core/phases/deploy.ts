@@ -91,14 +91,15 @@ export async function runDeployPhase(input: DeployPhaseInput): Promise<DeployPha
   const deployUrl = extractDeployUrl(output);
 
   if (input.healthCheckUrl) {
-    const healthOk = await pollHealthCheck(input.healthCheckUrl, input.healthCheckTimeoutMs ?? 60_000);
+    const healthCheckBudgetMs = input.healthCheckTimeoutMs ?? 60_000;
+    const healthOk = await pollHealthCheck(input.healthCheckUrl, healthCheckBudgetMs);
     if (!healthOk) {
       // Preserve the deploy CLI output; prepend the health-check failure as a
       // header. The prior version overwrote `output` with a one-line synthetic
       // string, which then surfaced as the "Command output" body in the PR
       // comment, hiding the real deploy logs (version info, warnings, deploy
       // URL) the user needs to debug.
-      const failHeader = `Deploy succeeded but health check failed after 60s: ${input.healthCheckUrl}`;
+      const failHeader = `Deploy succeeded but health check failed after ${(healthCheckBudgetMs / 1000).toFixed(0)}s: ${input.healthCheckUrl}`;
       return {
         phase: 'deploy',
         status: 'fail',
