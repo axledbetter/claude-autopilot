@@ -95,7 +95,22 @@ Each phase is a Claude Code skill (`.claude/skills/<name>/SKILL.md`). You can in
 
 ### Migrate phase
 
-Configure your migration tool in `.autopilot/stack.md`. The pipeline reads stack.md, dispatches to the configured skill (`migrate@1` for generic; `migrate.supabase@1` for rich Supabase ledger; `none@1` to skip), and runs your tool with full safety: structured argv (no shell injection), 4-flag CI prod gate, hash-chained audit log. Run `claude-autopilot init` to auto-detect your stack. See [docs/skills/rich-migrate-contract.md](docs/skills/rich-migrate-contract.md) for the skill contract and [docs/skills/version-compatibility.md](docs/skills/version-compatibility.md) for the version model.
+Configure your migration tool in `.autopilot/stack.md`. The pipeline reads stack.md, dispatches to the configured skill (`migrate@1` for generic; `migrate.supabase@1` for rich Supabase ledger; `none@1` to skip), and runs your tool with full safety: structured argv (no shell injection), 4-flag CI prod gate, hash-chained audit log. Run `claude-autopilot init` to auto-detect your stack — the detector recognizes Rails, Alembic, Django, Prisma, Drizzle, golang-migrate, dbmate, flyway, supabase-cli, ecto, typeorm, and falls back to a "configure manually" path. See [docs/skills/rich-migrate-contract.md](docs/skills/rich-migrate-contract.md) for the skill contract and [docs/skills/version-compatibility.md](docs/skills/version-compatibility.md) for the version model.
+
+Generic example (Rails):
+
+```yaml
+migrate:
+  skill: "migrate@1"
+  envs:
+    dev:
+      command: { exec: "rails", args: ["db:migrate"] }
+      env_file: ".env.development"
+    prod:
+      command: { exec: "rails", args: ["db:migrate", "RAILS_ENV=production"] }
+```
+
+See `skills/migrate/SKILL.md` for examples covering Alembic, Django, Prisma, Drizzle, golang-migrate, dbmate, flyway, and custom scripts.
 
 ## What's distinctive
 
