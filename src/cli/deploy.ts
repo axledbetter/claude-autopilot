@@ -15,7 +15,7 @@ import * as path from 'node:path';
 import { GuardrailError } from '../core/errors.ts';
 import { loadConfig } from '../core/config/loader.ts';
 import { createDeployAdapter } from '../adapters/deploy/index.ts';
-import type { DeployConfig, DeployResult } from '../adapters/deploy/types.ts';
+import type { DeployAdapter, DeployConfig, DeployResult } from '../adapters/deploy/types.ts';
 
 export interface RunDeployOptions {
   configPath?: string;
@@ -24,6 +24,14 @@ export interface RunDeployOptions {
   ref?: string;
   commitSha?: string;
   cwd?: string;
+  /** Phase 2 — when true, subscribe to streamLogs() and pipe to stderr. */
+  watch?: boolean;
+  /**
+   * Test seam — allows injecting a fake DeployAdapter without going through
+   * the real factory (which requires VERCEL_TOKEN etc.). Production callers
+   * MUST NOT set this.
+   */
+  adapterFactory?: (config: DeployConfig) => DeployAdapter;
 }
 
 /**
@@ -73,13 +81,59 @@ export async function runDeploy(opts: RunDeployOptions): Promise<number> {
   };
 
   let result: DeployResult;
+  let streamController: AbortController | undefined;
+  let streamPromise: Promise<void> | undefined;
   try {
-    const deployAdapter = createDeployAdapter(merged);
+    const factory = opts.adapterFactory ?? createDeployAdapter;
+    const deployAdapter = factory(merged);
+
+    // --watch: opt into log streaming. We start the stream from inside an
+    // onDeployStart callback so it begins as soon as the platform returns
+    // an ID, in parallel with the (still-running) deploy.
+    let onDeployStart: ((deployId: string) => void) | undefined;
+    if (opts.watch) {
+      if (typeof deployAdapter.streamLogs === 'function') {
+        streamController = new AbortController();
+        const streamFn = deployAdapter.streamLogs.bind(deployAdapter);
+        const ctrlSignal = streamController.signal;
+        const adapterName = deployAdapter.name;
+        onDeployStart = (deployId: string) => {
+          streamPromise = (async () => {
+            try {
+              for await (const line of streamFn({ deployId, signal: ctrlSignal })) {
+                process.stderr.write(`[deploy:${adapterName}] ${line.text}\n`);
+              }
+            } catch (err) {
+              if (!(err instanceof Error && err.name === 'AbortError')) {
+                console.error(`\x1b[2m[deploy] log stream ended: ${(err as Error)?.message ?? String(err)}\x1b[0m`);
+              }
+            }
+          })();
+        };
+      } else {
+        console.error(
+          `\x1b[33m[deploy] --watch ignored — adapter "${deployAdapter.name}" does not support log streaming\x1b[0m`,
+        );
+      }
+    }
+
     result = await deployAdapter.deploy({
       ref: opts.ref,
       commitSha: opts.commitSha,
+      onDeployStart,
     });
+
+    // Stop the stream now that the deploy is settled. Wait briefly so any
+    // in-flight log lines flush before we report.
+    streamController?.abort();
+    if (streamPromise) {
+      try { await streamPromise; } catch { /* already logged */ }
+    }
   } catch (err) {
+    streamController?.abort();
+    if (streamPromise) {
+      try { await streamPromise; } catch { /* already logged */ }
+    }
     console.error(formatErr(`deploy via ${adapter} failed`, err));
     return 1;
   }

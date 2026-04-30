@@ -339,6 +339,7 @@ Options (deploy):
   --config <path>              Path to config file
   --ref <ref>                  Git ref (branch / tag) to deploy
   --sha <commit>               Specific commit SHA to deploy
+  --watch                      Stream build logs to stderr in real time (Vercel only)
 `);
 }
 
@@ -766,11 +767,13 @@ switch (subcommand) {
     }
     const ref = flag('ref');
     const commitSha = flag('sha');
+    const watch = boolFlag('watch');
     const code = await runDeploy({
       configPath: config,
       adapterOverride: adapterArg as 'vercel' | 'generic' | undefined,
       ref,
       commitSha,
+      watch,
     });
     process.exit(code);
     break;
