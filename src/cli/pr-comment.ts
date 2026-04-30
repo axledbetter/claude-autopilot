@@ -149,6 +149,5 @@ export async function postPrComment(
   return { action: 'created', url };
 }
 
-/** Re-exported for callers that want to use a non-review marker. */
-export const REVIEW_COMMENT_MARKER = COMMENT_MARKER;
+/** Marker for non-review comments (e.g. deploy results). */
 export const DEPLOY_COMMENT_MARKER = '<!-- guardrail-deploy -->';

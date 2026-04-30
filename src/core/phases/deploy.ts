@@ -6,6 +6,12 @@ export interface DeployPhaseInput {
   cwd?: string;
   /** Override timeout (ms). Default 600_000 (10 min) — most deploys finish well under. */
   timeoutMs?: number;
+  /**
+   * Override health-check polling budget (ms). Default 60_000.
+   * Tests pass a small value (e.g. 100) to avoid waiting the full minute
+   * for the failure path on every suite run.
+   */
+  healthCheckTimeoutMs?: number;
 }
 
 export interface DeployPhaseResult {
@@ -85,7 +91,7 @@ export async function runDeployPhase(input: DeployPhaseInput): Promise<DeployPha
   const deployUrl = extractDeployUrl(output);
 
   if (input.healthCheckUrl) {
-    const healthOk = await pollHealthCheck(input.healthCheckUrl, 60_000);
+    const healthOk = await pollHealthCheck(input.healthCheckUrl, input.healthCheckTimeoutMs ?? 60_000);
     if (!healthOk) {
       // Preserve the deploy CLI output; prepend the health-check failure as a
       // header. The prior version overwrote `output` with a one-line synthetic

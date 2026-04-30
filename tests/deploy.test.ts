@@ -76,6 +76,9 @@ describe('runDeployPhase', () => {
     const result = await runDeployPhase({
       deployCommand: 'echo "DEPLOY_LOG_MARKER: build #42"',
       healthCheckUrl: 'https://invalid.localhost.example/healthz',
+      // Bugbot HIGH on PR #56 round 4 — without this the test waited ~60s
+      // for the full poll budget on every suite run.
+      healthCheckTimeoutMs: 100,
     });
     assert.equal(result.status, 'fail');
     assert.equal(result.healthOk, false);
