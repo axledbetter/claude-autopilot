@@ -264,6 +264,16 @@ export async function dispatch(opts: DispatchOptions): Promise<ResultArtifact> {
   fs.chmodSync(tmpRoot, RESULT_TEMPDIR_MODE);
   const resultPath = path.join(tmpRoot, `${envelope.invocationId}.json`);
 
+  // Pre-create result file with O_CREAT|O_EXCL|O_WRONLY, mode 0o600, no symlink follow.
+  // The skill will then open the existing file for writing — TOCTOU window closed
+  // against a malicious pre-placed file or symlink.
+  const fd = fs.openSync(
+    resultPath,
+    fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
+    0o600,
+  );
+  fs.closeSync(fd);
+
   const childEnv: Record<string, string> = {
     ...(envSpec.env_file ? loadEnvFile(envSpec.env_file, opts.repoRoot) : {}),
     ...(opts.envOverride ?? {}),

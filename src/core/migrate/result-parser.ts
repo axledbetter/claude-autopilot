@@ -107,6 +107,29 @@ function parseAndValidate(raw: string, expected: ExpectedIdentity): ResultArtifa
 }
 
 export function parseResultFromFile(filePath: string, expected: ExpectedIdentity): ResultArtifact {
+  // Verify file ownership + type before reading. Use lstatSync (not statSync)
+  // so we don't follow symlinks — the dispatcher pre-creates a regular file
+  // with O_EXCL, so anything else here means tampering or a misbehaving skill.
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(filePath);
+  } catch {
+    return syntheticError('result-file-missing', `cannot stat ${filePath}`, expected);
+  }
+  if (!stat.isFile()) {
+    return syntheticError(
+      'result-file-not-regular',
+      `result path is not a regular file: ${filePath}`,
+      expected,
+    );
+  }
+  if (process.platform !== 'win32' && stat.uid !== process.getuid?.()) {
+    return syntheticError(
+      'result-file-wrong-owner',
+      `result file uid ${stat.uid} does not match process uid`,
+      expected,
+    );
+  }
   let raw: string;
   try {
     raw = fs.readFileSync(filePath, 'utf8');

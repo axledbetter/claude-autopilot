@@ -50,10 +50,19 @@ export async function appendAuditEvent(logPath: string, input: AuditEventInput):
   fs.mkdirSync(dir, { recursive: true });
   if (!fs.existsSync(logPath)) fs.writeFileSync(logPath, '');
 
-  const release = await lockfile.lock(logPath, {
-    retries: { retries: 10, factor: 1.5, minTimeout: 50, maxTimeout: 500 },
-    stale: 5000,
-  });
+  let release: () => Promise<void>;
+  try {
+    release = await lockfile.lock(logPath, {
+      retries: { retries: 10, factor: 1.5, minTimeout: 50, maxTimeout: 500 },
+      stale: 5000,
+    });
+  } catch (err) {
+    // Fail closed: refuse to write a potentially-forked entry.
+    throw new Error(
+      `audit-log: could not acquire lock on ${logPath}: ${(err as Error).message}. ` +
+      `Check for stale locks or filesystem issues. Audit chain not extended.`,
+    );
+  }
   try {
     const last = readLastLine(logPath);
     const seq = (last?.seq ?? 0) + 1;
@@ -64,7 +73,14 @@ export async function appendAuditEvent(logPath: string, input: AuditEventInput):
       prev_hash,
       ts: new Date().toISOString(),
     };
-    fs.appendFileSync(logPath, JSON.stringify(event) + '\n');
+    // Append + fsync so chain is durable before lock release.
+    const handle = fs.openSync(logPath, 'a');
+    try {
+      fs.writeSync(handle, JSON.stringify(event) + '\n');
+      fs.fsyncSync(handle);
+    } finally {
+      fs.closeSync(handle);
+    }
   } finally {
     await release();
   }

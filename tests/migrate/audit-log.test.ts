@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import lockfile from 'proper-lockfile';
 import { appendAuditEvent, verifyChain, readEvents, type AuditEvent } from '../../src/core/migrate/audit-log.ts';
 
 function tmpDir(): string {
@@ -123,6 +124,26 @@ describe('verifyChain', () => {
     const r = verifyChain(logPath);
     assert.equal(r.valid, false);
     fs.rmSync(dir, { recursive: true });
+  });
+});
+
+describe('appendAuditEvent — fail-closed on lock failure', () => {
+  it('throws clear error when lock acquisition exhausts retries', async () => {
+    const dir = tmpDir();
+    const logPath = path.join(dir, 'audit.log');
+    fs.writeFileSync(logPath, '');
+    // Hold an exclusive lock externally so appendAuditEvent's retries
+    // cannot acquire. proper-lockfile will exhaust retries and reject.
+    const release = await lockfile.lock(logPath, { stale: 60000 });
+    try {
+      await assert.rejects(
+        appendAuditEvent(logPath, makeEvent()),
+        /could not acquire lock/i,
+      );
+    } finally {
+      await release();
+      fs.rmSync(dir, { recursive: true });
+    }
   });
 });
 

@@ -160,6 +160,30 @@ describe('parseResultFromStdout (opt-in fallback)', () => {
   });
 });
 
+describe('parseResultFromFile — TOCTOU hardening', () => {
+  it('rejects symlink target as result file (Unix only)', () => {
+    if (process.platform === 'win32') return;
+    const real = tmpFile(JSON.stringify(VALID_ARTIFACT));
+    const sym = path.join(os.tmpdir(), `sym-${Date.now()}-${Math.random()}.json`);
+    fs.symlinkSync(real, sym);
+    const r = parseResultFromFile(sym, { invocationId: VALID_INVOCATION_ID, nonce: VALID_NONCE });
+    assert.equal(r.status, 'error');
+    assert.equal(r.reasonCode, 'result-file-not-regular');
+    fs.unlinkSync(sym);
+    fs.unlinkSync(real);
+  });
+
+  it('rejects path that points at a directory (not a regular file)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'result-dir-'));
+    const r = parseResultFromFile(dir, { invocationId: VALID_INVOCATION_ID, nonce: VALID_NONCE });
+    assert.equal(r.status, 'error');
+    assert.equal(r.reasonCode, 'result-file-not-regular');
+    fs.rmSync(dir, { recursive: true });
+  });
+  // Note: owner-mismatch test is hard to construct portably (requires
+  // creating a file owned by a different uid) — skipped.
+});
+
 describe('parseResult (file first, stdout fallback per allowStdoutFallback flag)', () => {
   it('prefers file when both file and stdout are valid', () => {
     const file = tmpFile(JSON.stringify({ ...VALID_ARTIFACT, reasonCode: 'from-file' }));
