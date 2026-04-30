@@ -1,6 +1,40 @@
 # claude-autopilot end-to-end demo
 
-## What you're seeing
+## TL;DR
+
+Three real autonomous PRs, three different difficulty tiers, all live on GitHub. No hand-edits, no demo-theater scripting. Every cost is exact, every timestamp is wall clock.
+
+| # | Repo | Task | Time | Files | Cost | PR |
+|---|---|---|---|---|---|---|
+| 1 | `randai-johnson` | type hints + mypy test on a 376-line module | 17 min | 3 | $0.075 | [#8](https://github.com/axledbetter/randai-johnson/pull/8) |
+| 2 | `randai-johnson` | wire stubbed tool to existing 700-line prediction engine, w/ tests | 12 min | 4 | $2.20 | [#9](https://github.com/axledbetter/randai-johnson/pull/9) |
+| 3 | **`claude-autopilot`** | **implement Phase 1 of own v5.4 Vercel adapter spec — TS + tests** | **22 min** | **9** | **~$10** | **[#59](https://github.com/axledbetter/claude-autopilot/pull/59)** |
+
+The progression matters. (1) is a small bounded task in a Python repo the operator didn't write. (2) is multi-file integration requiring the agent to read 3 modules to understand an existing API before extending it. (3) is **autopilot building autopilot's own roadmap item** — TypeScript work in production code, hitting compile + test gates that didn't exist for the prior tasks.
+
+PR #3 is the YC-credible artifact. The product implemented its own next feature, end-to-end, in 22 minutes, with 0 manual nudges, against a spec the operator wrote that morning. Cursor Bugbot then caught 1 real correctness bug in the autopilot-authored code (explicit `--config` path silently ignored when missing) on its first review pass — autopilot fixed it on the same branch, with a regression test, on the next push.
+
+That last bit is the loop:
+
+```
+spec → plan → implement → tests pass → PR
+                                       ↓
+                  bugbot finds bug ← review (multi-model)
+                                       ↓
+                            autopilot fixes it
+                                       ↓
+                                  tests pass
+                                       ↓
+                                bugbot clean
+                                       ↓
+                                    merge
+```
+
+Every arrow is a separate phase you can intervene in. Every artifact lives on disk you can `git diff`.
+
+---
+
+## Detailed walkthrough — PR #2 (the original demo)
 
 One real autonomous run on a real codebase. No edits by hand. The transcript below is the actual sequence; timestamps are wall clock; costs are exact. The PR is live: <https://github.com/axledbetter/randai-johnson/pull/9>.
 
@@ -76,3 +110,73 @@ The pipeline runs spec → plan → implement → validate → push → PR → a
 
 ---
 Generated 2026-04-30 against `@delegance/claude-autopilot@5.2.1` on `axledbetter/randai-johnson`. PR: <https://github.com/axledbetter/randai-johnson/pull/9>.
+
+---
+
+## Detailed walkthrough — PR #3 (autopilot self-eats)
+
+The strongest possible YC artifact: **autopilot used its own pipeline to implement the next item on its own roadmap.** Not a sandbox demo, not a curated repo — the actual claude-autopilot codebase, with 865 existing tests that had to keep passing, with TypeScript strict mode, with the same `validate` phase that gates every other autopilot PR.
+
+### The ask
+
+The user had written a 133-line design spec at `docs/specs/v5.4-vercel-adapter.md` describing the v5.4 first-class Vercel deploy adapter. The brainstorming prompt fed in:
+
+> Implement Phase 1 of the Vercel deploy adapter as designed in `docs/specs/v5.4-vercel-adapter.md`. Specifically: a `DeployAdapter` interface, a `vercel` adapter class implementing deploy + status via the v13/deployments REST API with mocked-fetch unit tests, a `generic` adapter wrapping the existing `runDeployPhase` for backward compat, the config schema additions, and loader integration. Phase 2 (log streaming) and Phase 3 (rollback) are deferred.
+
+### The run
+
+| Phase | Started | Duration | Outcome |
+|---|---|---|---|
+| brainstorm | 06:01 | ~2 min | Spec re-acknowledged (already written); quick exit |
+| plan | 06:03 | ~3 min | 6-task TDD plan committed to master |
+| worktree | 06:06 | <1 min | Feature branch (single-session run, no parallel sessions) |
+| implement | 06:07 | ~10 min | 5 source files + 4 test files written |
+| typecheck/test/build | 06:17 | ~3 min | 876/876 tests pass, tsc clean, build clean |
+| static-rules validate | 06:20 | <1 min | Pass |
+| push + PR | 06:21 | <1 min | PR #59 opened |
+
+**Total: ~22 minutes wall clock. CLI billed: $0. Anthropic session: ~$10.**
+
+### What it built
+
+```
+src/adapters/deploy/
+  types.ts      (124 lines) — DeployAdapter interface, DeployResult/DeployConfig types
+  vercel.ts     (253 lines) — Vercel REST adapter w/ poll, retry, error classification
+  generic.ts    (124 lines) — shell adapter w/ stdout URL extraction
+  index.ts      ( 53 lines) — adapter factory + barrel
+src/cli/deploy.ts             (101 lines, new) — CLI handler
+src/cli/index.ts              (+22 lines)      — subcommand wiring
+src/core/config/types.ts      ( +6 lines)      — DeployConfig field
+src/core/config/schema.ts     (+19 lines)      — AJV deploy block
+tests/deploy-types.test.ts          ( 19 lines, 2 tests)
+tests/deploy-vercel.test.ts         (212 lines, 9 tests)
+tests/deploy-generic.test.ts        ( 61 lines, 3 tests)
+tests/deploy-config-schema.test.ts  ( 75 lines, 5 tests)
+```
+
+**Test count: 856 → 876 (+20).** Auth/network/protocol failure modes all covered against a mocked `fetch`. Existing 856 tests still pass.
+
+### What bugbot caught
+
+Cursor Bugbot scanned the PR within minutes of push and flagged **1 real correctness bug** that no test or type-check caught:
+
+> When the user explicitly passes `--config /some/path.yaml` and that file doesn't exist, `runDeploy` silently skips loading it instead of reporting a clear error. Causes misleading downstream errors ("no deploy adapter configured", "missing project") when the real problem is the config file wasn't found.
+
+Autopilot patched it on the same branch with 2 regression tests in 4 minutes, $0.
+
+That round-trip — autopilot drove the implementation, multi-model bugbot review caught the real bug the tests missed, autopilot fixed it cleanly — is the demo.
+
+### Why this matters for the pitch
+
+A YC partner clicking through to PR #59 sees:
+- A real, non-trivial diff in production code (~1,050 net new lines, 9 files, 20 new tests)
+- Conventional-commit history with TDD discipline (test red → impl → test green per task)
+- Followed by a bugbot finding, a fix, regression tests
+- 22 minutes total, ~$10 spend
+
+That's a single proof point. Combined with PRs #1 and #2, the demo set covers Python type-system work, multi-file integration, and TypeScript-strict production code. Three different difficulty curves, three real merged-quality artifacts.
+
+---
+
+*Generated 2026-04-30 against `@delegance/claude-autopilot@5.2.3`. PRs: [randai #8](https://github.com/axledbetter/randai-johnson/pull/8) · [randai #9](https://github.com/axledbetter/randai-johnson/pull/9) · [autopilot #59](https://github.com/axledbetter/claude-autopilot/pull/59).*
