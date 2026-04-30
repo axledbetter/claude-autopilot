@@ -84,6 +84,27 @@ function writeResultArtifact(artifact: {
 
 // ── Constants ──
 
+/**
+ * Quote-escape a value for safe inclusion as a SQL string literal.
+ *
+ * Defense-in-depth: the actual sources for these values today are
+ *   - migration filenames (path.basename(filePath, '.sql'))
+ *   - hex checksums computed by us
+ *   - literal env names ('dev'|'qa'|'prod')
+ *   - error messages from the executor
+ *
+ * None of those are attacker-controlled in the normal flow, but the
+ * MigrationExecutor interface only takes raw SQL strings (no parameter
+ * binding). Rather than refactor the executor, we centralize the escape
+ * here so every interpolation point is uniformly hardened.
+ *
+ * Per Postgres SQL spec, doubling an embedded `'` is sufficient to
+ * terminate the string literal safely.
+ */
+function sqlEscape(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
 const LEDGER_TABLE = '_schema_migrations';
 const LOCK_CLASS_ID = 741953;
 const ENV_LOCK_IDS: Record<string, number> = { dev: 1, qa: 2, prod: 3 };
@@ -126,17 +147,25 @@ async function bootstrapLedger(executor: MigrationExecutor): Promise<void> {
 }
 
 async function getLedgerEntries(executor: MigrationExecutor, env: string): Promise<LedgerRow[]> {
+  // sqlEscape is defense-in-depth — `env` is a literal 'dev'|'qa'|'prod'
+  // in the normal flow, but the executor takes raw SQL with no param binding.
   return executor.query<LedgerRow>(
-    `SELECT * FROM ${LEDGER_TABLE} WHERE environment = '${env}' AND success = true ORDER BY version`
+    `SELECT * FROM ${LEDGER_TABLE} WHERE environment = '${sqlEscape(env)}' AND success = true ORDER BY version`
   );
 }
 
 async function writeLedgerStarted(executor: MigrationExecutor, migration: MigrationFile, env: string): Promise<void> {
+  // Defense-in-depth: filename (version) and checksum are validated upstream
+  // and not user-controlled, but the executor offers no parameter binding,
+  // so quote-escape every interpolated string literal.
+  const v = sqlEscape(migration.version);
+  const c = sqlEscape(migration.checksum);
+  const e = sqlEscape(env);
   await executor.execute(`
     INSERT INTO ${LEDGER_TABLE} (version, checksum, environment, success, applied_by)
-    VALUES ('${migration.version}', '${migration.checksum}', '${env}', false, 'claude-code')
+    VALUES ('${v}', '${c}', '${e}', false, 'claude-code')
     ON CONFLICT (environment, version) DO UPDATE SET
-      success = false, applied_at = now(), error_message = NULL, checksum = '${migration.checksum}'
+      success = false, applied_at = now(), error_message = NULL, checksum = '${c}'
   `);
 }
 
@@ -144,12 +173,14 @@ async function writeLedgerResult(
   executor: MigrationExecutor, migration: MigrationFile, env: string,
   success: boolean, durationMs: number, errorMessage?: string
 ): Promise<void> {
-  const errorEscaped = errorMessage ? errorMessage.replace(/'/g, "''").slice(0, 1000) : null;
+  const errorEscaped = errorMessage ? sqlEscape(errorMessage).slice(0, 1000) : null;
+  // success is a boolean and durationMs is a number — both safe to inline.
+  // env and version are quote-escaped for defense-in-depth.
   await executor.execute(`
     UPDATE ${LEDGER_TABLE} SET
       success = ${success}, execution_ms = ${durationMs},
       error_message = ${errorEscaped ? `'${errorEscaped}'` : 'NULL'}
-    WHERE environment = '${env}' AND version = '${migration.version}'
+    WHERE environment = '${sqlEscape(env)}' AND version = '${sqlEscape(migration.version)}'
   `);
 }
 
@@ -184,9 +215,13 @@ async function verifyPostExecRLS(executor: MigrationExecutor, sql: string): Prom
   }
 
   for (const table of newTables) {
+    // Defense-in-depth: table names came from a regex-extracted CREATE TABLE,
+    // so they're already restricted to \w+ — but the executor takes raw SQL,
+    // so quote-escape uniformly.
+    const tableEsc = sqlEscape(table);
     // Check RLS enabled
     const rlsResult = await executor.query<{ relrowsecurity: boolean }>(
-      `SELECT relrowsecurity FROM pg_class WHERE relname = '${table}' AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')`
+      `SELECT relrowsecurity FROM pg_class WHERE relname = '${tableEsc}' AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')`
     );
     if (!rlsResult[0]?.relrowsecurity) {
       findings.push({ check: 'post-exec-rls', severity: 'error', message: `Table ${table} created without RLS enabled` });
@@ -195,7 +230,7 @@ async function verifyPostExecRLS(executor: MigrationExecutor, sql: string): Prom
 
     // Check at least one policy exists
     const policyResult = await executor.query<{ count: string }>(
-      `SELECT count(*)::text as count FROM pg_policies WHERE tablename = '${table}' AND schemaname = 'public'`
+      `SELECT count(*)::text as count FROM pg_policies WHERE tablename = '${tableEsc}' AND schemaname = 'public'`
     );
     if (!policyResult[0] || parseInt(policyResult[0].count) === 0) {
       findings.push({ check: 'post-exec-rls', severity: 'error', message: `Table ${table} has RLS enabled but no policies defined` });

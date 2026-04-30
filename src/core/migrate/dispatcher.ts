@@ -57,6 +57,11 @@ interface StackMd {
     post?: Array<{ command: CommandSpec }>;
     policy?: Partial<PolicyConfig>;
     project_root?: string;
+    supabase?: {
+      deltas_dir?: string;
+      types_out?: string;
+      envs_file?: string;
+    };
   };
 }
 
@@ -84,9 +89,24 @@ function loadEnvFile(envFilePath: string, repoRoot: string): Record<string, stri
   const abs = path.resolve(repoRoot, envFilePath);
   if (!fs.existsSync(abs)) return {};
   const out: Record<string, string> = {};
-  for (const line of fs.readFileSync(abs, 'utf8').split('\n')) {
-    const m = /^([A-Z_][A-Z0-9_]*)=(.*)$/.exec(line.trim());
-    if (m) out[m[1]!] = m[2]!;
+  for (const rawLine of fs.readFileSync(abs, 'utf8').split('\n')) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    // Accept lowercase, uppercase, and mixed-case identifiers — many real-world
+    // env files (e.g. local docker postgres) use lowercase like `database_url`.
+    const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
+    if (!m) continue;
+    let value = m[2]!;
+    // Strip balanced surrounding quotes (single or double) to mirror typical
+    // dotenv parsing behavior.
+    if (
+      value.length >= 2 &&
+      ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'")))
+    ) {
+      value = value.slice(1, -1);
+    }
+    out[m[1]!] = value;
   }
   return out;
 }
@@ -245,7 +265,79 @@ export async function dispatch(opts: DispatchOptions): Promise<ResultArtifact> {
   }
 
   // 6. Execute
-  const envSpec = stackResult.parsed.migrate.envs?.[opts.env];
+  //
+  // Different skills source their command shape differently:
+  //   - migrate@1            — thin runner, requires envs.<env>.command
+  //   - migrate.supabase@1   — rich runner; we hand the script the envelope
+  //                            via env vars and let it discover settings from
+  //                            stack.md's `migrate.supabase` block + envs_file.
+  //   - none@1               — no-op skill; we synthesize a `skipped` result
+  //                            without spawning anything.
+  let envSpec: { command: CommandSpec; env_file?: string } | undefined;
+
+  if (resolved.stableId === 'none@1') {
+    // No-op skill — return synthetic skipped result without spawning anything.
+    // Still emit audit entry so the dispatch is observable.
+    const skipResult: ResultArtifact = {
+      contractVersion: ENVELOPE_CONTRACT_VERSION,
+      skillId: 'none@1',
+      invocationId: envelope.invocationId,
+      nonce: envelope.nonce,
+      status: 'skipped',
+      reasonCode: 'migration-disabled',
+      appliedMigrations: [],
+      destructiveDetected: false,
+      sideEffectsPerformed: ['no-side-effects'],
+      nextActions: [],
+    };
+    await appendAuditEvent(path.join(opts.repoRoot, '.autopilot', 'audit.log'), {
+      invocationId: envelope.invocationId,
+      event: 'dispatch',
+      requested_skill: requestedSkill,
+      resolved_skill: resolved.stableId,
+      skill_path: resolved.skillPath,
+      envelope_contract_version: ENVELOPE_CONTRACT_VERSION,
+      skill_runtime_api_version: handshake.manifest.skill_runtime_api_version,
+      envelope_hash: envelopeHash,
+      policy_decisions: enforced.decisions,
+      mode: opts.dryRun ? 'dry-run' : 'apply',
+      actor: process.env.USER ?? 'unknown',
+      ci_provider: process.env.AUTOPILOT_CI_PROVIDER ?? null,
+      ci_run_id: process.env.GITHUB_RUN_ID ?? null,
+      result_status: 'skipped',
+      duration_ms: Date.now() - t0,
+    });
+    return skipResult;
+  }
+
+  if (resolved.stableId === 'migrate.supabase@1') {
+    // Rich Supabase runner manages env discovery via the supabase block +
+    // envs_file. The script's envelope shim activates when AUTOPILOT_ENVELOPE
+    // is set, regardless of CLI args.
+    //
+    // We still honor envs.<env>.command when explicitly provided (tests +
+    // fixtures rely on it as an escape hatch). When omitted, fall back to
+    // invoking the packaged runner.
+    const supabaseBlock = stackResult.parsed.migrate.supabase;
+    if (!supabaseBlock) {
+      await emitAuditFailure(opts.repoRoot, opts, 'invalid-stack-config', {
+        invocationId: envelope.invocationId,
+        requested: requestedSkill,
+        resolved: resolved.stableId,
+        skillPath: resolved.skillPath,
+        apiVersion: handshake.manifest.skill_runtime_api_version,
+        decisions: enforced.decisions,
+        envelopeHash,
+      });
+      return synthErr('invalid-stack-config', envelope.invocationId, envelope.nonce);
+    }
+    envSpec = stackResult.parsed.migrate.envs?.[opts.env] ?? {
+      command: { exec: 'npx', args: ['tsx', 'scripts/supabase/migrate.ts'] },
+    };
+  } else {
+    envSpec = stackResult.parsed.migrate.envs?.[opts.env];
+  }
+
   if (!envSpec) {
     await emitAuditFailure(opts.repoRoot, opts, 'env-not-configured', {
       invocationId: envelope.invocationId,

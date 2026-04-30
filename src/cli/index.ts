@@ -225,6 +225,32 @@ function boolFlag(name: string): boolean {
   return args.includes(`--${name}`);
 }
 
+/**
+ * Run the migrate-doctor with shared CLI formatting and exit handling.
+ *
+ * Both `migrate doctor` (two-word) and `migrate-doctor` (single-verb alias)
+ * resolve to this helper to keep their behavior locked together.
+ */
+async function runMigrateDoctorCLI(): Promise<never> {
+  const fix = args.includes('--fix');
+  const result = await runMigrateDoctor({ repoRoot: process.cwd(), fix });
+  for (const r of result.results) {
+    const mark = r.result.ok ? '\x1b[32m✓\x1b[0m' : '\x1b[31m✗\x1b[0m';
+    console.log(`${mark} ${r.name}${r.result.message ? ` — ${r.result.message}` : ''}`);
+    if (!r.result.ok && r.result.fixHint) {
+      console.log(`  \x1b[2mhint: ${r.result.fixHint}\x1b[0m`);
+    }
+  }
+  if (result.mutations && result.mutations.length > 0) {
+    console.log(`\n\x1b[1mFixes applied:\x1b[0m`);
+    for (const m of result.mutations) console.log(`  - ${m}`);
+  }
+  if (result.migrationReportPath) {
+    console.log(`\n\x1b[2mMigration report: ${result.migrationReportPath}\x1b[0m`);
+  }
+  process.exit(result.allOk ? 0 : 1);
+}
+
 function printUsage(): void {
   console.log(`
 Usage: claude-autopilot <command> [options]  (legacy alias: guardrail)
@@ -671,23 +697,7 @@ switch (subcommand) {
     // really asking for the doctor. `migrate-doctor` (single verb, below) is
     // an equivalent alias.
     if (args[1] === 'doctor') {
-      const fix = args.includes('--fix');
-      const result = await runMigrateDoctor({ repoRoot: process.cwd(), fix });
-      for (const r of result.results) {
-        const mark = r.result.ok ? '\x1b[32m✓\x1b[0m' : '\x1b[31m✗\x1b[0m';
-        console.log(`${mark} ${r.name}${r.result.message ? ` — ${r.result.message}` : ''}`);
-        if (!r.result.ok && r.result.fixHint) {
-          console.log(`  \x1b[2mhint: ${r.result.fixHint}\x1b[0m`);
-        }
-      }
-      if (result.mutations && result.mutations.length > 0) {
-        console.log(`\n\x1b[1mFixes applied:\x1b[0m`);
-        for (const m of result.mutations) console.log(`  - ${m}`);
-      }
-      if (result.migrationReportPath) {
-        console.log(`\n\x1b[2mMigration report: ${result.migrationReportPath}\x1b[0m`);
-      }
-      process.exit(result.allOk ? 0 : 1);
+      await runMigrateDoctorCLI();
       break;
     }
 
@@ -735,23 +745,7 @@ switch (subcommand) {
   case 'migrate-doctor': {
     // Single-verb alias for `migrate doctor`. Documented for users whose shells
     // or CI configs handle multi-word verbs awkwardly.
-    const fix = args.includes('--fix');
-    const result = await runMigrateDoctor({ repoRoot: process.cwd(), fix });
-    for (const r of result.results) {
-      const mark = r.result.ok ? '\x1b[32m✓\x1b[0m' : '\x1b[31m✗\x1b[0m';
-      console.log(`${mark} ${r.name}${r.result.message ? ` — ${r.result.message}` : ''}`);
-      if (!r.result.ok && r.result.fixHint) {
-        console.log(`  \x1b[2mhint: ${r.result.fixHint}\x1b[0m`);
-      }
-    }
-    if (result.mutations && result.mutations.length > 0) {
-      console.log(`\n\x1b[1mFixes applied:\x1b[0m`);
-      for (const m of result.mutations) console.log(`  - ${m}`);
-    }
-    if (result.migrationReportPath) {
-      console.log(`\n\x1b[2mMigration report: ${result.migrationReportPath}\x1b[0m`);
-    }
-    process.exit(result.allOk ? 0 : 1);
+    await runMigrateDoctorCLI();
     break;
   }
 

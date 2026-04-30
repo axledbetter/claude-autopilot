@@ -1,11 +1,41 @@
+import { URL } from 'node:url';
 import postgres from 'postgres';
 import type { MigrationExecutor, ExecutionResult, EnvConfig } from './types';
+
+/**
+ * Decide the postgres-js `ssl` option from the connection URL.
+ *
+ * Honors the standard libpq `sslmode` query param when set; otherwise
+ * defaults to SSL only for non-localhost hosts. Local dev postgres
+ * (e.g. docker compose) usually has no SSL configured, so hardcoding
+ * `ssl: 'require'` made local dev unusable.
+ *
+ * Returns:
+ *   - 'require'  — strict SSL (sslmode=require/verify-full/verify-ca, or remote default)
+ *   - false      — no SSL  (sslmode=disable, or localhost default)
+ */
+export function shouldUseSsl(dbUrl: string): 'require' | false {
+  try {
+    const u = new URL(dbUrl);
+    const sslmode = u.searchParams.get('sslmode');
+    if (sslmode === 'require' || sslmode === 'verify-full' || sslmode === 'verify-ca') {
+      return 'require';
+    }
+    if (sslmode === 'disable' || sslmode === 'allow' || sslmode === 'prefer') {
+      return false;
+    }
+    // Default: SSL for non-localhost only
+    return u.hostname === 'localhost' || u.hostname === '127.0.0.1' ? false : 'require';
+  } catch {
+    return false;
+  }
+}
 
 export class PostgresExecutor implements MigrationExecutor {
   private sql: ReturnType<typeof postgres>;
 
   constructor(dbUrl: string) {
-    this.sql = postgres(dbUrl, { ssl: 'require' });
+    this.sql = postgres(dbUrl, { ssl: shouldUseSsl(dbUrl) });
   }
 
   async execute(sqlText: string): Promise<ExecutionResult> {
