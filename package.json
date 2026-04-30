@@ -1,6 +1,6 @@
 {
   "name": "@delegance/claude-autopilot",
-  "version": "5.5.0",
+  "version": "5.5.1",
   "type": "module",
   "description": "Autonomous development pipeline for Claude Code: brainstorm → spec → plan → implement → migrate → validate → PR → review → merge. Multi-model, local-first, every phase a skill you can intervene in.",
   "keywords": [
@@ -63,7 +63,6 @@
     "dotenv": ">=16",
     "js-yaml": "^4",
     "minimatch": ">=9",
-    "openai": ">=4",
     "proper-lockfile": "^4.1.2",
     "shell-quote": "^1.8.3",
     "tsx": ">=4"
@@ -71,7 +70,8 @@
   "optionalDependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
     "@google/generative-ai": "^0.24.1",
-    "@modelcontextprotocol/sdk": "^1.29.0"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "openai": ">=4"
   },
   "devDependencies": {
     "@types/js-yaml": "^4",
