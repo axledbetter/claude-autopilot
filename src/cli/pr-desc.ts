@@ -120,18 +120,6 @@ export async function runPrDesc(options: PrDescOptions): Promise<PrDescResult> {
   const engine = options._reviewEngine ?? (await resolveEngine() as unknown as PrDescOptions['_reviewEngine'])!;
   const start = Date.now();
   const { rawOutput, usage } = await engine.review({ content: prompt, kind: 'pr-diff' });
-  // Persist to cost log so `claude-autopilot costs` reflects pr-desc invocations,
-  // not just `scan`/`run`. Without this, `costs` showed misleadingly low totals
-  // after a session that included multiple pr-desc / council / scan calls — exactly
-  // the YC demo scenario where lifetime cost is the second-most-asked question.
-  appendCostLog(options._cwd ?? process.cwd(), {
-    timestamp: new Date().toISOString(),
-    files: 1,
-    inputTokens: usage?.input ?? 0,
-    outputTokens: usage?.output ?? 0,
-    costUSD: usage?.costUSD ?? 0,
-    durationMs: Date.now() - start,
-  });
   // Extract first non-empty bullet from the model's Summary section as a
   // last-resort title fallback when the model didn't emit `Title: ...`.
   const firstSummaryLine = rawOutput.split('\n')
@@ -145,6 +133,23 @@ export async function runPrDesc(options: PrDescOptions): Promise<PrDescResult> {
     fs.writeFileSync(options.output, formatted, 'utf8');
   } else {
     process.stdout.write(formatted + '\n');
+  }
+
+  // Persist to cost log AFTER the output is emitted. Bugbot HIGH on PR #51:
+  // if appendCostLog throws (read-only FS, full disk, permission), the user
+  // pays for the LLM call but never sees the result. Mirrors the
+  // output-then-log ordering in scan.ts and council.ts.
+  try {
+    appendCostLog(options._cwd ?? process.cwd(), {
+      timestamp: new Date().toISOString(),
+      files: 1,
+      inputTokens: usage?.input ?? 0,
+      outputTokens: usage?.output ?? 0,
+      costUSD: usage?.costUSD ?? 0,
+      durationMs: Date.now() - start,
+    });
+  } catch {
+    // Cost log is observability, not a contract — never block PR description on it.
   }
 
   if (options.post) {
