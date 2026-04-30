@@ -14,9 +14,11 @@ import { GuardrailError } from '../../core/errors.ts';
 import type {
   DeployAdapter,
   DeployInput,
+  DeployLogLine,
   DeployResult,
   DeployStatusInput,
   DeployStatusResult,
+  DeployStreamLogsInput,
 } from './types.ts';
 
 const VERCEL_API_BASE = 'https://api.vercel.com';
@@ -164,6 +166,60 @@ export class VercelDeployAdapter implements DeployAdapter {
     return { ...result, deployId: input.deployId };
   }
 
+  /**
+   * Phase 2 — subscribe to real-time build logs for a deployment.
+   *
+   * Streams `GET /v2/deployments/<id>/events?builds=1&follow=1` and yields a
+   * `DeployLogLine` for each `stdout` / `stderr` event. Lifecycle events
+   * (`state`, `complete`) are filtered out — the polling loop in `deploy()`
+   * already handles them. Malformed JSON lines are skipped silently rather
+   * than crashing a long-running stream.
+   *
+   * Cancellation: pass `input.signal`. Once aborted, the underlying fetch
+   * is torn down and the iterator returns.
+   */
+  async *streamLogs(input: DeployStreamLogsInput): AsyncGenerator<DeployLogLine> {
+    const url = this.urlWithTeam(
+      `${VERCEL_API_BASE}/v2/deployments/${encodeURIComponent(input.deployId)}/events?builds=1&follow=1`,
+    );
+    const res = await this.fetchEventsWithRetry(url, input.signal);
+    await this.assertOkOrThrow(res, 'stream logs');
+    if (!res.body) {
+      throw new GuardrailError(
+        `Vercel events response had no body for ${input.deployId}`,
+        { code: 'adapter_bug', provider: 'vercel' },
+      );
+    }
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buf = '';
+    try {
+      while (true) {
+        if (input.signal?.aborted) return;
+        const { done, value } = await reader.read();
+        if (done) {
+          // Flush a trailing partial line if present.
+          if (buf.length > 0) {
+            const line = parseEventLine(buf);
+            if (line) yield line;
+          }
+          return;
+        }
+        buf += decoder.decode(value, { stream: true });
+        let nl = buf.indexOf('\n');
+        while (nl !== -1) {
+          const raw = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          const line = parseEventLine(raw);
+          if (line) yield line;
+          nl = buf.indexOf('\n');
+        }
+      }
+    } finally {
+      try { reader.releaseLock(); } catch { /* ignore */ }
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // private helpers
   // ─────────────────────────────────────────────────────────────────────────────
@@ -286,6 +342,57 @@ export class VercelDeployAdapter implements DeployAdapter {
       { code: 'transient_network', provider: 'vercel' },
     );
   }
+
+  /**
+   * Like `fetchWithRetry` but tuned for the events endpoint:
+   * - 404 right after a deploy POST is a known race (the deploy hasn't yet
+   *   propagated to the events service). Retry up to N times with backoff.
+   * - 5xx behaves the same as `fetchWithRetry`.
+   * - Cancels cleanly on AbortError.
+   * - Returns the last `Response` so the caller can `assertOkOrThrow` on a
+   *   final non-OK status (e.g. 401 still bubbles immediately on attempt 1).
+   */
+  private async fetchEventsWithRetry(
+    url: string,
+    signal: AbortSignal | undefined,
+    attempts = 3,
+    baseMs = 500,
+  ): Promise<Response> {
+    let lastRes: Response | undefined;
+    for (let i = 0; i < attempts; i++) {
+      let res: Response;
+      try {
+        res = await this.fetchImpl(url, {
+          method: 'GET',
+          headers: { ...this.headers(), Accept: 'text/event-stream' },
+          signal,
+        });
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') throw err;
+        if (i < attempts - 1) {
+          await this.sleep(baseMs * 2 ** i);
+          continue;
+        }
+        throw new GuardrailError(
+          `Vercel events endpoint unreachable after ${attempts} attempts: ${(err as Error)?.message ?? String(err)}`,
+          { code: 'transient_network', provider: 'vercel' },
+        );
+      }
+      lastRes = res;
+      // 404 after create-deployment is the known race — retry.
+      if (res.status === 404 && i < attempts - 1) {
+        await this.sleep(baseMs * 2 ** i);
+        continue;
+      }
+      // 5xx is transient — retry.
+      if (res.status >= 500 && res.status < 600 && i < attempts - 1) {
+        await this.sleep(baseMs * 2 ** i);
+        continue;
+      }
+      return res;
+    }
+    return lastRes!;
+  }
 }
 
 async function safeReadBody(res: Response): Promise<string> {
@@ -294,4 +401,40 @@ async function safeReadBody(res: Response): Promise<string> {
   } catch {
     return '<no body>';
   }
+}
+
+/**
+ * Parse a single line from Vercel's events endpoint into a `DeployLogLine`.
+ *
+ * Accepts both raw NDJSON and classic SSE `data: {...}` lines. Returns
+ * `null` for events we don't surface (state changes, completes, heartbeats,
+ * and any line that fails to JSON-parse) — silently skipping a malformed
+ * event is preferable to crashing a long-running stream.
+ */
+function parseEventLine(raw: string): DeployLogLine | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  // SSE comment / heartbeat lines start with ':'
+  if (trimmed.startsWith(':')) return null;
+  // SSE event/id/retry lines — not data, skip
+  if (trimmed.startsWith('event:') || trimmed.startsWith('id:') || trimmed.startsWith('retry:')) return null;
+  // Strip 'data: ' prefix if present (classic SSE)
+  const jsonPart = trimmed.startsWith('data:') ? trimmed.slice(5).trim() : trimmed;
+  if (!jsonPart) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonPart);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const ev = parsed as { type?: string; payload?: { text?: string }; created?: number; date?: number };
+  // Only surface log-bearing event types. Vercel emits 'stdout'/'stderr' for
+  // build output; 'state'/'complete'/etc. are deploy lifecycle events that
+  // the polling loop already handles.
+  if (ev.type !== 'stdout' && ev.type !== 'stderr') return null;
+  const text = typeof ev.payload?.text === 'string' ? ev.payload.text : '';
+  if (!text) return null;
+  const ts = typeof ev.created === 'number' ? ev.created : typeof ev.date === 'number' ? ev.date : Date.now();
+  return { timestamp: ts, level: ev.type, text };
 }

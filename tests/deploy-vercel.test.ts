@@ -38,6 +38,33 @@ function mockFetch(responses: Array<Response | Error>): { fetch: typeof fetch; c
   return { fetch: fetchStub, calls };
 }
 
+/**
+ * Build a minimal Response whose `body` is a web ReadableStream that yields
+ * the given chunks (UTF-8 encoded). When `error` is set, the stream rejects
+ * the next read with that error.
+ */
+function streamingRes(status: number, chunks: Array<string>, error?: Error): Response {
+  let i = 0;
+  const reader = {
+    async read(): Promise<{ done: boolean; value?: Uint8Array }> {
+      if (error && i === chunks.length) throw error;
+      if (i >= chunks.length) return { done: true };
+      const chunk = chunks[i++]!;
+      return { done: false, value: new TextEncoder().encode(chunk) };
+    },
+    cancel() { return Promise.resolve(); },
+    releaseLock() {},
+  };
+  const body = { getReader: () => reader } as unknown as ReadableStream<Uint8Array>;
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    body,
+    text: async () => chunks.join(''),
+    json: async () => JSON.parse(chunks.join('')),
+  } as unknown as Response;
+}
+
 const sleepNoop = async () => {};
 const fixedNow = () => 1_700_000_000_000;
 
@@ -268,5 +295,33 @@ describe('VercelDeployAdapter', () => {
       /no deployment id/,
     );
     assert.deepEqual(seen, []);
+  });
+});
+
+describe('VercelDeployAdapter.streamLogs', () => {
+  it('yields DeployLogLines parsed from a mocked NDJSON stream', async () => {
+    const events = [
+      JSON.stringify({ type: 'stdout', payload: { text: 'hello' }, created: 1700000000000 }) + '\n',
+      JSON.stringify({ type: 'stderr', payload: { text: 'warn x' }, created: 1700000000001 }) + '\n',
+      JSON.stringify({ type: 'state', payload: { state: 'BUILDING' }, created: 1700000000002 }) + '\n',
+      JSON.stringify({ type: 'stdout', payload: { text: 'done' }, created: 1700000000003 }) + '\n',
+    ];
+    const { fetch } = mockFetch([streamingRes(200, [events.join('')])]);
+    const adapter = new VercelDeployAdapter({
+      token: 'tok_test',
+      project: 'my-app',
+      fetchImpl: fetch,
+      sleepImpl: sleepNoop,
+      nowImpl: fixedNow,
+    });
+    const lines: Array<{ text: string; level?: string }> = [];
+    for await (const line of adapter.streamLogs!({ deployId: 'dpl_x' })) {
+      lines.push({ text: line.text, level: line.level });
+    }
+    assert.deepEqual(lines, [
+      { text: 'hello', level: 'stdout' },
+      { text: 'warn x', level: 'stderr' },
+      { text: 'done', level: 'stdout' },
+    ]);
   });
 });
