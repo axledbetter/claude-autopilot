@@ -1,9 +1,9 @@
-import OpenAI from 'openai';
 import { parseReviewOutput } from './parse-output.ts';
 import { GuardrailError } from '../../core/errors.ts';
 import type { Capabilities } from '../base.ts';
 import type { ReviewEngine, ReviewInput, ReviewOutput } from './types.ts';
 import { buildSystemPrompt, classifyError } from './prompt-builder.ts';
+import { loadOpenAI } from '../sdk-loader.ts';
 
 const DEFAULT_MODEL = process.env.CODEX_MODEL ?? 'gpt-5.3-codex';
 const MAX_OUTPUT_TOKENS = 4096;
@@ -58,6 +58,7 @@ export const codexAdapter: ReviewEngine = {
     }
     const systemPrompt = buildSystemPrompt(input, SYSTEM_PROMPT_TEMPLATE);
 
+    const OpenAI = await loadOpenAI();
     const client = new OpenAI({ apiKey });
     let response;
     try {

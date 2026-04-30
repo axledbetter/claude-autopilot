@@ -1,7 +1,8 @@
-import Anthropic from '@anthropic-ai/sdk';
+import type AnthropicNS from '@anthropic-ai/sdk';
 import { GuardrailError } from '../../core/errors.ts';
 import { classifyError } from '../review-engine/prompt-builder.ts';
 import type { CouncilAdapter, CouncilConsultResult } from './types.ts';
+import { loadAnthropic } from '../sdk-loader.ts';
 
 const SYSTEM_PROMPT = `You are a technical advisor reviewing a software design decision. Evaluate the provided context and question critically. Be direct and specific. Surface tradeoffs, risks, and your recommendation.`;
 const MAX_OUTPUT_TOKENS = 2048;
@@ -17,8 +18,9 @@ export function makeClaudeCouncilAdapter(model: string, label: string): CouncilA
       if (!apiKey) {
         throw new GuardrailError('ANTHROPIC_API_KEY not set', { code: 'auth', provider: 'claude' });
       }
+      const Anthropic = await loadAnthropic();
       const client = new Anthropic({ apiKey });
-      let response: Anthropic.Message;
+      let response: AnthropicNS.Message;
       try {
         response = await client.messages.create({
           model,
@@ -37,7 +39,7 @@ export function makeClaudeCouncilAdapter(model: string, label: string): CouncilA
       }
       const text = response.content
         .filter(b => b.type === 'text')
-        .map(b => (b as Anthropic.TextBlock).text)
+        .map(b => (b as AnthropicNS.TextBlock).text)
         .join('');
       const usage = response.usage ? {
         input: response.usage.input_tokens,

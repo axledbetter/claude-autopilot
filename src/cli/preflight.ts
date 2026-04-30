@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { runSafe } from '../core/shell.ts';
 import { detectLLMKey, loadEnvFile, LLM_KEY_NAMES } from '../core/detect/llm-key.ts';
 import { findPackageRoot } from './_pkg-root.ts';
+import { isSdkInstalled } from '../adapters/sdk-loader.ts';
 
 const PASS = '\x1b[32m✓\x1b[0m';
 const FAIL = '\x1b[31m✗\x1b[0m';
@@ -42,6 +43,33 @@ function skillRoots(): string[] {
   // User-global plugin install
   if (home) roots.push(path.join(home, '.claude', 'plugins'));
   return roots.filter(p => fs.existsSync(p));
+}
+
+/**
+ * Reads `deploy.adapter` from guardrail.config.yaml without pulling in the
+ * full config loader (which validates against a JSON schema and would noise
+ * up the doctor output). Returns `null` if the config or field is absent.
+ */
+function readDeployAdapter(configPath: string): string | null {
+  if (!fs.existsSync(configPath)) return null;
+  try {
+    const text = fs.readFileSync(configPath, 'utf8');
+    // Match `deploy:` block then look for `adapter:` two lines down. Cheap
+    // line-based parse — avoids js-yaml dependency in the doctor path.
+    const lines = text.split(/\r?\n/);
+    let inDeploy = false;
+    for (const line of lines) {
+      if (/^deploy\s*:\s*$/.test(line)) { inDeploy = true; continue; }
+      if (inDeploy && /^\S/.test(line)) inDeploy = false; // dedented out of block
+      if (inDeploy) {
+        const m = line.match(/^\s+adapter\s*:\s*['"]?([a-zA-Z0-9_-]+)['"]?\s*$/);
+        if (m) return m[1] ?? null;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export function findMissingSuperpowersSkills(): string[] {
@@ -200,7 +228,48 @@ export async function runDoctor(): Promise<DoctorResult> {
       : undefined,
   });
 
-  // 9. Superpowers plugin — required for pipeline phases, optional for review-only use
+  // 9. LLM SDK install state — surfaces which providers are usable. After
+  //    the v5.5 lazy-load refactor, three SDKs moved to optionalDependencies;
+  //    `--omit=optional` users may have removed them. This check shows users
+  //    which providers will work without `npm install <sdk>`.
+  const sdkChecks: Array<{ pkg: string; provider: string }> = [
+    { pkg: '@anthropic-ai/sdk', provider: 'claude' },
+    { pkg: 'openai', provider: 'openai/codex' },
+    { pkg: '@google/generative-ai', provider: 'gemini' },
+  ];
+  const installed: string[] = [];
+  const missing: string[] = [];
+  for (const { pkg } of sdkChecks) {
+    if (await isSdkInstalled(pkg)) installed.push(pkg);
+    else missing.push(pkg);
+  }
+  checks.push({
+    name: `LLM SDKs installed (${installed.length}/${sdkChecks.length})`,
+    result: installed.length === 0 ? 'fail' : missing.length > 0 ? 'warn' : 'pass',
+    message: installed.length === 0
+      ? `No LLM SDKs found. Install at least one: ${sdkChecks.map(s => s.pkg).join(', ')}`
+      : missing.length > 0
+        ? `Missing (run npm install <pkg> to enable): ${missing.join(', ')}`
+        : undefined,
+  });
+
+  // 10. Vercel deploy adapter auth (Phase 6 of v5.4 spec). Detects
+  //     `deploy.adapter: vercel` in guardrail.config.yaml and verifies the
+  //     auth token is set. Warn-not-fail because users without deploy
+  //     configured don't care.
+  const deployAdapter = readDeployAdapter(configYaml);
+  if (deployAdapter === 'vercel') {
+    const token = process.env.VERCEL_TOKEN ?? envVars['VERCEL_TOKEN'];
+    checks.push({
+      name: 'VERCEL_TOKEN (deploy adapter: vercel)',
+      result: token ? 'pass' : 'warn',
+      message: token
+        ? undefined
+        : 'deploy.adapter is "vercel" but VERCEL_TOKEN is not set. Generate one at https://vercel.com/account/tokens',
+    });
+  }
+
+  // 11. Superpowers plugin — required for pipeline phases, optional for review-only use
   const missingSkills = findMissingSuperpowersSkills();
   const allSkillsFound = missingSkills.length === 0;
   checks.push({

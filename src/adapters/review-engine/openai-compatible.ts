@@ -1,9 +1,10 @@
-import OpenAI from 'openai';
+import type OpenAINS from 'openai';
 import { parseReviewOutput } from './parse-output.ts';
 import { GuardrailError } from '../../core/errors.ts';
 import type { Capabilities } from '../base.ts';
 import type { ReviewEngine, ReviewInput, ReviewOutput } from './types.ts';
 import { buildSystemPrompt, classifyError } from './prompt-builder.ts';
+import { loadOpenAI } from '../sdk-loader.ts';
 
 const MAX_OUTPUT_TOKENS = 4096;
 
@@ -64,9 +65,10 @@ export const openaiCompatibleAdapter: ReviewEngine = {
     }
 
     const systemPrompt = buildSystemPrompt(input, SYSTEM_PROMPT_TEMPLATE);
+    const OpenAI = await loadOpenAI();
     const client = new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
 
-    let response: OpenAI.Chat.ChatCompletion;
+    let response: OpenAINS.Chat.ChatCompletion;
     try {
       response = await client.chat.completions.create({
         model,
