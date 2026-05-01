@@ -182,7 +182,10 @@ export class RenderDeployAdapter implements DeployAdapter {
 
   async status(input: DeployStatusInput): Promise<DeployStatusResult> {
     const start = this.now();
-    const url = `${RENDER_API_BASE}/v1/deploys/${encodeURIComponent(input.deployId)}`;
+    // Render's API for fetching a single deploy is service-scoped — the
+    // shorthand /v1/deploys/{id} does NOT exist. Caught by Cursor Bugbot
+    // on PR #73 (HIGH).
+    const url = `${RENDER_API_BASE}/v1/services/${encodeURIComponent(this.serviceId)}/deploys/${encodeURIComponent(input.deployId)}`;
     const res = await this.fetchWithRetry(url, {
       method: 'GET',
       headers: this.headers(),
@@ -203,7 +206,8 @@ export class RenderDeployAdapter implements DeployAdapter {
     start: number,
     signal: AbortSignal | undefined,
   ): Promise<DeployResult> {
-    const url = `${RENDER_API_BASE}/v1/deploys/${encodeURIComponent(deployId)}`;
+    // Service-scoped path — see comment in `status()`.
+    const url = `${RENDER_API_BASE}/v1/services/${encodeURIComponent(this.serviceId)}/deploys/${encodeURIComponent(deployId)}`;
     while (true) {
       if (signal?.aborted) {
         return { status: 'in-progress', deployId, durationMs: this.now() - start };

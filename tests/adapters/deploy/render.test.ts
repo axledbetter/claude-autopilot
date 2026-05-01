@@ -99,8 +99,11 @@ describe('RenderDeployAdapter.deploy', () => {
     // Body must include the default clearCache value
     const body = JSON.parse(calls[0]!.init!.body as string);
     assert.equal(body.clearCache, 'do_not_clear');
-    // Polling targets the deploy-by-id endpoint, not the service-deploys list
-    assert.match(calls[1]!.url, /\/v1\/deploys\/dep_abc$/);
+    // Polling targets the service-scoped deploy-by-id endpoint:
+    // GET /v1/services/{serviceId}/deploys/{deployId}. The shorthand
+    // /v1/deploys/{id} is NOT a real Render endpoint — pinning the
+    // service-scoped form here so we don't regress.
+    assert.match(calls[1]!.url, /\/v1\/services\/srv-abc123\/deploys\/dep_abc$/);
     assert.equal(calls[1]!.init?.method, 'GET');
   });
 
@@ -226,7 +229,8 @@ describe('RenderDeployAdapter.status', () => {
     assert.equal(r.deployId, 'dep_xyz');
     assert.equal(calls.length, 1);
     assert.equal(calls[0]!.init?.method, 'GET');
-    assert.match(calls[0]!.url, /\/v1\/deploys\/dep_xyz$/);
+    // Service-scoped path — see comment above on the deploy() pin.
+    assert.match(calls[0]!.url, /\/v1\/services\/srv-abc123\/deploys\/dep_xyz$/);
   });
 
   it('maps build_failed terminal status to fail', async () => {
