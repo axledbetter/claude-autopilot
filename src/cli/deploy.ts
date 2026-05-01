@@ -545,7 +545,7 @@ function printAutoRollback(
     `${yellow}🔄 [deploy] auto-rolled-back-to=${target} via=${adapter} health-check-url=${hc.url}${reset}`,
   );
   console.log(
-    `${dim}   reason: health check failed 3x against ${hc.url} (${hc.lastError})${reset}`,
+    `${dim}   reason: health check failed ${HEALTH_CHECK_MAX_ATTEMPTS}x against ${hc.url} (${hc.lastError})${reset}`,
   );
   if (rb.deployUrl) {
     console.log(`${dim}   current: ${rb.deployUrl}${reset}`);
