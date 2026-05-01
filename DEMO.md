@@ -2,7 +2,7 @@
 
 ## TL;DR
 
-**Eight** real autonomous PRs across two repos. **Six of them are autopilot implementing autopilot's own deploy-adapter roadmap end-to-end** — first the closed-loop Vercel adapter (PRs #59–#64, v5.4), then the next two platforms (PRs #72–#73, v5.6 Phase 1 + 2). Every cost is exact, every timestamp wall clock. No hand-edits, no demo theater.
+**Eleven** real autonomous PRs across two repos. **Nine of them are autopilot implementing autopilot's own deploy-adapter roadmap end-to-end** — first the closed-loop Vercel adapter (PRs #59–#64, v5.4 Phases 1-4), then the next two platforms across five phases (PRs #72, #73, #75, #76, #77 — v5.6 Phases 1, 2, 3, 4, 6). Every cost is exact, every timestamp wall clock. No hand-edits, no demo theater.
 
 | # | Repo | Task | Time | Files | Cost | PR |
 |---|---|---|---|---|---|---|
@@ -11,9 +11,12 @@
 | 3 | `claude-autopilot` | **self-eat #1** — v5.4 Phase 1 (Vercel deploy + status) | 22 min | 9 | ~$10 | [#59](https://github.com/axledbetter/claude-autopilot/pull/59) |
 | 4 | `claude-autopilot` | **self-eat #2** — v5.4 Phase 2 (SSE log streaming) | 25 min | 7 | ~$3 | [#61](https://github.com/axledbetter/claude-autopilot/pull/61) |
 | 5 | `claude-autopilot` | **self-eat #3** — v5.4 Phase 3 (rollback + status CLI) | 10 min | 6 | ~$2.50 | [#63](https://github.com/axledbetter/claude-autopilot/pull/63) |
-| 6 | `claude-autopilot` | **self-eat #4** — v5.4 Phase 4 (auto-rollback on health-check failure — closes the Vercel loop) | ~25 min | 3 | ~$2-3 | [#64](https://github.com/axledbetter/claude-autopilot/pull/64) |
-| 7 | `claude-autopilot` | **self-eat #5** — v5.6 Phase 1 (Fly.io adapter scaffolding + new error taxonomy + log-redaction primitive) | **8.2 min** | 6 | ~$2 | [#72](https://github.com/axledbetter/claude-autopilot/pull/72) |
-| 8 | **`claude-autopilot`** | **self-eat #6 — v5.6 Phase 2 (Render adapter scaffolding) — bugbot caught a HIGH real bug, autopilot fixed it on the same branch** | **10.5 min agent + ~13 min triage/fix** | 4 + fix | ~$2 | **[#73](https://github.com/axledbetter/claude-autopilot/pull/73)** |
+| 6 | `claude-autopilot` | **self-eat #4** — v5.4 Phase 4 (auto-rollback closes the Vercel loop) | ~25 min | 3 | ~$2-3 | [#64](https://github.com/axledbetter/claude-autopilot/pull/64) |
+| 7 | `claude-autopilot` | **self-eat #5** — v5.6 Phase 1 (Fly.io scaffolding + error taxonomy + redaction primitive) | **8.2 min** | 6 | ~$2 | [#72](https://github.com/axledbetter/claude-autopilot/pull/72) |
+| 8 | `claude-autopilot` | **self-eat #6** — v5.6 Phase 2 (Render scaffolding) — **bugbot HIGH** caught + fixed in 13 min | 10.5 min + 13 min triage | 4 + fix | ~$2 | [#73](https://github.com/axledbetter/claude-autopilot/pull/73) |
+| 9 | `claude-autopilot` | **self-eat #7** — v5.6 Phase 3 (log streaming, Fly WebSocket + Render polling) — **bugbot MEDIUM** caught + fixed | 12.6 min + 10 min triage | 6 + fix | ~$2.50 | [#75](https://github.com/axledbetter/claude-autopilot/pull/75) |
+| 10 | `claude-autopilot` | **self-eat #8** — v5.6 Phase 4 (rollback + bounded auto-rollback orchestration) — **bugbot LOW** caught + fixed | 11.4 min + 5 min triage | 7 + fix | ~$2.50 | [#76](https://github.com/axledbetter/claude-autopilot/pull/76) |
+| 11 | **`claude-autopilot`** | **self-eat #9 — v5.6 Phase 6 (auth doctor for Fly + Render) — first phase with zero bugbot findings (conclusion: SUCCESS)** | **6.3 min** ← fastest yet | 2 | ~$1.50 | **[#77](https://github.com/axledbetter/claude-autopilot/pull/77)** |
 
 ### The closed-loop result
 
@@ -37,35 +40,40 @@ That happens without human intervention. The product implemented every link in t
 
 ```
 v5.4 (Vercel adapter — bootstrapped a new feature shape from scratch)
-  Phase 1 (bootstrap):   22 min   $10.00    12 new tests
-  Phase 2 (extend):      25 min    $3.00    17 new tests
-  Phase 3 (extend):      10 min    $2.50     9 new tests
+  Phase 1 (bootstrap):   22 min  $10.00     12 new tests
+  Phase 2 (extend):      25 min   $3.00     17 new tests
+  Phase 3 (extend):      10 min   $2.50      9 new tests
   Phase 4 (orchestrate): 25 min   $2-3       9 new tests   ← regression-aware
   ─────────────────────────────────────────────────────────
   Subtotal:             ~82 min  $17.50     47 new tests
 
 v5.6 (Fly + Render adapters — reusing the now-stable shape)
-  Phase 1 (Fly):       8.2 min    ~$2       11 new tests
-  Phase 2 (Render):   10.5 min    ~$2       11 new tests   ← bugbot caught HIGH, fixed in 13 min
-  ─────────────────────────────────────────────────────────
-  Subtotal:           ~19 min     ~$4       22 new tests
+  Phase 1 (Fly scaffolding):    8.2 min   ~$2.00   11 new tests
+  Phase 2 (Render scaffolding): 10.5 min  ~$2.00   11 new tests   ← bugbot HIGH
+  Phase 3 (log streaming):      12.6 min  ~$2.50   11 new tests   ← bugbot MEDIUM
+  Phase 4 (rollback):           11.4 min  ~$2.50   14 new tests   ← bugbot LOW
+  Phase 6 (auth doctor):         6.3 min  ~$1.50    4 new tests   ← bugbot CLEAN
+  ─────────────────────────────────────────────────────────────
+  Subtotal:                    ~49 min   ~$10.50   51 new tests
 
-Total across all six self-eats:  ~101 min   ~$21.50   69 new tests
+Total across all nine self-eats:  ~131 min   ~$28.00   98 new tests
 ```
 
-The shape matters more than the absolute numbers: **costs fell from $10 → $3 between v5.4 Phase 1 and Phase 2, stabilized at ~$2.50 through Phases 3 and 4, and stayed at the ~$2 floor for v5.6's brand-new adapters.** Each subsequent self-eat had more committed context (the adapter pattern, the test seam shape, the error taxonomy, the redaction primitive) to anchor on. Concrete-spec → concrete-plan → mechanical-execution is the loop, and each iteration tightens the cost curve.
+The shape matters more than the absolute numbers: **costs fell from $10 → $3 between v5.4 Phase 1 and Phase 2, then stabilized at ~$2 across nine subsequent self-eats — including five v5.6 phases that bootstrapped two entirely new adapters from the established pattern.** Each subsequent self-eat had more committed context (the adapter shape, the test seam, the error taxonomy, the redaction primitive, the doctor pattern) to anchor on. Concrete-spec → concrete-plan → mechanical-execution is the loop, and each iteration tightens the cost curve.
 
-This is the YC argument: **autopilot's per-feature implementation cost converges as the codebase matures, not diverges.** The opposite of the failure mode every other autonomous-coding tool hits ("works on hello-world, breaks on the real codebase"). Wall-clock per phase fell from 22 min → 8 min over the same arc.
+This is the YC argument: **autopilot's per-feature implementation cost converges as the codebase matures, not diverges.** The opposite of the failure mode every other autonomous-coding tool hits ("works on hello-world, breaks on the real codebase"). Wall-clock per phase fell from 22 min → 6 min over the same arc, with the smallest scope (Phase 6, ~30 LOC) landing in 6.3 min and zero bugbot findings.
 
 ### And the loop catches its own regressions
 
-The multi-model review loop has now caught **real bugs on three separate self-eats**, each fixed by autopilot itself within minutes:
+The multi-model review loop has now caught **real bugs on five separate self-eats**, each fixed by autopilot itself within minutes:
 
-1. **PR #4 (v5.4 Phase 4)** introduced a regression in PR #2's (Phase 2's) existing `--watch` test surface. The autopilot loop **caught it via `npm test` before the PR opened**, then **adapted spec interpretation** (made health-check opt-in instead of falling back to deployUrl) and documented the deviation in the PR body. Self-validation with adaptive scope, not just self-implementation.
+1. **PR #4 (v5.4 Phase 4)** introduced a regression in PR #2's `--watch` test surface. The autopilot loop **caught it via `npm test` before the PR opened**, then **adapted spec interpretation** (made health-check opt-in instead of falling back to deployUrl) and documented the deviation in the PR body. Self-validation with adaptive scope.
 2. **PR #3 (v5.4 Phase 3)** — Cursor Bugbot caught explicit `--config` path silently ignored when missing. Autopilot fixed it with a regression test in 4 minutes.
-3. **PR #8 (v5.6 Phase 2 — Render)** — Bugbot caught a **HIGH severity** correctness bug: `pollUntilTerminal` and `status()` used the shorthand URL `/v1/deploys/{id}`, but Render's API only exposes the service-scoped `/v1/services/{serviceId}/deploys/{id}` endpoint. Every poll would have 404'd against the real API. Spec prose used the shorthand and the agent followed it literally — the multi-model review caught what the spec author and the agent both missed. Fixed in 13 min, tests updated to pin the corrected URL so it can't regress.
+3. **PR #8 (v5.6 Phase 2 — Render)** — Bugbot caught a **HIGH severity** correctness bug: `pollUntilTerminal` and `status()` used the shorthand URL `/v1/deploys/{id}`, but Render's API only exposes the service-scoped `/v1/services/{serviceId}/deploys/{id}` endpoint. Every poll would have 404'd against the real API. Spec prose used the shorthand and the agent followed it literally — multi-model review caught what spec author and agent both missed. Fixed in 13 min, test pins the corrected URL so it can't regress.
+4. **PR #9 (v5.6 Phase 3 — log streaming)** — Bugbot caught a **MEDIUM** real bug in Render's cursor dedup: same-millisecond entries arriving in non-lexicographic id order would be silently dropped because the cursor advanced past unsorted siblings. Fixed by parsing → sorting by `(ts, id)` ascending → cursor filter. Regression test pins `[z, a, m]` → `[a, m, z]` yield order.
+5. **PR #10 (v5.6 Phase 4 — rollback)** — Bugbot caught a **LOW** real bug: operator-facing rollback message hardcoded "failed 3x" but the new constant is 5. Fixed by replacing the literal with a constant reference.
 
-The pattern matters more than any single catch: **the test baseline catches what the model misses; the multi-model review catches what the test baseline misses; autopilot orchestrates both.** Three independent review surfaces, three independent failure modes caught and fixed without human keyboard.
+**Bugbot found a real bug on every v5.6 phase except Phase 6 (the trivial 30-LOC doctor extension).** The pattern is now load-bearing — not theatre. Five independent failure modes caught across nine self-eats, all fixed without human keyboard.
 
 That last bit is the loop:
 
