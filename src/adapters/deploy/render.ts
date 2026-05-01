@@ -27,9 +27,11 @@ import type {
   DeployAdapter,
   DeployAdapterCapabilities,
   DeployInput,
+  DeployLogLine,
   DeployResult,
   DeployStatusInput,
   DeployStatusResult,
+  DeployStreamLogsInput,
 } from './types.ts';
 
 const RENDER_API_BASE = 'https://api.render.com';
@@ -90,6 +92,12 @@ export interface RenderDeployAdapterOptions {
    * from `config.persistence.redactionPatterns` by the CLI; tests omit it.
    */
   redactionPatterns?: readonly string[];
+  /**
+   * Polling interval (ms) for the `streamLogs` REST polling loop.
+   * Defaults to 2000ms per the v5.6 spec § "Render adapter → Logs".
+   * Tests override to 0 so they don't actually wait between polls.
+   */
+  logPollIntervalMs?: number;
 }
 
 /**
@@ -117,6 +125,7 @@ export class RenderDeployAdapter implements DeployAdapter {
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly now: () => number;
   private readonly redactionPatterns: readonly string[] | undefined;
+  private readonly logPollIntervalMs: number;
 
   constructor(opts: RenderDeployAdapterOptions) {
     const token = opts.token ?? process.env.RENDER_API_KEY;
@@ -141,6 +150,7 @@ export class RenderDeployAdapter implements DeployAdapter {
     this.sleep = opts.sleepImpl ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.now = opts.nowImpl ?? Date.now;
     this.redactionPatterns = opts.redactionPatterns;
+    this.logPollIntervalMs = opts.logPollIntervalMs ?? 2000;
   }
 
   async deploy(input: DeployInput): Promise<DeployResult> {
@@ -197,9 +207,133 @@ export class RenderDeployAdapter implements DeployAdapter {
     return { ...result, deployId: input.deployId };
   }
 
+  /**
+   * Phase 3 of v5.6 — REST-polling log stream for a Render deploy.
+   *
+   * Render has no WebSocket log endpoint (cf. v5.6 spec § "Render adapter →
+   * Logs" and capability metadata `streamMode: 'polling'`). This generator
+   * polls `GET /v1/services/{serviceId}/logs?deployId={id}&direction=forward
+   * &limit=100` every 2s while the deploy is `in-progress` and yields any
+   * new lines.
+   *
+   * Cursor invariant — keyed by `(timestamp, logId)`:
+   * - We track the most-recently-yielded `(ts, id)` pair as `cursor`.
+   * - On each poll, we discard every returned line whose `(ts, id)` is
+   *   `<= cursor` (lexicographic on the pair, primary key timestamp). This
+   *   handles two real cases:
+   *     1. Pagination overlap — Render's forward-direction list often
+   *        repeats the last entry of the prior page as the first entry of
+   *        the next. Without dedup we'd yield duplicates.
+   *     2. Same-millisecond entries — multiple log lines can share a `ts`.
+   *        The secondary `id` ordering keeps them stable.
+   * - We never miss a line: `cursor` advances strictly monotonically, and
+   *   the polling URL uses `direction=forward` so Render returns lines
+   *   newer than (or equal to) our cursor's timestamp.
+   *
+   * Termination:
+   * - `signal.aborted` — exit immediately at the next await boundary.
+   * - Deploy status reaches a terminal state (live / build_failed /
+   *   update_failed / canceled / deactivated) — drain one final poll for
+   *   any tail lines, then exit.
+   * - Hard cap of `maxPollMs` ticks — same budget as `pollUntilTerminal`
+   *   to avoid an infinite generator if status is stuck.
+   *
+   * Every yielded line's `text` is run through `redactLogLines()` before
+   * leaving the adapter.
+   */
+  async *streamLogs(input: DeployStreamLogsInput): AsyncGenerator<DeployLogLine> {
+    const logsUrl = (`${RENDER_API_BASE}/v1/services/${encodeURIComponent(this.serviceId)}/logs`
+      + `?deployId=${encodeURIComponent(input.deployId)}`
+      + `&direction=forward&limit=100`);
+    const statusUrl = `${RENDER_API_BASE}/v1/services/${encodeURIComponent(this.serviceId)}/deploys/${encodeURIComponent(input.deployId)}`;
+    const start = this.now();
+    let cursorTs = -1;
+    let cursorId = '';
+    let terminalSeen = false;
+    while (true) {
+      if (input.signal?.aborted) return;
+      if (this.now() - start > this.maxPollMs) return;
+
+      // 1. Fetch the next batch of log lines.
+      let logsRes: Response;
+      try {
+        logsRes = await this.fetchWithRetry(logsUrl, {
+          method: 'GET',
+          headers: this.headers(),
+          signal: input.signal,
+        });
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') return;
+        throw err;
+      }
+      if (input.signal?.aborted) return;
+      // 404 here = deploy ID typo or wrong service. Surface as a single
+      // warn line and stop — same shape as the Fly "lost stream" exit.
+      if (!logsRes.ok) {
+        // Re-use the assertOkOrThrow surface for a typed GuardrailError.
+        await this.assertOkOrThrow(logsRes, 'stream logs');
+      }
+      const logsData = (await logsRes.json()) as RenderLogsResponse;
+      const lines = Array.isArray(logsData?.logs) ? logsData.logs : [];
+      for (const entry of lines) {
+        if (input.signal?.aborted) return;
+        const parsed = parseRenderLogEntry(entry, this.now());
+        if (!parsed) continue;
+        // Cursor compare: primary timestamp, secondary id. Strictly greater
+        // than previous cursor → yield + advance.
+        if (parsed.ts < cursorTs) continue;
+        if (parsed.ts === cursorTs && parsed.id <= cursorId) continue;
+        cursorTs = parsed.ts;
+        cursorId = parsed.id;
+        yield this.redactLine({ timestamp: parsed.ts, level: parsed.level, text: parsed.text });
+      }
+
+      // 2. After we've drained this poll, check if we already saw a terminal
+      // status on the previous tick — if so, this was the final tail-drain.
+      if (terminalSeen) return;
+
+      // 3. Status check — same service-scoped endpoint as `pollUntilTerminal`.
+      let statusRes: Response;
+      try {
+        statusRes = await this.fetchWithRetry(statusUrl, {
+          method: 'GET',
+          headers: this.headers(),
+          signal: input.signal,
+        });
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') return;
+        throw err;
+      }
+      if (input.signal?.aborted) return;
+      if (statusRes.ok) {
+        const statusData = (await statusRes.json()) as RenderDeployResponse;
+        const s = statusData?.status;
+        if (
+          s === 'live'
+          || s === 'build_failed'
+          || s === 'update_failed'
+          || s === 'canceled'
+          || s === 'deactivated'
+        ) {
+          // Mark terminal — one more poll iteration drains tail lines, then
+          // the `terminalSeen` short-circuit above exits the loop.
+          terminalSeen = true;
+        }
+      }
+      // 4. Sleep until the next poll. Honor abort while waiting.
+      if (input.signal?.aborted) return;
+      await this.sleep(this.logPollIntervalMs);
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // private helpers
   // ─────────────────────────────────────────────────────────────────────────────
+
+  /** Apply the adapter's redaction patterns to a log line's `text` field. */
+  private redactLine(line: DeployLogLine): DeployLogLine {
+    return { ...line, text: redactLogLines(line.text, this.redactionPatterns) };
+  }
 
   private async pollUntilTerminal(
     deployId: string,
@@ -398,4 +532,48 @@ function readRenderRequestId(res: Response): string | null {
   const headers = (res as { headers?: { get?: (k: string) => string | null } }).headers;
   if (!headers || typeof headers.get !== 'function') return null;
   return headers.get('x-request-id') ?? headers.get('X-Request-Id') ?? null;
+}
+
+/**
+ * Shape of `GET /v1/services/{id}/logs?...` responses.
+ *
+ * Render returns an envelope with a `logs` array; each entry has a
+ * timestamp (ISO 8601 string), an `id`, and a `message`. Levels are not
+ * always populated. Phase 7 will pin this against captured fixtures.
+ */
+interface RenderLogsResponse {
+  logs?: RenderLogEntry[];
+}
+
+interface RenderLogEntry {
+  /** ISO 8601 string per Render's API. */
+  timestamp?: string;
+  /** Stable per-entry ID — used as the secondary cursor key. */
+  id?: string;
+  level?: string;
+  message?: string;
+  /** Some Render endpoints surface `text` instead of `message`. */
+  text?: string;
+}
+
+/**
+ * Parse a single Render log entry into our cursor-friendly tuple. Returns
+ * `null` for entries that have no usable text (we never yield empty lines)
+ * or no usable timestamp (the cursor invariant requires `ts`).
+ */
+function parseRenderLogEntry(
+  entry: RenderLogEntry,
+  fallbackTs: number,
+): { ts: number; id: string; level: string | undefined; text: string } | null {
+  const text = typeof entry.message === 'string'
+    ? entry.message
+    : typeof entry.text === 'string' ? entry.text : '';
+  if (!text) return null;
+  let ts = fallbackTs;
+  if (typeof entry.timestamp === 'string' && entry.timestamp.length > 0) {
+    const parsed = Date.parse(entry.timestamp);
+    if (!Number.isNaN(parsed)) ts = parsed;
+  }
+  const id = typeof entry.id === 'string' ? entry.id : '';
+  return { ts, id, level: entry.level, text };
 }

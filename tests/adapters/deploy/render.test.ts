@@ -269,3 +269,162 @@ describe('RenderDeployAdapter capability metadata', () => {
     assert.equal(adapter.capabilities?.nativeRollback, false);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 3 of v5.6 — streamLogs via REST polling.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('RenderDeployAdapter.streamLogs', () => {
+  it('yields polled log lines as the deploy progresses then stops at terminal status', async () => {
+    // Sequence: logs(2) → status(in-progress) → logs(1 new) → status(live) →
+    // final tail-drain logs(0) and exit.
+    const { fetch } = mockFetch([
+      // Poll 1: logs (two entries)
+      res(200, {
+        logs: [
+          { id: 'log-1', timestamp: '2026-04-30T00:00:01.000Z', level: 'info', message: 'first' },
+          { id: 'log-2', timestamp: '2026-04-30T00:00:02.000Z', level: 'info', message: 'second' },
+        ],
+      }),
+      // Poll 1: status — still building
+      res(200, { id: 'dep_abc', status: 'build_in_progress' }),
+      // Poll 2: logs (one new entry)
+      res(200, {
+        logs: [
+          { id: 'log-3', timestamp: '2026-04-30T00:00:03.000Z', level: 'info', message: 'third' },
+        ],
+      }),
+      // Poll 2: status — terminal
+      res(200, { id: 'dep_abc', status: 'live' }),
+      // Final tail drain: no new lines
+      res(200, { logs: [] }),
+    ]);
+    const adapter = new RenderDeployAdapter({
+      ...baseOpts,
+      fetchImpl: fetch,
+      logPollIntervalMs: 0,
+    });
+    const collected: string[] = [];
+    for await (const line of adapter.streamLogs({ deployId: 'dep_abc' })) {
+      collected.push(line.text);
+    }
+    assert.deepEqual(collected, ['first', 'second', 'third']);
+  });
+
+  it('dedupes entries that overlap across pagination boundaries via (timestamp, id) cursor', async () => {
+    const { fetch } = mockFetch([
+      // Poll 1 logs — two entries
+      res(200, {
+        logs: [
+          { id: 'log-1', timestamp: '2026-04-30T00:00:01.000Z', level: 'info', message: 'first' },
+          { id: 'log-2', timestamp: '2026-04-30T00:00:02.000Z', level: 'info', message: 'second' },
+        ],
+      }),
+      // Poll 1 status — still building
+      res(200, { id: 'dep_abc', status: 'build_in_progress' }),
+      // Poll 2 logs — Render re-emits log-2 (overlap) plus a new log-3.
+      res(200, {
+        logs: [
+          { id: 'log-2', timestamp: '2026-04-30T00:00:02.000Z', level: 'info', message: 'second' },
+          { id: 'log-3', timestamp: '2026-04-30T00:00:03.000Z', level: 'info', message: 'third' },
+        ],
+      }),
+      // Poll 2 status — terminal
+      res(200, { id: 'dep_abc', status: 'live' }),
+      // Final tail drain
+      res(200, { logs: [] }),
+    ]);
+    const adapter = new RenderDeployAdapter({
+      ...baseOpts,
+      fetchImpl: fetch,
+      logPollIntervalMs: 0,
+    });
+    const collected: string[] = [];
+    for await (const line of adapter.streamLogs({ deployId: 'dep_abc' })) {
+      collected.push(line.text);
+    }
+    // The duplicated 'second' entry MUST appear exactly once.
+    assert.deepEqual(collected, ['first', 'second', 'third']);
+  });
+
+  it('stops polling immediately once status reaches live (only one final drain)', async () => {
+    const { fetch, calls } = mockFetch([
+      // Poll 1 logs
+      res(200, { logs: [{ id: 'log-1', timestamp: '2026-04-30T00:00:01.000Z', message: 'one' }] }),
+      // Poll 1 status — terminal on first check
+      res(200, { id: 'dep_abc', status: 'live' }),
+      // Final tail drain (no new entries)
+      res(200, { logs: [] }),
+    ]);
+    const adapter = new RenderDeployAdapter({
+      ...baseOpts,
+      fetchImpl: fetch,
+      logPollIntervalMs: 0,
+    });
+    const collected: string[] = [];
+    for await (const line of adapter.streamLogs({ deployId: 'dep_abc' })) {
+      collected.push(line.text);
+    }
+    assert.deepEqual(collected, ['one']);
+    // Exactly: logs, status, logs (final drain). 3 calls total.
+    assert.equal(calls.length, 3, `expected 3 fetch calls, got ${calls.length}`);
+  });
+
+  it('honors signal.aborted and stops the iterator within one tick', async () => {
+    // First-poll responses are queued; abort fires after the first batch yields.
+    const { fetch } = mockFetch([
+      res(200, { logs: [{ id: 'log-1', timestamp: '2026-04-30T00:00:01.000Z', message: 'one' }] }),
+      res(200, { id: 'dep_abc', status: 'build_in_progress' }),
+      // These shouldn't be reached after abort:
+      res(200, { logs: [{ id: 'log-2', timestamp: '2026-04-30T00:00:02.000Z', message: 'two' }] }),
+      res(200, { id: 'dep_abc', status: 'live' }),
+    ]);
+    const ctrl = new AbortController();
+    const adapter = new RenderDeployAdapter({
+      ...baseOpts,
+      fetchImpl: fetch,
+      logPollIntervalMs: 0,
+    });
+    const collected: string[] = [];
+    for await (const line of adapter.streamLogs({ deployId: 'dep_abc', signal: ctrl.signal })) {
+      collected.push(line.text);
+      // Abort right after the first yielded line — the iterator MUST stop
+      // before producing 'two'.
+      ctrl.abort();
+    }
+    assert.deepEqual(collected, ['one']);
+  });
+
+  it('redacts secrets in yielded log line text', async () => {
+    const { fetch } = mockFetch([
+      res(200, {
+        logs: [
+          {
+            id: 'log-1',
+            timestamp: '2026-04-30T00:00:01.000Z',
+            level: 'info',
+            // Default redaction pattern: \bAKIA[A-Z0-9]{16}\b
+            message: 'env=AKIAIOSFODNN7EXAMPLE booting',
+          },
+        ],
+      }),
+      res(200, { id: 'dep_abc', status: 'live' }),
+      res(200, { logs: [] }),
+    ]);
+    const adapter = new RenderDeployAdapter({
+      ...baseOpts,
+      fetchImpl: fetch,
+      logPollIntervalMs: 0,
+    });
+    const collected: string[] = [];
+    for await (const line of adapter.streamLogs({ deployId: 'dep_abc' })) {
+      collected.push(line.text);
+    }
+    assert.equal(collected.length, 1);
+    assert.ok(
+      !collected[0]!.includes('AKIAIOSFODNN7EXAMPLE'),
+      `raw secret leaked into yielded text: ${collected[0]}`,
+    );
+    assert.match(collected[0]!, /\[REDACTED\]/);
+  });
+});

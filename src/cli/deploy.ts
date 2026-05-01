@@ -145,6 +145,18 @@ export async function runDeploy(opts: RunDeployOptions): Promise<number> {
     let onDeployStart: ((deployId: string) => void) | undefined;
     if (opts.watch) {
       if (typeof deployAdapter.streamLogs === 'function') {
+        // Phase 3 of v5.6 — when an adapter advertises `streamMode: 'polling'`
+        // (currently only Render), surface a one-line stderr notice BEFORE
+        // iteration starts so users understand why their log lines arrive
+        // in batches with short gaps. Adapters with `streamMode: 'websocket'`
+        // (Vercel SSE, Fly WS) or `'none'`/undefined get no notice — their
+        // streaming behavior matches user expectations. Spec: § "Capability
+        // metadata".
+        if (deployAdapter.capabilities?.streamMode === 'polling') {
+          process.stderr.write(
+            `[deploy] note: ${deployAdapter.name} uses 2s log polling — lines may arrive in batches and could include short gaps. See docs/deploy/adapters.md#log-streaming for details.\n`,
+          );
+        }
         streamController = new AbortController();
         const streamFn = deployAdapter.streamLogs.bind(deployAdapter);
         const ctrlSignal = streamController.signal;
