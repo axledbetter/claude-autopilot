@@ -275,10 +275,24 @@ export class RenderDeployAdapter implements DeployAdapter {
       }
       const logsData = (await logsRes.json()) as RenderLogsResponse;
       const lines = Array.isArray(logsData?.logs) ? logsData.logs : [];
+      // Parse first, then sort by (ts, id) ascending before applying the
+      // cursor filter. Render's API does NOT guarantee that same-millisecond
+      // entries arrive in lexicographic id order — without this sort, an
+      // entry with an alphabetically-earlier id arriving AFTER a same-ts
+      // sibling would advance the cursor past it and silently drop it on
+      // the next pass. Caught by Cursor Bugbot on PR #75 (MEDIUM).
+      const parsedBatch: Array<{ ts: number; id: string; level?: string; text: string }> = [];
       for (const entry of lines) {
         if (input.signal?.aborted) return;
         const parsed = parseRenderLogEntry(entry, this.now());
-        if (!parsed) continue;
+        if (parsed) parsedBatch.push(parsed);
+      }
+      parsedBatch.sort((a, b) => {
+        if (a.ts !== b.ts) return a.ts - b.ts;
+        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+      });
+      for (const parsed of parsedBatch) {
+        if (input.signal?.aborted) return;
         // Cursor compare: primary timestamp, secondary id. Strictly greater
         // than previous cursor → yield + advance.
         if (parsed.ts < cursorTs) continue;

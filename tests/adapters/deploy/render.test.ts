@@ -427,4 +427,37 @@ describe('RenderDeployAdapter.streamLogs', () => {
     );
     assert.match(collected[0]!, /\[REDACTED\]/);
   });
+
+  it('handles same-timestamp entries arriving in non-lexicographic id order without dropping any', async () => {
+    // Regression test for Cursor Bugbot MEDIUM (PR #75): the cursor
+    // advances monotonically, so if Render returns three same-ts entries
+    // in [z, a, m] order, naive iteration advances past `z` and silently
+    // drops `a` and `m`. Fix: sort each batch by (ts, id) ascending
+    // BEFORE applying the cursor filter.
+    const { fetch } = mockFetch([
+      res(200, {
+        logs: [
+          // All three at the same timestamp, intentionally out of id order
+          { id: 'log-z', timestamp: '2026-04-30T00:00:01.000Z', message: 'zee' },
+          { id: 'log-a', timestamp: '2026-04-30T00:00:01.000Z', message: 'ay' },
+          { id: 'log-m', timestamp: '2026-04-30T00:00:01.000Z', message: 'em' },
+        ],
+      }),
+      // Status check — terminal so polling exits
+      res(200, { id: 'dep_abc', status: 'live' }),
+      // Final tail drain
+      res(200, { logs: [] }),
+    ]);
+    const adapter = new RenderDeployAdapter({
+      ...baseOpts,
+      fetchImpl: fetch,
+      logPollIntervalMs: 0,
+    });
+    const collected: string[] = [];
+    for await (const line of adapter.streamLogs({ deployId: 'dep_abc' })) {
+      collected.push(line.text);
+    }
+    // All three lines yielded, in lex-id order (the sort guarantee).
+    assert.deepEqual(collected, ['ay', 'em', 'zee']);
+  });
 });
