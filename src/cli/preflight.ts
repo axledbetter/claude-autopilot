@@ -269,6 +269,34 @@ export async function runDoctor(): Promise<DoctorResult> {
     });
   }
 
+  // 10b. Fly.io deploy adapter auth (Phase 6 of v5.6 spec). Mirrors the
+  //      Vercel check above — warn-not-fail when FLY_API_TOKEN is missing
+  //      and the configured adapter is `fly`.
+  if (deployAdapter === 'fly') {
+    const token = process.env.FLY_API_TOKEN ?? envVars['FLY_API_TOKEN'];
+    checks.push({
+      name: 'FLY_API_TOKEN (deploy adapter: fly)',
+      result: token ? 'pass' : 'warn',
+      message: token
+        ? undefined
+        : 'deploy.adapter is "fly" but FLY_API_TOKEN is not set. Generate one at https://fly.io/dashboard/personal/tokens',
+    });
+  }
+
+  // 10c. Render deploy adapter auth (Phase 6 of v5.6 spec). Mirrors the
+  //      Vercel/Fly checks — warn-not-fail when RENDER_API_KEY is missing
+  //      and the configured adapter is `render`.
+  if (deployAdapter === 'render') {
+    const token = process.env.RENDER_API_KEY ?? envVars['RENDER_API_KEY'];
+    checks.push({
+      name: 'RENDER_API_KEY (deploy adapter: render)',
+      result: token ? 'pass' : 'warn',
+      message: token
+        ? undefined
+        : 'deploy.adapter is "render" but RENDER_API_KEY is not set. Generate one at https://dashboard.render.com/u/settings#api-keys',
+    });
+  }
+
   // 11. Superpowers plugin — required for pipeline phases, optional for review-only use
   const missingSkills = findMissingSuperpowersSkills();
   const allSkillsFound = missingSkills.length === 0;
