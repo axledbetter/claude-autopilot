@@ -269,3 +269,189 @@ describe('FlyDeployAdapter capability metadata', () => {
     assert.equal(adapter.capabilities?.nativeRollback, true);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 3 of v5.6 — streamLogs over WebSocket.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Minimal WebSocket stub that mirrors the standard surface used by the
+ * adapter:
+ *   - constructor(url, protocols)
+ *   - addEventListener('message' | 'error' | 'close', listener)
+ *   - removeEventListener(type, listener)
+ *   - close()
+ *
+ * Tests drive it via `emit(type, event)` to deliver synthetic events to the
+ * adapter's pump loop. Each new instance is captured in the shared
+ * `instances[]` array so assertions can inspect what the adapter did.
+ */
+interface FakeWsEvent {
+  data?: string | ArrayBuffer | ArrayBufferView;
+}
+class FakeWebSocket {
+  static instances: FakeWebSocket[] = [];
+  readonly url: string;
+  readonly protocols: string | string[] | undefined;
+  readonly listeners = new Map<string, Set<(ev: FakeWsEvent) => void>>();
+  closed = false;
+  constructor(url: string, protocols?: string | string[]) {
+    this.url = url;
+    this.protocols = protocols;
+    FakeWebSocket.instances.push(this);
+  }
+  addEventListener(type: string, listener: (ev: FakeWsEvent) => void): void {
+    if (!this.listeners.has(type)) this.listeners.set(type, new Set());
+    this.listeners.get(type)!.add(listener);
+  }
+  removeEventListener(type: string, listener: (ev: FakeWsEvent) => void): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+  emit(type: string, ev: FakeWsEvent): void {
+    for (const l of this.listeners.get(type) ?? []) l(ev);
+  }
+  close(): void {
+    this.closed = true;
+    this.emit('close', {});
+  }
+}
+
+function freshFakeWs(): typeof WebSocket {
+  FakeWebSocket.instances = [];
+  return FakeWebSocket as unknown as typeof WebSocket;
+}
+
+describe('FlyDeployAdapter.streamLogs', () => {
+  it('yields lines as the WebSocket emits NDJSON messages', async () => {
+    const wsImpl = freshFakeWs();
+    const adapter = new FlyDeployAdapter({
+      ...baseOpts,
+      fetchImpl: (() => {}) as unknown as typeof fetch,
+      wsImpl,
+      buildLogsWsUrl: () => 'wss://test.invalid/logs',
+    });
+    const iter = adapter.streamLogs({ deployId: 'rel_abc' });
+    // Drive the iterator forward — yield first message after a tick so the
+    // generator has time to hook the listeners.
+    const collected: string[] = [];
+    const consumer = (async () => {
+      for await (const line of iter) {
+        collected.push(line.text);
+        if (collected.length === 2) break;
+      }
+    })();
+    // Wait one microtask so the generator hooks `addEventListener('message')`.
+    await new Promise((r) => setImmediate(r));
+    const ws = FakeWebSocket.instances[0]!;
+    ws.emit('message', { data: JSON.stringify({ timestamp: 100, level: 'info', message: 'first' }) });
+    ws.emit('message', { data: JSON.stringify({ timestamp: 200, level: 'info', message: 'second' }) });
+    await consumer;
+    assert.deepEqual(collected, ['first', 'second']);
+  });
+
+  it('honors signal.aborted and stops the iterator within one tick', async () => {
+    const wsImpl = freshFakeWs();
+    const adapter = new FlyDeployAdapter({
+      ...baseOpts,
+      fetchImpl: (() => {}) as unknown as typeof fetch,
+      wsImpl,
+      buildLogsWsUrl: () => 'wss://test.invalid/logs',
+    });
+    const ctrl = new AbortController();
+    const iter = adapter.streamLogs({ deployId: 'rel_abc', signal: ctrl.signal });
+    const collected: string[] = [];
+    const consumer = (async () => {
+      for await (const line of iter) collected.push(line.text);
+    })();
+    await new Promise((r) => setImmediate(r));
+    const ws = FakeWebSocket.instances[0]!;
+    ws.emit('message', { data: JSON.stringify({ timestamp: 1, level: 'info', message: 'one' }) });
+    // Abort + give the iterator one tick to wind down.
+    ctrl.abort();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    await consumer;
+    // First message may or may not have been delivered depending on tick
+    // ordering — what matters is the iterator stops and never yields after
+    // abort.
+    assert.ok(collected.length <= 1, `expected <=1 line before abort, got ${collected.length}`);
+    assert.equal(ws.closed, true, 'expected socket to be closed on abort');
+  });
+
+  it('reconnects once on disconnect and ends with a warn line referencing buildLogsUrl', async () => {
+    const wsImpl = freshFakeWs();
+    let urlBuilds = 0;
+    const adapter = new FlyDeployAdapter({
+      ...baseOpts,
+      fetchImpl: (() => {}) as unknown as typeof fetch,
+      wsImpl,
+      buildLogsWsUrl: () => {
+        urlBuilds += 1;
+        return 'wss://test.invalid/logs';
+      },
+      sleepImpl: async () => {}, // skip the 1s backoff
+    });
+    const iter = adapter.streamLogs({ deployId: 'rel_abc' });
+    const collected: Array<{ level: string | undefined; text: string }> = [];
+    const consumer = (async () => {
+      for await (const line of iter) {
+        collected.push({ level: line.level, text: line.text });
+      }
+    })();
+    await new Promise((r) => setImmediate(r));
+    // First socket emits one line then closes — adapter should reconnect.
+    const ws1 = FakeWebSocket.instances[0]!;
+    ws1.emit('message', { data: JSON.stringify({ timestamp: 1, level: 'info', message: 'before-close' }) });
+    ws1.close();
+    // Wait several ticks for the reconnect to fire.
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    assert.equal(FakeWebSocket.instances.length, 2, 'expected exactly one reconnect');
+    const ws2 = FakeWebSocket.instances[1]!;
+    ws2.emit('message', { data: JSON.stringify({ timestamp: 2, level: 'info', message: 'after-reconnect' }) });
+    ws2.close();
+    await consumer;
+    // Lines collected: before-close, after-reconnect, then the final warn.
+    assert.equal(collected.length, 3, `expected 3 lines, got ${collected.map((c) => c.text).join(' | ')}`);
+    assert.equal(collected[0]!.text, 'before-close');
+    assert.equal(collected[1]!.text, 'after-reconnect');
+    assert.equal(collected[2]!.level, 'warn');
+    assert.match(collected[2]!.text, /log stream lost/);
+    assert.match(collected[2]!.text, /releases\/rel_abc/);
+    assert.equal(urlBuilds, 2, 'expected url builder called once per connection attempt');
+  });
+
+  it('redacts secrets in yielded log line text', async () => {
+    const wsImpl = freshFakeWs();
+    const adapter = new FlyDeployAdapter({
+      ...baseOpts,
+      fetchImpl: (() => {}) as unknown as typeof fetch,
+      wsImpl,
+      buildLogsWsUrl: () => 'wss://test.invalid/logs',
+    });
+    const iter = adapter.streamLogs({ deployId: 'rel_abc' });
+    const collected: string[] = [];
+    const consumer = (async () => {
+      for await (const line of iter) {
+        collected.push(line.text);
+        if (collected.length === 1) break;
+      }
+    })();
+    await new Promise((r) => setImmediate(r));
+    const ws = FakeWebSocket.instances[0]!;
+    ws.emit('message', {
+      data: JSON.stringify({
+        timestamp: 1,
+        level: 'info',
+        // Default redaction pattern: \bAKIA[A-Z0-9]{16}\b
+        message: 'starting up with key=AKIAIOSFODNN7EXAMPLE in env',
+      }),
+    });
+    await consumer;
+    assert.equal(collected.length, 1);
+    assert.ok(
+      !collected[0]!.includes('AKIAIOSFODNN7EXAMPLE'),
+      `raw secret leaked into yielded text: ${collected[0]}`,
+    );
+    assert.match(collected[0]!, /\[REDACTED\]/);
+  });
+});

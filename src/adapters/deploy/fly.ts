@@ -21,9 +21,11 @@ import type {
   DeployAdapter,
   DeployAdapterCapabilities,
   DeployInput,
+  DeployLogLine,
   DeployResult,
   DeployStatusInput,
   DeployStatusResult,
+  DeployStreamLogsInput,
 } from './types.ts';
 
 const FLY_API_BASE = 'https://api.machines.dev';
@@ -86,6 +88,23 @@ export interface FlyDeployAdapterOptions {
    * from `config.persistence.redactionPatterns` by the CLI; tests omit it.
    */
   redactionPatterns?: readonly string[];
+  /**
+   * Injected WebSocket constructor for `streamLogs` — defaults to Node 22's
+   * built-in `globalThis.WebSocket`. Tests pass a stub that emulates the
+   * standard `addEventListener('message' | 'error' | 'close')` surface.
+   *
+   * Phase 3 of v5.6 — Fly streams build logs over WS with NDJSON-encoded
+   * messages. The adapter never imports a WS library; we rely on Node's
+   * built-in (Node 22+) for production and the injected stub for unit tests.
+   */
+  wsImpl?: typeof WebSocket;
+  /**
+   * Optional override for the Fly log-streaming WebSocket URL builder.
+   * Defaults to the spec's stated path (see comment on `streamLogs` for
+   * the divergence-from-spec note that Phase 7 will reconcile against
+   * captured fixtures). Tests use this to point at a local stub.
+   */
+  buildLogsWsUrl?: (app: string, releaseId: string) => string;
 }
 
 /**
@@ -114,6 +133,8 @@ export class FlyDeployAdapter implements DeployAdapter {
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly now: () => number;
   private readonly redactionPatterns: readonly string[] | undefined;
+  private readonly wsImpl: typeof WebSocket;
+  private readonly buildLogsWsUrlFn: (app: string, releaseId: string) => string;
 
   constructor(opts: FlyDeployAdapterOptions) {
     const token = opts.token ?? process.env.FLY_API_TOKEN;
@@ -145,6 +166,12 @@ export class FlyDeployAdapter implements DeployAdapter {
     this.sleep = opts.sleepImpl ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.now = opts.nowImpl ?? Date.now;
     this.redactionPatterns = opts.redactionPatterns;
+    // Node 22 ships a global `WebSocket`. We don't fall back to a thrown
+    // error here — when a caller invokes `streamLogs` and `wsImpl` is
+    // undefined we'd surface that there. Most production runtimes have
+    // `globalThis.WebSocket` defined; tests inject `wsImpl` directly.
+    this.wsImpl = opts.wsImpl ?? (globalThis.WebSocket as typeof WebSocket);
+    this.buildLogsWsUrlFn = opts.buildLogsWsUrl ?? defaultFlyLogsWsUrl;
   }
 
   async deploy(input: DeployInput): Promise<DeployResult> {
@@ -200,9 +227,140 @@ export class FlyDeployAdapter implements DeployAdapter {
     return { ...result, deployId: input.deployId };
   }
 
+  /**
+   * Phase 3 of v5.6 — subscribe to real-time build logs for a release via
+   * Fly's WebSocket log endpoint.
+   *
+   * Wire shape:
+   * - Connect to `wss://api.machines.dev/v1/apps/{app}/machines/{releaseId}/logs`
+   *   (intent-level URL per the v5.6 spec's "Logs" bullet — exact path will
+   *   be reconciled against captured fixtures in Phase 7; the `wsImpl` and
+   *   `buildLogsWsUrl` injection points keep this overridable until then).
+   * - Each WS message is a single NDJSON line containing one log entry.
+   *   Multiple lines per message are also tolerated (split on `\n`). Malformed
+   *   JSON lines are skipped silently rather than crashing the iterator.
+   * - Auth via `Authorization: Bearer <FLY_API_TOKEN>` is passed through the
+   *   `protocols` argument (Node's built-in WebSocket doesn't accept custom
+   *   `headers` directly the way `ws` does); Fly accepts the token as the
+   *   first protocol value. This is the documented pattern for browsers and
+   *   matches Node 22's WS surface.
+   * - One reconnect with exponential backoff (1s, 2s) on disconnect, then
+   *   yield a final `level: 'warn'` line referencing `buildLogsUrl` and
+   *   finish the iterator.
+   * - `signal.aborted` is honored at every await boundary; the underlying
+   *   socket is closed eagerly.
+   * - Every yielded line's `text` is run through `redactLogLines()` before
+   *   leaving the adapter.
+   */
+  async *streamLogs(input: DeployStreamLogsInput): AsyncGenerator<DeployLogLine> {
+    if (!this.wsImpl) {
+      throw new GuardrailError(
+        'Fly streamLogs requires a WebSocket implementation (Node 22+ ships one as globalThis.WebSocket; tests can inject `wsImpl`)',
+        { code: 'adapter_bug', provider: 'fly' },
+      );
+    }
+    const buildLogsUrl = this.buildLogsUrl(input.deployId);
+    let attempt = 0;
+    const maxAttempts = 2; // initial + one reconnect, per spec
+    while (attempt < maxAttempts) {
+      if (input.signal?.aborted) return;
+      // Re-build the URL each connection attempt — ensures any caller-side
+      // state (counters, freshly-rotated tokens) is sampled per-attempt.
+      const url = this.buildLogsWsUrlFn(this.app, input.deployId);
+      const queue = new AsyncMessageQueue<DeployLogLine | { __end: true; reason?: string }>();
+      let socket: WebSocket;
+      try {
+        // Fly accepts the API token as the first protocol value — see method
+        // doc-comment for why we don't use the `headers` option here.
+        socket = new this.wsImpl(url, [this.token]);
+      } catch (err) {
+        // Constructor threw synchronously (rare — usually for invalid URL).
+        // Treat as a disconnect for retry purposes.
+        if (attempt === maxAttempts - 1) {
+          yield this.redactLine({
+            timestamp: this.now(),
+            level: 'warn',
+            text: `log stream lost — see ${buildLogsUrl} (constructor: ${(err as Error)?.message ?? String(err)})`,
+          });
+          return;
+        }
+        attempt += 1;
+        await this.sleep(1000 * 2 ** (attempt - 1));
+        continue;
+      }
+      const onMessage = (ev: MessageEvent): void => {
+        const data = typeof ev.data === 'string' ? ev.data : safeBufferToString(ev.data);
+        if (!data) return;
+        // NDJSON: one or more newline-separated JSON lines per message.
+        for (const raw of data.split('\n')) {
+          const line = parseFlyLogLine(raw, this.now());
+          if (line) queue.push(line);
+        }
+      };
+      const onError = (_ev: Event): void => {
+        // We let `onClose` drive the reconnect/teardown decision — `error`
+        // is purely informational on the standard WS surface.
+      };
+      const onClose = (_ev: CloseEvent): void => {
+        queue.push({ __end: true });
+      };
+      const abortHandler = (): void => {
+        try { socket.close(); } catch { /* ignore */ }
+        queue.push({ __end: true, reason: 'aborted' });
+      };
+      socket.addEventListener('message', onMessage as EventListener);
+      socket.addEventListener('error', onError as EventListener);
+      socket.addEventListener('close', onClose as EventListener);
+      input.signal?.addEventListener('abort', abortHandler, { once: true });
+      try {
+        // Drain messages until the socket closes or signal aborts.
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          if (input.signal?.aborted) return;
+          const item = await queue.next();
+          if (input.signal?.aborted) return;
+          if (item && '__end' in item) {
+            if (item.reason === 'aborted') return;
+            break; // close → break inner loop, decide reconnect-or-give-up below
+          }
+          if (item) yield this.redactLine(item);
+        }
+      } finally {
+        socket.removeEventListener('message', onMessage as EventListener);
+        socket.removeEventListener('error', onError as EventListener);
+        socket.removeEventListener('close', onClose as EventListener);
+        input.signal?.removeEventListener('abort', abortHandler);
+        try { socket.close(); } catch { /* ignore */ }
+      }
+      // Closed — decide whether to retry.
+      attempt += 1;
+      if (attempt >= maxAttempts) {
+        yield this.redactLine({
+          timestamp: this.now(),
+          level: 'warn',
+          text: `log stream lost — see ${buildLogsUrl}`,
+        });
+        return;
+      }
+      // Exponential backoff: 1s after first close, 2s after second (won't
+      // happen given maxAttempts = 2 today, but kept for future tuning).
+      const backoffMs = 1000 * 2 ** (attempt - 1);
+      await this.sleep(backoffMs);
+      if (input.signal?.aborted) return;
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // private helpers
   // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Apply the adapter's redaction patterns to a log line's `text` field.
+   * Pure helper — keeps the streamLogs loop readable.
+   */
+  private redactLine(line: DeployLogLine): DeployLogLine {
+    return { ...line, text: redactLogLines(line.text, this.redactionPatterns) };
+  }
 
   private async pollUntilTerminal(
     releaseId: string,
@@ -385,4 +543,103 @@ function readFlyRequestId(res: Response): string | null {
   const headers = (res as { headers?: { get?: (k: string) => string | null } }).headers;
   if (!headers || typeof headers.get !== 'function') return null;
   return headers.get('Fly-Request-Id') ?? headers.get('fly-request-id') ?? null;
+}
+
+/**
+ * Default WebSocket URL builder for Fly log streaming.
+ *
+ * The URL shape below is intent-level per the v5.6 spec § "Fly.io adapter →
+ * Logs":
+ *
+ *     wss://api.machines.dev/v1/apps/{app}/machines/{machineId}/logs
+ *
+ * Phase 7 of v5.6 reconciles this against captured fixtures from a real
+ * Fly account. If the published path differs (e.g. `/releases/{id}/logs` or
+ * a different host), we'll update this builder there. Until then, callers
+ * who hit a divergent path can pass `buildLogsWsUrl` to override.
+ *
+ * Note: we treat the `deployId` (release id) as the machine id for now —
+ * Fly's deploy → release → machine mapping is not 1:1 in all cases, and
+ * Phase 7 will need to either look up the machine list before subscribing
+ * or use a different log endpoint that takes a release id directly.
+ */
+function defaultFlyLogsWsUrl(app: string, releaseId: string): string {
+  // wss base mirrors FLY_API_BASE but with a `wss://` scheme.
+  return `wss://api.machines.dev/v1/apps/${encodeURIComponent(app)}/machines/${encodeURIComponent(releaseId)}/logs`;
+}
+
+/**
+ * Best-effort decoder for the binary `data` field of a `MessageEvent`.
+ * Fly normally sends UTF-8 text; tests may pass a Buffer or Uint8Array.
+ */
+function safeBufferToString(data: unknown): string {
+  if (data == null) return '';
+  if (typeof data === 'string') return data;
+  if (data instanceof ArrayBuffer) return new TextDecoder('utf-8').decode(data);
+  if (ArrayBuffer.isView(data)) {
+    const view = data as { buffer: ArrayBuffer; byteOffset: number; byteLength: number };
+    return new TextDecoder('utf-8').decode(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
+  }
+  if (typeof (data as { toString?: () => string }).toString === 'function') {
+    return (data as { toString: () => string }).toString();
+  }
+  return '';
+}
+
+/**
+ * Parse a single NDJSON log line from Fly's WS stream into a `DeployLogLine`.
+ *
+ * Fly wraps log entries in objects whose canonical shape is roughly
+ * `{ timestamp: <epoch_ms>, level: 'info' | 'warn' | 'error', message: '<text>' }`.
+ * We accept both `message` and `text` (older Fly clients use the latter).
+ * Lines that fail to JSON-parse OR that have no usable text return `null`,
+ * which the caller drops silently — never crash a long-running stream.
+ */
+function parseFlyLogLine(raw: string, fallbackTs: number): DeployLogLine | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    // Not all lines are JSON — Fly occasionally emits raw text (e.g. boot
+    // banners). Surface those as plain stdout entries.
+    return { timestamp: fallbackTs, level: 'info', text: trimmed };
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const obj = parsed as { timestamp?: number; ts?: number; level?: string; message?: string; text?: string };
+  const text = typeof obj.message === 'string' ? obj.message : typeof obj.text === 'string' ? obj.text : '';
+  if (!text) return null;
+  const ts = typeof obj.timestamp === 'number'
+    ? obj.timestamp
+    : typeof obj.ts === 'number' ? obj.ts : fallbackTs;
+  return { timestamp: ts, level: obj.level, text };
+}
+
+/**
+ * Tiny FIFO queue with an awaitable `next()`. Backs the WS event-pump → async
+ * generator bridge in `streamLogs`. Resolves promises in push order; if the
+ * queue is empty, `next()` returns a promise that resolves on the next push.
+ */
+class AsyncMessageQueue<T> {
+  private readonly buffer: T[] = [];
+  private waiter: ((v: T) => void) | null = null;
+
+  push(item: T): void {
+    if (this.waiter) {
+      const w = this.waiter;
+      this.waiter = null;
+      w(item);
+      return;
+    }
+    this.buffer.push(item);
+  }
+
+  next(): Promise<T> {
+    const head = this.buffer.shift();
+    if (head !== undefined) return Promise.resolve(head);
+    return new Promise<T>((resolve) => {
+      this.waiter = resolve;
+    });
+  }
 }
