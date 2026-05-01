@@ -12,17 +12,17 @@
 // hit the real Render API. The endpoint shapes below mirror the Render REST
 // API as documented at https://api-docs.render.com/.
 //
-// Design note (Phase 5 refactor pending): the `fetchWithRetry` /
-// `safeReadBody` / error-mapping helpers are intentionally duplicated from
-// `fly.ts`. Bugbot flagged this on Phase 1; we deliberately deferred a
-// shared HTTP-helper module to Phase 5 once both adapters exist and we can
-// see exactly which seams are common vs adapter-specific. Touching the
-// shared layer mid-Phase-2 risks destabilizing Phase 1 and is out of scope.
+// Phase 5 (v5.6) consolidated `fetchWithRetry` and `safeReadBody` into the
+// shared `_http.ts` module — see that file's header for the rationale.
+// Error-mapping (`assertOkOrThrow`) stays per-adapter because each one
+// composes a different error message and reads a different request-id
+// header.
 //
 // Spec: docs/specs/v5.6-fly-render-adapters.md
 
 import { GuardrailError } from '../../core/errors.ts';
 import { redactLogLines } from '../../core/logging/redaction.ts';
+import { fetchWithRetry, safeReadBody } from './_http.ts';
 import type {
   DeployAdapter,
   DeployAdapterCapabilities,
@@ -165,12 +165,17 @@ export class RenderDeployAdapter implements DeployAdapter {
     // simulated-rollback path that re-deploys a previous commit.
     if (input.commitSha) body.commitId = input.commitSha;
 
-    const res = await this.fetchWithRetry(url, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify(body),
-      signal: input.signal,
-    });
+    const res = await fetchWithRetry(
+      this.fetchImpl,
+      url,
+      {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify(body),
+        signal: input.signal,
+      },
+      { sleepImpl: this.sleep, provider: 'render' },
+    );
 
     await this.assertOkOrThrow(res, 'create deploy');
     const created = (await res.json()) as RenderDeployResponse;
@@ -197,11 +202,16 @@ export class RenderDeployAdapter implements DeployAdapter {
     // shorthand /v1/deploys/{id} does NOT exist. Caught by Cursor Bugbot
     // on PR #73 (HIGH).
     const url = `${RENDER_API_BASE}/v1/services/${encodeURIComponent(this.serviceId)}/deploys/${encodeURIComponent(input.deployId)}`;
-    const res = await this.fetchWithRetry(url, {
-      method: 'GET',
-      headers: this.headers(),
-      signal: input.signal,
-    });
+    const res = await fetchWithRetry(
+      this.fetchImpl,
+      url,
+      {
+        method: 'GET',
+        headers: this.headers(),
+        signal: input.signal,
+      },
+      { sleepImpl: this.sleep, provider: 'render' },
+    );
     await this.assertOkOrThrow(res, 'get deploy');
     const data = (await res.json()) as RenderDeployResponse;
     const result = this.shapeResult(input.deployId, data, data.status, this.now() - start);
@@ -258,11 +268,16 @@ export class RenderDeployAdapter implements DeployAdapter {
       // 1. Fetch the next batch of log lines.
       let logsRes: Response;
       try {
-        logsRes = await this.fetchWithRetry(logsUrl, {
-          method: 'GET',
-          headers: this.headers(),
-          signal: input.signal,
-        });
+        logsRes = await fetchWithRetry(
+          this.fetchImpl,
+          logsUrl,
+          {
+            method: 'GET',
+            headers: this.headers(),
+            signal: input.signal,
+          },
+          { sleepImpl: this.sleep, provider: 'render' },
+        );
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') return;
         throw err;
@@ -310,11 +325,16 @@ export class RenderDeployAdapter implements DeployAdapter {
       // 3. Status check — same service-scoped endpoint as `pollUntilTerminal`.
       let statusRes: Response;
       try {
-        statusRes = await this.fetchWithRetry(statusUrl, {
-          method: 'GET',
-          headers: this.headers(),
-          signal: input.signal,
-        });
+        statusRes = await fetchWithRetry(
+          this.fetchImpl,
+          statusUrl,
+          {
+            method: 'GET',
+            headers: this.headers(),
+            signal: input.signal,
+          },
+          { sleepImpl: this.sleep, provider: 'render' },
+        );
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') return;
         throw err;
@@ -440,12 +460,17 @@ export class RenderDeployAdapter implements DeployAdapter {
       clearCache: this.clearCache,
       commitId,
     };
-    const res = await this.fetchWithRetry(url, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify(body),
-      signal,
-    });
+    const res = await fetchWithRetry(
+      this.fetchImpl,
+      url,
+      {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify(body),
+        signal,
+      },
+      { sleepImpl: this.sleep, provider: 'render' },
+    );
     await this.assertOkOrThrow(res, 'create deploy (rollback)');
     const created = (await res.json()) as RenderDeployResponse;
     if (!created.id) {
@@ -467,11 +492,16 @@ export class RenderDeployAdapter implements DeployAdapter {
     const url =
       `${RENDER_API_BASE}/v1/services/${encodeURIComponent(this.serviceId)}/deploys`
       + `?limit=${encodeURIComponent(String(limit))}`;
-    const res = await this.fetchWithRetry(url, {
-      method: 'GET',
-      headers: this.headers(),
-      signal,
-    });
+    const res = await fetchWithRetry(
+      this.fetchImpl,
+      url,
+      {
+        method: 'GET',
+        headers: this.headers(),
+        signal,
+      },
+      { sleepImpl: this.sleep, provider: 'render' },
+    );
     await this.assertOkOrThrow(res, 'list deploys');
     const data = (await res.json()) as RenderDeploysListResponse | RenderDeployResponse[];
     // Render historically returned a top-level array on /deploys; newer
@@ -524,11 +554,16 @@ export class RenderDeployAdapter implements DeployAdapter {
           ),
         };
       }
-      const res = await this.fetchWithRetry(url, {
-        method: 'GET',
-        headers: this.headers(),
-        signal,
-      });
+      const res = await fetchWithRetry(
+        this.fetchImpl,
+        url,
+        {
+          method: 'GET',
+          headers: this.headers(),
+          signal,
+        },
+        { sleepImpl: this.sleep, provider: 'render' },
+      );
       await this.assertOkOrThrow(res, 'poll deploy');
       const data = (await res.json()) as RenderDeployResponse;
       const status = data.status;
@@ -642,47 +677,6 @@ export class RenderDeployAdapter implements DeployAdapter {
     );
   }
 
-  private async fetchWithRetry(
-    url: string,
-    init: RequestInit,
-    attempts = 3,
-    baseMs = 500,
-  ): Promise<Response> {
-    let lastErr: unknown;
-    for (let i = 0; i < attempts; i++) {
-      try {
-        const res = await this.fetchImpl(url, init);
-        // 5xx is transient — retry. 4xx is the caller's problem — fail fast
-        // so the error mapper above can classify it precisely.
-        if (res.status >= 500 && res.status < 600 && i < attempts - 1) {
-          lastErr = new Error(`HTTP ${res.status}`);
-          await this.sleep(baseMs * 2 ** i);
-          continue;
-        }
-        return res;
-      } catch (err) {
-        lastErr = err;
-        // AbortError is intentional cancellation — surface it directly without retry.
-        if (err instanceof Error && err.name === 'AbortError') throw err;
-        if (i < attempts - 1) {
-          await this.sleep(baseMs * 2 ** i);
-          continue;
-        }
-      }
-    }
-    throw new GuardrailError(
-      `Render API unreachable after ${attempts} attempts: ${(lastErr as Error)?.message ?? String(lastErr)}`,
-      { code: 'transient_network', provider: 'render' },
-    );
-  }
-}
-
-async function safeReadBody(res: Response): Promise<string> {
-  try {
-    return (await res.text()).slice(0, 500);
-  } catch {
-    return '<no body>';
-  }
 }
 
 /**

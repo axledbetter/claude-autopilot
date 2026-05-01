@@ -17,6 +17,7 @@
 
 import { GuardrailError } from '../../core/errors.ts';
 import { redactLogLines } from '../../core/logging/redaction.ts';
+import { fetchWithRetry, safeReadBody } from './_http.ts';
 import type {
   DeployAdapter,
   DeployAdapterCapabilities,
@@ -198,12 +199,17 @@ export class FlyDeployAdapter implements DeployAdapter {
     if (input.commitSha) body.commit_sha = input.commitSha;
     if (input.ref) body.ref = input.ref;
 
-    const res = await this.fetchWithRetry(url, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify(body),
-      signal: input.signal,
-    });
+    const res = await fetchWithRetry(
+      this.fetchImpl,
+      url,
+      {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify(body),
+        signal: input.signal,
+      },
+      { sleepImpl: this.sleep, provider: 'fly' },
+    );
 
     await this.assertOkOrThrow(res, 'create release');
     const created = (await res.json()) as FlyReleaseResponse;
@@ -228,11 +234,16 @@ export class FlyDeployAdapter implements DeployAdapter {
     const start = this.now();
     const url =
       `${FLY_API_BASE}/v1/apps/${encodeURIComponent(this.app)}/releases/${encodeURIComponent(input.deployId)}`;
-    const res = await this.fetchWithRetry(url, {
-      method: 'GET',
-      headers: this.headers(),
-      signal: input.signal,
-    });
+    const res = await fetchWithRetry(
+      this.fetchImpl,
+      url,
+      {
+        method: 'GET',
+        headers: this.headers(),
+        signal: input.signal,
+      },
+      { sleepImpl: this.sleep, provider: 'fly' },
+    );
     await this.assertOkOrThrow(res, 'get release');
     const data = (await res.json()) as FlyReleaseResponse;
     const state = data.state ?? data.status;
@@ -417,12 +428,17 @@ export class FlyDeployAdapter implements DeployAdapter {
       `${FLY_API_BASE}/v1/apps/${encodeURIComponent(this.app)}/releases/${encodeURIComponent(nativeTargetId)}/rollback`;
     let nativeRes: Response;
     try {
-      nativeRes = await this.fetchWithRetry(nativeUrl, {
-        method: 'POST',
-        headers: this.headers(),
-        body: '{}',
-        signal: input.signal,
-      });
+      nativeRes = await fetchWithRetry(
+        this.fetchImpl,
+        nativeUrl,
+        {
+          method: 'POST',
+          headers: this.headers(),
+          body: '{}',
+          signal: input.signal,
+        },
+        { sleepImpl: this.sleep, provider: 'fly' },
+      );
     } catch (err) {
       // Network exhaustion is already mapped to GuardrailError(transient_network)
       // by fetchWithRetry — rethrow.
@@ -534,12 +550,17 @@ export class FlyDeployAdapter implements DeployAdapter {
     const url = `${FLY_API_BASE}/v1/apps/${encodeURIComponent(this.app)}/releases`;
     const body: Record<string, unknown> = { image };
     if (this.region) body.region = this.region;
-    const res = await this.fetchWithRetry(url, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify(body),
-      signal,
-    });
+    const res = await fetchWithRetry(
+      this.fetchImpl,
+      url,
+      {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify(body),
+        signal,
+      },
+      { sleepImpl: this.sleep, provider: 'fly' },
+    );
     await this.assertOkOrThrow(res, 'create release (rollback)');
     const created = (await res.json()) as FlyReleaseResponse;
     if (!created.id) {
@@ -560,11 +581,16 @@ export class FlyDeployAdapter implements DeployAdapter {
   async listReleases(limit = 10, signal?: AbortSignal): Promise<FlyReleaseResponse[]> {
     const url =
       `${FLY_API_BASE}/v1/apps/${encodeURIComponent(this.app)}/releases?limit=${encodeURIComponent(String(limit))}`;
-    const res = await this.fetchWithRetry(url, {
-      method: 'GET',
-      headers: this.headers(),
-      signal,
-    });
+    const res = await fetchWithRetry(
+      this.fetchImpl,
+      url,
+      {
+        method: 'GET',
+        headers: this.headers(),
+        signal,
+      },
+      { sleepImpl: this.sleep, provider: 'fly' },
+    );
     await this.assertOkOrThrow(res, 'list releases');
     const data = (await res.json()) as FlyReleasesListResponse | FlyReleaseResponse[];
     // Be defensive — Fly has shipped both list-envelope and bare-array
@@ -640,11 +666,16 @@ export class FlyDeployAdapter implements DeployAdapter {
           ),
         };
       }
-      const res = await this.fetchWithRetry(url, {
-        method: 'GET',
-        headers: this.headers(),
-        signal,
-      });
+      const res = await fetchWithRetry(
+        this.fetchImpl,
+        url,
+        {
+          method: 'GET',
+          headers: this.headers(),
+          signal,
+        },
+        { sleepImpl: this.sleep, provider: 'fly' },
+      );
       await this.assertOkOrThrow(res, 'poll release');
       const data = (await res.json()) as FlyReleaseResponse;
       const state = data.state ?? data.status;
@@ -743,47 +774,6 @@ export class FlyDeployAdapter implements DeployAdapter {
     );
   }
 
-  private async fetchWithRetry(
-    url: string,
-    init: RequestInit,
-    attempts = 3,
-    baseMs = 500,
-  ): Promise<Response> {
-    let lastErr: unknown;
-    for (let i = 0; i < attempts; i++) {
-      try {
-        const res = await this.fetchImpl(url, init);
-        // 5xx is transient — retry. 4xx is the caller's problem — fail fast
-        // so the error mapper above can classify it precisely.
-        if (res.status >= 500 && res.status < 600 && i < attempts - 1) {
-          lastErr = new Error(`HTTP ${res.status}`);
-          await this.sleep(baseMs * 2 ** i);
-          continue;
-        }
-        return res;
-      } catch (err) {
-        lastErr = err;
-        // AbortError is intentional cancellation — surface it directly without retry.
-        if (err instanceof Error && err.name === 'AbortError') throw err;
-        if (i < attempts - 1) {
-          await this.sleep(baseMs * 2 ** i);
-          continue;
-        }
-      }
-    }
-    throw new GuardrailError(
-      `Fly API unreachable after ${attempts} attempts: ${(lastErr as Error)?.message ?? String(lastErr)}`,
-      { code: 'transient_network', provider: 'fly' },
-    );
-  }
-}
-
-async function safeReadBody(res: Response): Promise<string> {
-  try {
-    return (await res.text()).slice(0, 500);
-  } catch {
-    return '<no body>';
-  }
 }
 
 /**
