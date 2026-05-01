@@ -48,9 +48,19 @@ export interface DeployInput {
  * before the platform reached a terminal state — the deploy may still finish
  * later. The adapter does NOT auto-resume in Phase 1; the caller can re-poll
  * via `status({ deployId })`.
+ *
+ * `fail_rolled_back` and `fail_rollback_failed` (Phase 4 of v5.6) describe
+ * the bounded auto-rollback outcomes. They both mean "the deploy itself
+ * succeeded but the post-deploy health check failed"; the suffix indicates
+ * whether the subsequent rollback attempt succeeded (`_rolled_back`) or
+ * failed (`_rollback_failed`). Adapters never set these directly — they are
+ * stamped onto the `DeployResult` by the CLI orchestration in
+ * `src/cli/deploy.ts` after `rollback()` returns. Plain `fail` continues to
+ * cover deploy-itself failures and the "no rollback configured / not
+ * supported" branches so existing consumers keep working.
  */
 export interface DeployResult {
-  status: 'pass' | 'fail' | 'in-progress';
+  status: 'pass' | 'fail' | 'in-progress' | 'fail_rolled_back' | 'fail_rollback_failed';
   /** Adapter-native deploy ID. Vercel uses `dpl_xxx`. Empty for generic when stdout has no extractable URL. */
   deployId?: string;
   /** Public URL of the deploy (e.g. `https://my-app-abc.vercel.app`). */

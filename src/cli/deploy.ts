@@ -214,12 +214,20 @@ export async function runDeploy(opts: RunDeployOptions): Promise<number> {
           const wantRollback = triggers.includes('healthCheckFailure');
           if (wantRollback) {
             if (typeof deployAdapter.rollback === 'function') {
+              // BOUND: exactly one auto-rollback per deploy attempt (spec §
+              // "Health-check policy" → "After rollback completes (success
+              // or failure), the adapter returns; no second rollback
+              // attempt"). The single `rollback({})` call below is the only
+              // place this path is invoked; we do NOT loop. Result status
+              // becomes one of the two new terminal values:
+              //   - `fail_rolled_back` — rollback returned `pass`
+              //   - `fail_rollback_failed` — rollback returned non-pass OR threw
               try {
                 const rb = await deployAdapter.rollback({});
                 if (rb.status === 'pass') {
                   result = {
                     ...result,
-                    status: 'fail',
+                    status: 'fail_rolled_back',
                     rolledBackTo: rb.rolledBackTo ?? rb.deployId,
                     output: `Deploy passed; health check failed (${healthOutcome.lastError}); auto-rolled back to ${rb.rolledBackTo ?? rb.deployId ?? '<unknown>'}.`,
                   };
@@ -227,7 +235,7 @@ export async function runDeploy(opts: RunDeployOptions): Promise<number> {
                 } else {
                   result = {
                     ...result,
-                    status: 'fail',
+                    status: 'fail_rollback_failed',
                     output: `Deploy passed; health check failed; auto-rollback ALSO failed: ${rb.output ?? '<no output>'}`,
                   };
                   printAutoRollbackFailed(rb.output ?? 'rollback returned non-pass');
@@ -236,7 +244,7 @@ export async function runDeploy(opts: RunDeployOptions): Promise<number> {
                 const msg = (err as Error)?.message ?? String(err);
                 result = {
                   ...result,
-                  status: 'fail',
+                  status: 'fail_rollback_failed',
                   output: `Deploy passed; health check failed; auto-rollback ERRORED: ${msg}`,
                 };
                 printAutoRollbackFailed(msg);
@@ -466,7 +474,7 @@ function formatAge(createdAtMs: number): string {
 /**
  * Outcome of the post-deploy health check.
  * - `pass`: at least one attempt returned 2xx within the retry budget.
- * - `fail`: all 3 attempts failed (non-2xx, network error, or per-attempt timeout).
+ * - `fail`: all attempts failed (non-2xx, network error, or per-attempt timeout).
  * - `skipped`: no `healthCheckUrl` resolvable (no config + no deployUrl).
  */
 type HealthCheckOutcome =
@@ -480,15 +488,23 @@ interface HealthCheckOptions {
   sleepImpl: (ms: number) => Promise<void>;
 }
 
+/** Per v5.6 spec § "Health-check policy" — cap retries at 5× with 6s backoff. */
+const HEALTH_CHECK_MAX_ATTEMPTS = 5;
+const HEALTH_CHECK_BACKOFF_MS = 6000;
+
 /**
- * Probe a URL up to 3 times with 2s backoff between attempts. 2xx → pass.
+ * Probe a URL up to {@link HEALTH_CHECK_MAX_ATTEMPTS} times with
+ * {@link HEALTH_CHECK_BACKOFF_MS} backoff between attempts. 2xx → pass.
  * Per-attempt timeout is 10s. Network errors are treated as failures and
  * retried.
+ *
+ * Total wall-clock budget: ~30s (5 attempts × 6s backoff between, minus
+ * the trailing skip — matches the spec's "max ~30s window").
  */
 async function runHealthCheck(opts: HealthCheckOptions): Promise<HealthCheckOutcome> {
   const { url, fetchImpl, sleepImpl } = opts;
   let lastError = '';
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  for (let attempt = 1; attempt <= HEALTH_CHECK_MAX_ATTEMPTS; attempt += 1) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 10_000);
     try {
@@ -502,7 +518,7 @@ async function runHealthCheck(opts: HealthCheckOptions): Promise<HealthCheckOutc
       clearTimeout(timer);
       lastError = (err as Error)?.message ?? String(err);
     }
-    if (attempt < 3) await sleepImpl(2000);
+    if (attempt < HEALTH_CHECK_MAX_ATTEMPTS) await sleepImpl(HEALTH_CHECK_BACKOFF_MS);
   }
   return { status: 'fail', url, lastError };
 }
@@ -529,7 +545,7 @@ function printAutoRollback(
     `${yellow}🔄 [deploy] auto-rolled-back-to=${target} via=${adapter} health-check-url=${hc.url}${reset}`,
   );
   console.log(
-    `${dim}   reason: health check failed 3x against ${hc.url} (${hc.lastError})${reset}`,
+    `${dim}   reason: health check failed ${HEALTH_CHECK_MAX_ATTEMPTS}x against ${hc.url} (${hc.lastError})${reset}`,
   );
   if (rb.deployUrl) {
     console.log(`${dim}   current: ${rb.deployUrl}${reset}`);
