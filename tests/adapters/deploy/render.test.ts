@@ -461,3 +461,111 @@ describe('RenderDeployAdapter.streamLogs', () => {
     assert.deepEqual(collected, ['ay', 'em', 'zee']);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 4 of v5.6 — simulated rollback (Render has no native verb).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('RenderDeployAdapter.rollback — simulated re-deploy', () => {
+  it('looks up previous live deploy and re-deploys its commit when `to` is omitted', async () => {
+    // Sequence:
+    //   1. GET /deploys?limit=20 — list, head + previous live
+    //   2. POST /deploys with commitId=sha_prev → new deploy
+    //   3. GET /deploys/dep_new (poll) → live
+    const { fetch, calls } = mockFetch([
+      res(200, {
+        deploys: [
+          { id: 'dep_head', commit: { id: 'sha_head' }, status: 'live' },
+          { id: 'dep_previous', commit: { id: 'sha_prev' }, status: 'live' },
+          { id: 'dep_older', commit: { id: 'sha_old' }, status: 'build_failed' },
+        ],
+      }),
+      res(201, { id: 'dep_new', commit: { id: 'sha_prev' }, status: 'created' }),
+      res(200, { id: 'dep_new', commit: { id: 'sha_prev' }, status: 'live' }),
+    ]);
+    const adapter = new RenderDeployAdapter({ ...baseOpts, fetchImpl: fetch });
+    const result = await adapter.rollback!({});
+    assert.equal(result.status, 'pass');
+    // The prior deploy ID is the rollback target (the deploy we re-issued
+    // the commit of); deployId is the new deploy Render created.
+    assert.equal(result.rolledBackTo, 'dep_previous');
+    assert.equal(result.deployId, 'dep_new');
+    assert.ok(result.output);
+    assert.match(result.output!, /simulated/i);
+    assert.match(result.output!, /sha_prev/);
+    assert.match(result.output!, /dep_previous/);
+    assert.equal(calls.length, 3);
+    assert.match(calls[0]!.url, /\/v1\/services\/srv-abc123\/deploys\?limit=20$/);
+    assert.equal(calls[1]!.init?.method, 'POST');
+    assert.match(calls[1]!.url, /\/v1\/services\/srv-abc123\/deploys$/);
+    const body = JSON.parse(calls[1]!.init!.body as string);
+    assert.equal(body.commitId, 'sha_prev');
+  });
+
+  it('throws no_previous_deploy when no prior live deploy exists', async () => {
+    // Only one live deploy (the head) and a build_failed entry — no
+    // valid rollback target.
+    const { fetch } = mockFetch([
+      res(200, {
+        deploys: [
+          { id: 'dep_head', commit: { id: 'sha_head' }, status: 'live' },
+          { id: 'dep_failed', commit: { id: 'sha_f' }, status: 'build_failed' },
+        ],
+      }),
+    ]);
+    const adapter = new RenderDeployAdapter({ ...baseOpts, fetchImpl: fetch });
+    await assert.rejects(
+      adapter.rollback!({}),
+      (err: unknown) => {
+        if (!(err instanceof GuardrailError)) return false;
+        assert.equal(err.code, 'no_previous_deploy');
+        assert.equal(err.provider, 'render');
+        return true;
+      },
+    );
+  });
+
+  it('input.to overrides the lookup — uses that deploy\'s commit', async () => {
+    const { fetch, calls } = mockFetch([
+      // List call still happens — `to` is the lookup key for the commit.
+      res(200, {
+        deploys: [
+          { id: 'dep_head', commit: { id: 'sha_head' }, status: 'live' },
+          { id: 'dep_pin', commit: { id: 'sha_pin' }, status: 'live' },
+          { id: 'dep_other', commit: { id: 'sha_other' }, status: 'live' },
+        ],
+      }),
+      // POST commitId=sha_pin
+      res(201, { id: 'dep_new4', commit: { id: 'sha_pin' }, status: 'created' }),
+      res(200, { id: 'dep_new4', commit: { id: 'sha_pin' }, status: 'live' }),
+    ]);
+    const adapter = new RenderDeployAdapter({ ...baseOpts, fetchImpl: fetch });
+    const result = await adapter.rollback!({ to: 'dep_pin' });
+    assert.equal(result.status, 'pass');
+    assert.equal(result.rolledBackTo, 'dep_pin');
+    const body = JSON.parse(calls[1]!.init!.body as string);
+    assert.equal(body.commitId, 'sha_pin');
+  });
+
+  it('returned DeployResult.rolledBackTo points to the prior deploy ID, not the new one', async () => {
+    // Pinned regression — the `rolledBackTo` field must be the lookup-key
+    // deploy ID, NOT the freshly-issued one. Otherwise PR comments lose
+    // the "rolled back to commit X (new deploy ID Y)" framing the spec
+    // calls for.
+    const { fetch } = mockFetch([
+      res(200, {
+        deploys: [
+          { id: 'dep_head', commit: { id: 'sha_head' }, status: 'live' },
+          { id: 'dep_target', commit: { id: 'sha_target' }, status: 'live' },
+        ],
+      }),
+      res(201, { id: 'dep_brand_new', commit: { id: 'sha_target' }, status: 'created' }),
+      res(200, { id: 'dep_brand_new', commit: { id: 'sha_target' }, status: 'live' }),
+    ]);
+    const adapter = new RenderDeployAdapter({ ...baseOpts, fetchImpl: fetch });
+    const result = await adapter.rollback!({});
+    assert.equal(result.rolledBackTo, 'dep_target', 'rolledBackTo is the prior deploy id');
+    assert.equal(result.deployId, 'dep_brand_new', 'deployId is the freshly-issued one');
+    assert.notEqual(result.rolledBackTo, result.deployId);
+  });
+});

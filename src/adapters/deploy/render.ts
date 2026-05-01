@@ -29,6 +29,7 @@ import type {
   DeployInput,
   DeployLogLine,
   DeployResult,
+  DeployRollbackInput,
   DeployStatusInput,
   DeployStatusResult,
   DeployStreamLogsInput,
@@ -340,6 +341,157 @@ export class RenderDeployAdapter implements DeployAdapter {
     }
   }
 
+  /**
+   * Phase 4 of v5.6 — simulated rollback for Render.
+   *
+   * Render has no native rollback verb, so we simulate by re-deploying a
+   * prior commit per spec § "Render adapter → Rollback":
+   *
+   * - List recent deploys: `GET /v1/services/{serviceId}/deploys?limit=20`.
+   * - Select the rollback target:
+   *   - When `input.to` is set: look up that specific deploy in the list,
+   *     read its `commit.id`, and re-deploy that commit. Deploy ID becomes
+   *     the lookup key.
+   *   - When `input.to` is unset: walk the list newest-first and pick the
+   *     most recent deploy with `status === 'live'` *that is not the head*.
+   *     The intent is "go back one" — the head is the deploy we'd be
+   *     rolling back from.
+   * - Re-deploy via `POST /v1/services/{serviceId}/deploys` with `commitId`,
+   *   then poll until terminal — re-uses the existing `deploy()`-style
+   *   machinery via `redeployCommit()`.
+   *
+   * Throws `GuardrailError({ code: 'no_previous_deploy', provider: 'render' })`
+   * when no usable prior `live` deploy exists. Throws `not_found` when
+   * `input.to` references a deploy that isn't in the recent-20 window.
+   *
+   * Returns a `DeployResult` with:
+   * - `deployId` — the *new* deploy ID Render returned for the re-deploy.
+   * - `rolledBackTo` — the *prior* deploy ID we rolled back to.
+   * - `output` — human-readable summary of the swap (commits + IDs), redacted.
+   */
+  async rollback(input: DeployRollbackInput): Promise<DeployResult> {
+    const start = this.now();
+    const deploys = await this.listDeploys(20, input.signal);
+
+    let priorDeployId: string | undefined;
+    let priorCommitId: string | undefined;
+    if (input.to) {
+      const match = deploys.find((d) => d.id === input.to);
+      if (!match) {
+        throw new GuardrailError(
+          `Render deploy "${input.to}" not found in the last 20 deploys for service "${this.serviceId}" — cannot rollback`,
+          { code: 'not_found', provider: 'render', step: 'rollback lookup' },
+        );
+      }
+      if (!match.commit?.id) {
+        throw new GuardrailError(
+          `Render deploy "${input.to}" has no recorded commit id — cannot simulate rollback`,
+          { code: 'invalid_config', provider: 'render', step: 'rollback lookup' },
+        );
+      }
+      priorDeployId = match.id;
+      priorCommitId = match.commit.id;
+    } else {
+      // Walk newest-first. The first `live` deploy is the current head — we
+      // skip it and return the next. This matches the "go back one"
+      // semantics from the spec: the head is the deploy we're rolling
+      // BACK FROM, never the rollback target.
+      let sawHead = false;
+      for (const d of deploys) {
+        if (d.status !== 'live') continue;
+        if (!sawHead) {
+          sawHead = true;
+          continue;
+        }
+        if (!d.commit?.id) continue;
+        priorDeployId = d.id;
+        priorCommitId = d.commit.id;
+        break;
+      }
+      if (!priorDeployId || !priorCommitId) {
+        throw new GuardrailError(
+          `No previous live Render deploy with a commit id found for service "${this.serviceId}" to roll back to`,
+          { code: 'no_previous_deploy', provider: 'render' },
+        );
+      }
+    }
+
+    const redeployed = await this.redeployCommit(priorCommitId, input.signal);
+    const rawOutput = `Render rollback simulated by re-deploying commit "${priorCommitId}" (prior deploy ${priorDeployId}) → new deploy ${redeployed.deployId ?? '<unknown>'}`;
+    return {
+      ...redeployed,
+      // The prior deploy ID is the rollback target; deployId stays the
+      // newly-created deploy from the re-deploy POST. The CLI surfaces
+      // both in the PR-comment row.
+      rolledBackTo: priorDeployId,
+      durationMs: this.now() - start,
+      output: redactLogLines(rawOutput, this.redactionPatterns),
+    };
+  }
+
+  /**
+   * Private helper — re-uses the deploy() POST + poll machinery to redeploy
+   * a specific commit. Used by `rollback()` to reissue a prior commit.
+   */
+  private async redeployCommit(commitId: string, signal: AbortSignal | undefined): Promise<DeployResult> {
+    const start = this.now();
+    const url = `${RENDER_API_BASE}/v1/services/${encodeURIComponent(this.serviceId)}/deploys`;
+    const body: Record<string, unknown> = {
+      clearCache: this.clearCache,
+      commitId,
+    };
+    const res = await this.fetchWithRetry(url, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify(body),
+      signal,
+    });
+    await this.assertOkOrThrow(res, 'create deploy (rollback)');
+    const created = (await res.json()) as RenderDeployResponse;
+    if (!created.id) {
+      throw new GuardrailError(
+        `Render returned no deploy id during rollback (got: ${JSON.stringify(created).slice(0, 200)})`,
+        { code: 'adapter_bug', provider: 'render' },
+      );
+    }
+    return this.pollUntilTerminal(created.id, start, signal);
+  }
+
+  /**
+   * List the most recent deploys for the configured service. Newest-first.
+   * `limit` caps the result set — defaults to 20 (the spec's recommended
+   * window for the rollback lookup). Each entry includes `id`, `commit.id`,
+   * and `status` per the Render REST API.
+   */
+  async listDeploys(limit = 20, signal?: AbortSignal): Promise<RenderDeployResponse[]> {
+    const url =
+      `${RENDER_API_BASE}/v1/services/${encodeURIComponent(this.serviceId)}/deploys`
+      + `?limit=${encodeURIComponent(String(limit))}`;
+    const res = await this.fetchWithRetry(url, {
+      method: 'GET',
+      headers: this.headers(),
+      signal,
+    });
+    await this.assertOkOrThrow(res, 'list deploys');
+    const data = (await res.json()) as RenderDeploysListResponse | RenderDeployResponse[];
+    // Render historically returned a top-level array on /deploys; newer
+    // versions wrap entries in `[{deploy: {...}, cursor: '...'}]`. Accept
+    // both shapes — fall back to a bare-array if neither envelope matches.
+    if (Array.isArray(data)) {
+      // Could be either RenderDeployResponse[] OR [{deploy: ...}].
+      const first = data[0] as unknown;
+      if (first && typeof first === 'object' && 'deploy' in (first as Record<string, unknown>)) {
+        const wrapped = data as unknown as Array<{ deploy: RenderDeployResponse }>;
+        return wrapped.map((entry) => entry.deploy).filter(Boolean);
+      }
+      return data as RenderDeployResponse[];
+    }
+    if (Array.isArray((data as RenderDeploysListResponse)?.deploys)) {
+      return (data as RenderDeploysListResponse).deploys ?? [];
+    }
+    return [];
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // private helpers
   // ─────────────────────────────────────────────────────────────────────────────
@@ -557,6 +709,15 @@ function readRenderRequestId(res: Response): string | null {
  */
 interface RenderLogsResponse {
   logs?: RenderLogEntry[];
+}
+
+/**
+ * Optional envelope shape for `GET /v1/services/{id}/deploys?...`. Render
+ * has shipped both bare-array and `{ deploys: [...] }` shapes across its
+ * API generations; `listDeploys()` accepts either.
+ */
+interface RenderDeploysListResponse {
+  deploys?: RenderDeployResponse[];
 }
 
 interface RenderLogEntry {

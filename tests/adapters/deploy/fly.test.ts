@@ -455,3 +455,166 @@ describe('FlyDeployAdapter.streamLogs', () => {
     assert.match(collected[0]!, /\[REDACTED\]/);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 4 of v5.6 — rollback (native + simulated paths).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('FlyDeployAdapter.rollback — native path', () => {
+  it('returns pass + rolledBackTo when native /rollback POST succeeds with explicit `to`', async () => {
+    const { fetch, calls } = mockFetch([
+      // POST .../releases/rel_target/rollback — accepted, returns the
+      // rolled-back release.
+      res(200, { id: 'rel_target', hostname: 'my-app.fly.dev', state: 'succeeded' }),
+    ]);
+    const adapter = new FlyDeployAdapter({ ...baseOpts, fetchImpl: fetch });
+    const result = await adapter.rollback!({ to: 'rel_target' });
+    assert.equal(result.status, 'pass');
+    assert.equal(result.deployId, 'rel_target');
+    assert.equal(result.rolledBackTo, 'rel_target');
+    assert.equal(result.deployUrl, 'https://my-app.fly.dev');
+    assert.ok(result.buildLogsUrl?.includes('rel_target'));
+    // Output must be redacted (no raw secret leakage even on success path).
+    assert.ok(result.output);
+    assert.match(result.output!, /native/);
+    // Exactly one call: the rollback POST. No list, no simulated re-deploy.
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]!.init?.method, 'POST');
+    assert.match(calls[0]!.url, /\/v1\/apps\/my-app\/releases\/rel_target\/rollback$/);
+  });
+
+  it('looks up previous succeeded release when `to` is omitted, then native rollback', async () => {
+    const { fetch, calls } = mockFetch([
+      // GET /releases?limit=10 — current head + previous succeeded
+      res(200, {
+        releases: [
+          { id: 'rel_current', state: 'succeeded', image: 'registry.fly.io/my-app:cur' },
+          { id: 'rel_previous', state: 'succeeded', image: 'registry.fly.io/my-app:prev' },
+          { id: 'rel_older', state: 'failed', image: 'registry.fly.io/my-app:old' },
+        ],
+      }),
+      // POST .../releases/rel_previous/rollback — accepted
+      res(200, { id: 'rel_previous', hostname: 'my-app.fly.dev' }),
+    ]);
+    const adapter = new FlyDeployAdapter({ ...baseOpts, fetchImpl: fetch });
+    const result = await adapter.rollback!({});
+    assert.equal(result.status, 'pass');
+    assert.equal(result.rolledBackTo, 'rel_previous');
+    assert.equal(calls.length, 2);
+    assert.match(calls[0]!.url, /\/v1\/apps\/my-app\/releases\?limit=10$/);
+    assert.match(calls[1]!.url, /\/v1\/apps\/my-app\/releases\/rel_previous\/rollback$/);
+  });
+});
+
+describe('FlyDeployAdapter.rollback — simulated fallback', () => {
+  it('falls back to simulated re-deploy when native rollback returns 404', async () => {
+    // Sequence:
+    //   1. GET /releases (lookup previous)
+    //   2. POST /releases/rel_previous/rollback → 404 (endpoint removed)
+    //   3. POST /releases (re-deploy with rel_previous.image) → new release
+    //   4. GET /releases/rel_new (poll) → succeeded
+    const { fetch, calls } = mockFetch([
+      res(200, {
+        releases: [
+          { id: 'rel_current', state: 'succeeded', image: 'registry.fly.io/my-app:cur' },
+          { id: 'rel_previous', state: 'succeeded', image: 'registry.fly.io/my-app:prev' },
+        ],
+      }),
+      res(404, { error: 'rollback endpoint removed' }),
+      res(201, { id: 'rel_new', hostname: 'my-app.fly.dev' }),
+      res(200, { id: 'rel_new', state: 'succeeded', hostname: 'my-app.fly.dev' }),
+    ]);
+    const adapter = new FlyDeployAdapter({ ...baseOpts, fetchImpl: fetch });
+    const result = await adapter.rollback!({});
+    assert.equal(result.status, 'pass');
+    // rolledBackTo points to the prior release we re-deployed the image of.
+    assert.equal(result.rolledBackTo, 'rel_previous');
+    // deployId is the freshly-issued release for the re-deploy.
+    assert.equal(result.deployId, 'rel_new');
+    assert.equal(result.deployUrl, 'https://my-app.fly.dev');
+    // Simulated path leaves a "simulated by re-deploying" marker in output.
+    assert.ok(result.output);
+    assert.match(result.output!, /simulated/i);
+    assert.match(result.output!, /rel_previous/);
+    // 4 calls: list, native attempt (404), POST new release, GET poll.
+    assert.equal(calls.length, 4);
+    assert.match(calls[2]!.url, /\/v1\/apps\/my-app\/releases$/);
+    const body = JSON.parse(calls[2]!.init!.body as string);
+    assert.equal(body.image, 'registry.fly.io/my-app:prev');
+  });
+
+  it('falls back to simulated when native returns 405 (method not allowed)', async () => {
+    // 405 is an alternate "endpoint removed" surface across Fly API
+    // generations — same fallback semantics as 404.
+    const { fetch } = mockFetch([
+      res(200, {
+        releases: [
+          { id: 'rel_current', state: 'succeeded', image: 'registry.fly.io/my-app:cur' },
+          { id: 'rel_previous', state: 'succeeded', image: 'registry.fly.io/my-app:prev' },
+        ],
+      }),
+      res(405, 'method not allowed'),
+      res(201, { id: 'rel_new2', hostname: 'my-app.fly.dev' }),
+      res(200, { id: 'rel_new2', state: 'succeeded' }),
+    ]);
+    const adapter = new FlyDeployAdapter({ ...baseOpts, fetchImpl: fetch });
+    const result = await adapter.rollback!({});
+    assert.equal(result.status, 'pass');
+    assert.equal(result.rolledBackTo, 'rel_previous');
+  });
+
+  it('throws no_previous_deploy when only failed releases exist in history', async () => {
+    // History has the current succeeded head + only failed older releases.
+    // findPreviousSucceededRelease returns null → throws cleanly.
+    const { fetch } = mockFetch([
+      res(200, {
+        releases: [
+          { id: 'rel_current', state: 'succeeded', image: 'registry.fly.io/my-app:cur' },
+          { id: 'rel_failed1', state: 'failed', image: 'registry.fly.io/my-app:f1' },
+          { id: 'rel_failed2', state: 'cancelled', image: 'registry.fly.io/my-app:f2' },
+        ],
+      }),
+    ]);
+    const adapter = new FlyDeployAdapter({ ...baseOpts, fetchImpl: fetch });
+    await assert.rejects(
+      adapter.rollback!({}),
+      (err: unknown) => {
+        if (!(err instanceof GuardrailError)) return false;
+        assert.equal(err.code, 'no_previous_deploy');
+        assert.equal(err.provider, 'fly');
+        return true;
+      },
+    );
+  });
+});
+
+describe('FlyDeployAdapter.rollback — `input.to` semantics', () => {
+  it('input.to overrides the lookup on the simulated path (uses that release\'s image)', async () => {
+    // Native attempt with `to=rel_pin` returns 410 (gone) → simulated path.
+    // Simulated lookup grabs rel_pin's image from the list and re-deploys.
+    const { fetch, calls } = mockFetch([
+      // Native rollback → 410, fall through.
+      res(410, 'gone'),
+      // Simulated path: GET /releases?limit=10 to look up rel_pin's image.
+      res(200, {
+        releases: [
+          { id: 'rel_current', state: 'succeeded', image: 'registry.fly.io/my-app:cur' },
+          { id: 'rel_pin', state: 'succeeded', image: 'registry.fly.io/my-app:pinned' },
+          { id: 'rel_other', state: 'succeeded', image: 'registry.fly.io/my-app:other' },
+        ],
+      }),
+      // Re-deploy POST with rel_pin's image.
+      res(201, { id: 'rel_new3', hostname: 'my-app.fly.dev' }),
+      res(200, { id: 'rel_new3', state: 'succeeded' }),
+    ]);
+    const adapter = new FlyDeployAdapter({ ...baseOpts, fetchImpl: fetch });
+    const result = await adapter.rollback!({ to: 'rel_pin' });
+    assert.equal(result.status, 'pass');
+    assert.equal(result.rolledBackTo, 'rel_pin');
+    // Native call is the FIRST call (no list lookup before native when `to` is set).
+    assert.match(calls[0]!.url, /\/releases\/rel_pin\/rollback$/);
+    // Simulated POST body uses the pinned image, NOT the head image.
+    const redeployBody = JSON.parse(calls[2]!.init!.body as string);
+    assert.equal(redeployBody.image, 'registry.fly.io/my-app:pinned');
+  });
+});

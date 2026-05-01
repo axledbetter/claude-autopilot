@@ -23,6 +23,7 @@ import type {
   DeployInput,
   DeployLogLine,
   DeployResult,
+  DeployRollbackInput,
   DeployStatusInput,
   DeployStatusResult,
   DeployStreamLogsInput,
@@ -57,6 +58,18 @@ interface FlyReleaseResponse {
   status?: FlyReleaseState;
   /** Newer Fly responses use `state`; older use `status`. We accept either. */
   state?: FlyReleaseState;
+  /**
+   * Image reference the release was built from (e.g.
+   * `registry.fly.io/my-app:deployment-01`). Surfaced on list-releases
+   * responses and used by the simulated-rollback path to re-deploy a
+   * known-good image when native `/rollback` is unavailable.
+   */
+  image?: string;
+}
+
+/** Envelope shape for `GET /v1/apps/{app}/releases?limit=N`. Newest-first. */
+interface FlyReleasesListResponse {
+  releases?: FlyReleaseResponse[];
 }
 
 export interface FlyDeployAdapterOptions {
@@ -348,6 +361,248 @@ export class FlyDeployAdapter implements DeployAdapter {
       await this.sleep(backoffMs);
       if (input.signal?.aborted) return;
     }
+  }
+
+  /**
+   * Phase 4 of v5.6 — roll back to a previous Fly release.
+   *
+   * Two modes per spec § "Fly.io adapter → Rollback":
+   *
+   * 1. Native: try `POST /v1/apps/{app}/releases/{releaseId}/rollback`.
+   *    This is the historical Fly API; the Machines-era replacement may
+   *    differ — Phase 7 fixture-capture reconciles. If the endpoint returns
+   *    404 / 405 / 410 (removed across the Nomad → Machines transition),
+   *    fall through to the simulated path. Any other non-OK status
+   *    (auth, invalid_config, etc.) propagates via `assertOkOrThrow`.
+   *
+   * 2. Simulated: list prior releases via
+   *    `GET /v1/apps/{app}/releases?limit=10`, find the most recent one
+   *    with `status === 'succeeded'` whose `id` differs from the one we'd
+   *    be rolling back from, and trigger a new deploy with that release's
+   *    `image`. Re-uses the same POST + poll machinery as `deploy()` via
+   *    `deployImage()`.
+   *
+   * When `input.to` is set we treat that as a specific release ID:
+   * - Native path uses it as the URL fragment.
+   * - Simulated path looks it up in the list to grab its `image`. If the
+   *   release is not present in the recent-10 window, throw
+   *   `not_found` — caller almost certainly typo'd the ID.
+   *
+   * Throws `GuardrailError({ code: 'no_previous_deploy', provider: 'fly' })`
+   * when the simulated path runs out of candidates (i.e. no prior release
+   * with `status === 'succeeded'` exists).
+   */
+  async rollback(input: DeployRollbackInput): Promise<DeployResult> {
+    const start = this.now();
+
+    // ── Native path ──
+    // When `to` is set, we have a concrete release ID to target. When it's
+    // not, we still attempt the native verb on the *previous* release we
+    // discover via the list endpoint — same call shape, just one indirection.
+    let nativeTargetId = input.to;
+    let prevImage: string | undefined;
+    if (!nativeTargetId) {
+      const prev = await this.findPreviousSucceededRelease(undefined, input.signal);
+      if (!prev) {
+        throw new GuardrailError(
+          `No previous successful Fly release found for app "${this.app}" to roll back to`,
+          { code: 'no_previous_deploy', provider: 'fly' },
+        );
+      }
+      nativeTargetId = prev.id;
+      prevImage = prev.image;
+    }
+
+    const nativeUrl =
+      `${FLY_API_BASE}/v1/apps/${encodeURIComponent(this.app)}/releases/${encodeURIComponent(nativeTargetId)}/rollback`;
+    let nativeRes: Response;
+    try {
+      nativeRes = await this.fetchWithRetry(nativeUrl, {
+        method: 'POST',
+        headers: this.headers(),
+        body: '{}',
+        signal: input.signal,
+      });
+    } catch (err) {
+      // Network exhaustion is already mapped to GuardrailError(transient_network)
+      // by fetchWithRetry — rethrow.
+      throw err;
+    }
+
+    if (nativeRes.ok) {
+      let data: FlyReleaseResponse | undefined;
+      try {
+        data = (await nativeRes.json()) as FlyReleaseResponse;
+      } catch {
+        data = undefined;
+      }
+      const rawOutput = `Fly release ${nativeTargetId} rolled back natively for app "${this.app}"`;
+      return {
+        status: 'pass',
+        deployId: nativeTargetId,
+        rolledBackTo: nativeTargetId,
+        deployUrl: data?.hostname ? `https://${data.hostname}` : undefined,
+        buildLogsUrl: this.buildLogsUrl(nativeTargetId),
+        durationMs: this.now() - start,
+        output: redactLogLines(rawOutput, this.redactionPatterns),
+      };
+    }
+
+    // ── Simulated fallback ──
+    // The native rollback verb has been removed from the Machines API in
+    // some org/region pairs. 404 (endpoint removed), 405 (method now
+    // disallowed), and 410 (gone) all indicate "use the simulated path".
+    // Anything else — auth, validation, 5xx exhaustion — propagates.
+    if (nativeRes.status !== 404 && nativeRes.status !== 405 && nativeRes.status !== 410) {
+      await this.assertOkOrThrow(nativeRes, 'native rollback');
+      // assertOkOrThrow always throws for non-OK responses; this is unreachable
+      // but keeps the type checker happy.
+      throw new GuardrailError(
+        `Fly native rollback returned non-OK ${nativeRes.status} (unreachable)`,
+        { code: 'adapter_bug', provider: 'fly' },
+      );
+    }
+
+    // Simulated rollback: re-deploy a previous successful image.
+    let imageToDeploy: string | undefined;
+    let simulatedTargetId: string | undefined;
+    if (input.to) {
+      // Look up the user-specified release in the recent window to grab its
+      // image. We search by id rather than re-using `prevImage` (which is
+      // unset when `input.to` was provided).
+      const releases = await this.listReleases(10, input.signal);
+      const match = releases.find((r) => r.id === input.to);
+      if (!match) {
+        throw new GuardrailError(
+          `Fly release "${input.to}" not found in the last 10 releases for app "${this.app}" — cannot simulate rollback`,
+          { code: 'not_found', provider: 'fly', step: 'simulated rollback' },
+        );
+      }
+      if (!match.image) {
+        throw new GuardrailError(
+          `Fly release "${input.to}" has no recorded image — cannot simulate rollback`,
+          { code: 'invalid_config', provider: 'fly', step: 'simulated rollback' },
+        );
+      }
+      imageToDeploy = match.image;
+      simulatedTargetId = match.id;
+    } else {
+      // We already discovered the previous successful release before the
+      // native attempt; reuse its image when present, otherwise re-list.
+      if (prevImage) {
+        imageToDeploy = prevImage;
+        simulatedTargetId = nativeTargetId;
+      } else {
+        const prev = await this.findPreviousSucceededRelease(undefined, input.signal);
+        if (!prev) {
+          throw new GuardrailError(
+            `No previous successful Fly release found for app "${this.app}" to roll back to`,
+            { code: 'no_previous_deploy', provider: 'fly' },
+          );
+        }
+        if (!prev.image) {
+          throw new GuardrailError(
+            `Previous Fly release "${prev.id}" has no recorded image — cannot simulate rollback`,
+            { code: 'invalid_config', provider: 'fly', step: 'simulated rollback' },
+          );
+        }
+        imageToDeploy = prev.image;
+        simulatedTargetId = prev.id;
+      }
+    }
+
+    const redeployed = await this.deployImage(imageToDeploy, input.signal);
+    const rawOutput = `Fly rollback simulated by re-deploying image "${imageToDeploy}" (prior release ${simulatedTargetId}) → new release ${redeployed.deployId ?? '<unknown>'}`;
+    return {
+      ...redeployed,
+      // Carry the new release id forward as `deployId` (we just deployed it),
+      // and flag the prior release as the rollback target so the CLI can
+      // surface "rolled back to X (new deploy Y)".
+      rolledBackTo: simulatedTargetId,
+      durationMs: this.now() - start,
+      output: redactLogLines(rawOutput, this.redactionPatterns),
+    };
+  }
+
+  /**
+   * Private helper — re-uses the deploy() POST + poll machinery to deploy a
+   * specific image without going through the constructor-stamped image. Used
+   * by `rollback()`'s simulated path to redeploy a previous successful image.
+   */
+  private async deployImage(image: string, signal: AbortSignal | undefined): Promise<DeployResult> {
+    const start = this.now();
+    const url = `${FLY_API_BASE}/v1/apps/${encodeURIComponent(this.app)}/releases`;
+    const body: Record<string, unknown> = { image };
+    if (this.region) body.region = this.region;
+    const res = await this.fetchWithRetry(url, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify(body),
+      signal,
+    });
+    await this.assertOkOrThrow(res, 'create release (rollback)');
+    const created = (await res.json()) as FlyReleaseResponse;
+    if (!created.id) {
+      throw new GuardrailError(
+        `Fly returned no release id during rollback (got: ${JSON.stringify(created).slice(0, 200)})`,
+        { code: 'adapter_bug', provider: 'fly' },
+      );
+    }
+    return this.pollUntilTerminal(created.id, start, signal);
+  }
+
+  /**
+   * List the most recent releases for the configured app. Newest-first.
+   * `limit` caps the result set — defaults to 10 (the spec's recommended
+   * window for the rollback lookup). 4xx/5xx errors propagate via
+   * `assertOkOrThrow`.
+   */
+  async listReleases(limit = 10, signal?: AbortSignal): Promise<FlyReleaseResponse[]> {
+    const url =
+      `${FLY_API_BASE}/v1/apps/${encodeURIComponent(this.app)}/releases?limit=${encodeURIComponent(String(limit))}`;
+    const res = await this.fetchWithRetry(url, {
+      method: 'GET',
+      headers: this.headers(),
+      signal,
+    });
+    await this.assertOkOrThrow(res, 'list releases');
+    const data = (await res.json()) as FlyReleasesListResponse | FlyReleaseResponse[];
+    // Be defensive — Fly has shipped both list-envelope and bare-array
+    // shapes across API generations.
+    const arr = Array.isArray(data) ? data : Array.isArray(data?.releases) ? data.releases : [];
+    return arr;
+  }
+
+  /**
+   * Find the most recent prior release with `status === 'succeeded'`. When
+   * `excludeId` is supplied, that release is skipped (used to ensure
+   * `rollback()` never returns "rolled back to the deploy I'm rolling back
+   * from" when the caller didn't supply `input.to`).
+   *
+   * Returns `null` when no candidate exists.
+   */
+  private async findPreviousSucceededRelease(
+    excludeId: string | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<FlyReleaseResponse | null> {
+    const releases = await this.listReleases(10, signal);
+    // Fly returns newest-first; the first `succeeded` entry is the current
+    // prod release. When `excludeId` is unset we still want the *previous*
+    // succeeded release — drop the first match and return the next.
+    const succeeded = releases.filter((r) => {
+      const state = r.state ?? r.status;
+      if (state !== 'succeeded') return false;
+      if (excludeId && r.id === excludeId) return false;
+      return true;
+    });
+    if (excludeId) {
+      // Caller already filtered out the rollback-from id; return the newest
+      // remaining succeeded release.
+      return succeeded[0] ?? null;
+    }
+    // No exclude — drop the head (current prod) and return the next.
+    if (succeeded.length < 2) return null;
+    return succeeded[1] ?? null;
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
