@@ -5,12 +5,14 @@
 import { GuardrailError } from '../../core/errors.ts';
 import { FlyDeployAdapter } from './fly.ts';
 import { GenericDeployAdapter } from './generic.ts';
+import { RenderDeployAdapter } from './render.ts';
 import type { DeployAdapter, DeployConfig } from './types.ts';
 import { VercelDeployAdapter } from './vercel.ts';
 
 export * from './types.ts';
 export { VercelDeployAdapter } from './vercel.ts';
 export { FlyDeployAdapter } from './fly.ts';
+export { RenderDeployAdapter } from './render.ts';
 export { GenericDeployAdapter } from './generic.ts';
 
 /**
@@ -55,6 +57,22 @@ export function createDeployAdapter(config: DeployConfig): DeployAdapter {
         app: config.app,
         image: config.image,
         region: config.region,
+      });
+    }
+    case 'render': {
+      // v5.6 Phase 2: Render requires `serviceId`. `clearCache` is optional
+      // and defaults to `'do_not_clear'` inside the adapter. We surface the
+      // missing-field error with the field name so the user knows exactly
+      // what to add to guardrail.config.yaml.
+      if (!config.serviceId) {
+        throw new GuardrailError(
+          'deploy.adapter=render requires deploy.serviceId (Render service ID, e.g. srv-abc123)',
+          { code: 'invalid_config', provider: 'render' },
+        );
+      }
+      return new RenderDeployAdapter({
+        serviceId: config.serviceId,
+        clearCache: config.clearCache,
       });
     }
     case 'generic': {

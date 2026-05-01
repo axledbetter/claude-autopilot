@@ -196,9 +196,9 @@ export interface DeployAdapter {
 export interface DeployConfig {
   /**
    * Which adapter to use. v5.4 shipped `vercel` + `generic`; v5.6 Phase 1
-   * adds `fly`. The Render adapter lands in Phase 2 of v5.6.
+   * adds `fly`; v5.6 Phase 2 adds `render`.
    */
-  adapter: 'vercel' | 'fly' | 'generic';
+  adapter: 'vercel' | 'fly' | 'render' | 'generic';
 
   // Vercel-specific
   /** Vercel project ID or slug. Required when `adapter === 'vercel'`. */
@@ -219,6 +219,15 @@ export interface DeployConfig {
   image?: string;
   /** Optional Fly region pin (e.g. `ord`). Falls back to the app's default region. */
   region?: string;
+
+  // Render-specific (Phase 2 of v5.6)
+  /** Render service ID (e.g. `srv-abc123`). Required when `adapter === 'render'`. */
+  serviceId?: string;
+  /**
+   * Whether Render should clear the build cache before deploying. Optional,
+   * default `'do_not_clear'`. Maps directly to the Render API body field.
+   */
+  clearCache?: 'do_not_clear' | 'clear';
 
   // Generic-specific
   /** Shell command to run for the deploy (e.g. `vercel --prod`). Required when `adapter === 'generic'`. */
