@@ -11,6 +11,8 @@
 // Spec: docs/specs/v5.4-vercel-adapter.md
 
 import { GuardrailError } from '../../core/errors.ts';
+import { redactLogLines } from '../../core/logging/redaction.ts';
+import { fetchWithRetry, safeReadBody } from './_http.ts';
 import type {
   DeployAdapter,
   DeployInput,
@@ -76,6 +78,16 @@ export interface VercelDeployAdapterOptions {
   sleepImpl?: (ms: number) => Promise<void>;
   /** Wall-clock source — tests pass a controllable counter. */
   nowImpl?: () => number;
+  /**
+   * Optional caller-supplied redaction patterns (in addition to the
+   * built-in default set in `core/logging/redaction.ts`). Typically wired
+   * from `config.persistence.redactionPatterns` by the CLI; tests omit it.
+   *
+   * Phase 5 of v5.6 brought Vercel into parity with Fly/Render — the v5.4
+   * adapter previously emitted `output` lines verbatim, which was a real
+   * leak hazard for any build that echoed an env var into stdout.
+   */
+  redactionPatterns?: readonly string[];
 }
 
 /**
@@ -96,6 +108,7 @@ export class VercelDeployAdapter implements DeployAdapter {
   private readonly fetchImpl: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly now: () => number;
+  private readonly redactionPatterns: readonly string[] | undefined;
 
   constructor(opts: VercelDeployAdapterOptions) {
     const token = opts.token ?? process.env.VERCEL_TOKEN;
@@ -120,6 +133,7 @@ export class VercelDeployAdapter implements DeployAdapter {
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch;
     this.sleep = opts.sleepImpl ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.now = opts.nowImpl ?? Date.now;
+    this.redactionPatterns = opts.redactionPatterns;
   }
 
   async deploy(input: DeployInput): Promise<DeployResult> {
@@ -141,12 +155,17 @@ export class VercelDeployAdapter implements DeployAdapter {
       body.gitSource = { type: 'github', ref: input.ref };
     }
 
-    const res = await this.fetchWithRetry(url, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify(body),
-      signal: input.signal,
-    });
+    const res = await fetchWithRetry(
+      this.fetchImpl,
+      url,
+      {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify(body),
+        signal: input.signal,
+      },
+      { sleepImpl: this.sleep, provider: 'vercel' },
+    );
 
     await this.assertOkOrThrow(res, 'create deployment');
     const created = (await res.json()) as VercelDeployResponse;
@@ -170,11 +189,16 @@ export class VercelDeployAdapter implements DeployAdapter {
   async status(input: DeployStatusInput): Promise<DeployStatusResult> {
     const start = this.now();
     const url = this.urlWithTeam(`${VERCEL_API_BASE}/v13/deployments/${encodeURIComponent(input.deployId)}`);
-    const res = await this.fetchWithRetry(url, {
-      method: 'GET',
-      headers: this.headers(),
-      signal: input.signal,
-    });
+    const res = await fetchWithRetry(
+      this.fetchImpl,
+      url,
+      {
+        method: 'GET',
+        headers: this.headers(),
+        signal: input.signal,
+      },
+      { sleepImpl: this.sleep, provider: 'vercel' },
+    );
     await this.assertOkOrThrow(res, 'get deployment');
     const data = (await res.json()) as VercelDeployResponse;
     const state = data.readyState ?? data.state;
@@ -217,7 +241,7 @@ export class VercelDeployAdapter implements DeployAdapter {
           // Flush a trailing partial line if present.
           if (buf.length > 0) {
             const line = parseEventLine(buf);
-            if (line) yield line;
+            if (line) yield this.redactLine(line);
           }
           return;
         }
@@ -227,7 +251,7 @@ export class VercelDeployAdapter implements DeployAdapter {
           const raw = buf.slice(0, nl);
           buf = buf.slice(nl + 1);
           const line = parseEventLine(raw);
-          if (line) yield line;
+          if (line) yield this.redactLine(line);
           nl = buf.indexOf('\n');
         }
       }
@@ -266,12 +290,17 @@ export class VercelDeployAdapter implements DeployAdapter {
     const url = this.urlWithTeam(
       `${VERCEL_API_BASE}/v13/deployments/${encodeURIComponent(targetId)}/promote`,
     );
-    const res = await this.fetchWithRetry(url, {
-      method: 'POST',
-      headers: this.headers(),
-      body: '{}',
-      signal: input.signal,
-    });
+    const res = await fetchWithRetry(
+      this.fetchImpl,
+      url,
+      {
+        method: 'POST',
+        headers: this.headers(),
+        body: '{}',
+        signal: input.signal,
+      },
+      { sleepImpl: this.sleep, provider: 'vercel' },
+    );
     await this.assertOkOrThrow(res, 'promote deployment');
     // Promote responses are typically empty (204) or echo the deployment.
     // Be defensive — parse if there's a body, otherwise carry on with the
@@ -289,7 +318,10 @@ export class VercelDeployAdapter implements DeployAdapter {
       deployUrl: data?.url ? `https://${data.url}` : undefined,
       buildLogsUrl: this.buildLogsUrl(targetId),
       durationMs: this.now() - start,
-      output: `Vercel deployment ${targetId} promoted to production`,
+      output: redactLogLines(
+        `Vercel deployment ${targetId} promoted to production`,
+        this.redactionPatterns,
+      ),
     };
   }
 
@@ -311,11 +343,16 @@ export class VercelDeployAdapter implements DeployAdapter {
         `&limit=${encodeURIComponent(String(limit))}` +
         `&target=production`,
     );
-    const res = await this.fetchWithRetry(url, {
-      method: 'GET',
-      headers: this.headers(),
-      signal,
-    });
+    const res = await fetchWithRetry(
+      this.fetchImpl,
+      url,
+      {
+        method: 'GET',
+        headers: this.headers(),
+        signal,
+      },
+      { sleepImpl: this.sleep, provider: 'vercel' },
+    );
     await this.assertOkOrThrow(res, 'list deployments');
     const data = (await res.json()) as { deployments?: VercelDeployListItem[] };
     return Array.isArray(data.deployments) ? data.deployments : [];
@@ -324,6 +361,15 @@ export class VercelDeployAdapter implements DeployAdapter {
   // ─────────────────────────────────────────────────────────────────────────────
   // private helpers
   // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Apply the adapter's redaction patterns to a streamed log line's `text`.
+   * Mirrors the Fly/Render redactLine helpers introduced in v5.6 so secrets
+   * never escape the adapter via streamed log entries.
+   */
+  private redactLine(line: DeployLogLine): DeployLogLine {
+    return { ...line, text: redactLogLines(line.text, this.redactionPatterns) };
+  }
 
   /**
    * Returns the deployment immediately preceding the current production
@@ -358,14 +404,22 @@ export class VercelDeployAdapter implements DeployAdapter {
           deployId,
           durationMs: this.now() - start,
           buildLogsUrl: this.buildLogsUrl(deployId),
-          output: `Deployment still in progress after ${this.maxPollMs}ms — check ${this.buildLogsUrl(deployId)}`,
+          output: redactLogLines(
+            `Deployment still in progress after ${this.maxPollMs}ms — check ${this.buildLogsUrl(deployId)}`,
+            this.redactionPatterns,
+          ),
         };
       }
-      const res = await this.fetchWithRetry(url, {
-        method: 'GET',
-        headers: this.headers(),
-        signal,
-      });
+      const res = await fetchWithRetry(
+        this.fetchImpl,
+        url,
+        {
+          method: 'GET',
+          headers: this.headers(),
+          signal,
+        },
+        { sleepImpl: this.sleep, provider: 'vercel' },
+      );
       await this.assertOkOrThrow(res, 'poll deployment');
       const data = (await res.json()) as VercelDeployResponse;
       const state = data.readyState ?? data.state;
@@ -390,7 +444,9 @@ export class VercelDeployAdapter implements DeployAdapter {
       deployUrl: data.url ? `https://${data.url}` : undefined,
       buildLogsUrl: this.buildLogsUrl(deployId),
       durationMs,
-      output: state ? `Vercel deployment ${deployId}: state=${state}` : undefined,
+      output: state
+        ? redactLogLines(`Vercel deployment ${deployId}: state=${state}`, this.redactionPatterns)
+        : undefined,
     };
   }
 
@@ -430,34 +486,6 @@ export class VercelDeployAdapter implements DeployAdapter {
     throw new GuardrailError(
       `Vercel API error (${res.status}) on ${step}: ${bodyText}`,
       { code: 'adapter_bug', provider: 'vercel', step, details: { status: res.status } },
-    );
-  }
-
-  private async fetchWithRetry(url: string, init: RequestInit, attempts = 3, baseMs = 500): Promise<Response> {
-    let lastErr: unknown;
-    for (let i = 0; i < attempts; i++) {
-      try {
-        const res = await this.fetchImpl(url, init);
-        // 5xx is transient — retry. 4xx is the caller's problem — fail fast.
-        if (res.status >= 500 && res.status < 600 && i < attempts - 1) {
-          lastErr = new Error(`HTTP ${res.status}`);
-          await this.sleep(baseMs * 2 ** i);
-          continue;
-        }
-        return res;
-      } catch (err) {
-        lastErr = err;
-        // AbortError is intentional cancellation — surface it directly without retry.
-        if (err instanceof Error && err.name === 'AbortError') throw err;
-        if (i < attempts - 1) {
-          await this.sleep(baseMs * 2 ** i);
-          continue;
-        }
-      }
-    }
-    throw new GuardrailError(
-      `Vercel API unreachable after ${attempts} attempts: ${(lastErr as Error)?.message ?? String(lastErr)}`,
-      { code: 'transient_network', provider: 'vercel' },
     );
   }
 
@@ -510,14 +538,6 @@ export class VercelDeployAdapter implements DeployAdapter {
       return res;
     }
     return lastRes!;
-  }
-}
-
-async function safeReadBody(res: Response): Promise<string> {
-  try {
-    return (await res.text()).slice(0, 500);
-  } catch {
-    return '<no body>';
   }
 }
 
