@@ -1,14 +1,77 @@
-# Changelog
+## Unreleased
 
-## v5.3.0 — Deploy phase (in flight, not yet shipped)
+- v5.6 Phase 7 (docs reconciliation) — pending.
+
+## v5.6.0 — Fly.io + Render deploy adapters (2026-05-04)
 
 ### Added
 
-- **`deploy` phase** — adapter-agnostic deploy step that runs your existing deploy command, extracts the URL from stdout, optionally polls a `healthCheckUrl`, and (optionally) posts result to a PR. Closes the loop from "PR merged" to "PR merged + deployed + smoke-tested + URL on the PR".
-- **`deployCommand` + `healthCheckUrl` config keys** — anything that works in your terminal works as `deployCommand` (`vercel --prod`, `flyctl deploy`, `kubectl apply`, `gh workflow run`, `make deploy`).
-- **`claude-autopilot deploy [--dry-run|--command|--health-url|--pr <n>]`** — CLI surface. PR comment integration via `gh pr comment`.
+- **`@delegance/claude-autopilot deploy --adapter fly`** — first-class Fly.io adapter. Image-based releases via the Machines API (image must be pre-pushed via `fly deploy --build-only --push`), polling-based status, **WebSocket log streaming**, **native rollback** with simulated fallback when the API endpoint is unavailable. `FLY_API_TOKEN` env var; auth doctor warns when missing.
+- **`@delegance/claude-autopilot deploy --adapter render`** — first-class Render adapter. REST API deploys (with optional `clearCache`), service-scoped status polling at `GET /v1/services/{serviceId}/deploys/{deployId}`, REST-polling log stream with `(timestamp, logId)` cursor dedup, **simulated rollback** by re-deploying the previous successful commit. `RENDER_API_KEY` env var; auth doctor warns when missing.
+- **`DeployAdapterCapabilities` interface** — adapters declare `streamMode: 'websocket' | 'polling' | 'none'` and `nativeRollback: boolean`. CLI prints a one-line stderr notice for polling-mode adapters under `--watch` so users understand why log lines arrive in batches.
+- **Bounded auto-rollback orchestration in `src/cli/deploy.ts`** — when health check fails after deploy and `rollbackOn: [healthCheckFailure]` is configured, the CLI fires exactly one rollback (no chains), with `runHealthCheck` capped at 5 attempts × 6s backoff (~30s window). New terminal `DeployResult.status` values: `fail_rolled_back` and `fail_rollback_failed`.
+- **HTTP-status error taxonomy** — new `not_found` `ErrorCode` joins the union; per-adapter mapping: 401/403→`auth`, 404→`not_found`, 422/400→`invalid_config`, 5xx→`transient_network` (retryable). Provider request-id headers (`Fly-Request-Id`, `x-request-id`) captured into `error.details` for support tickets.
+- **Mandatory log redaction across all adapters** — every log line surfaced into `DeployResult.output` or PR-comment bodies runs through `redactLogLines()` (defaults: `AKIA…`, `sk-…`, `eyJ…`, `ghp_`, `xoxb-`, plus user-configurable `config.persistence.redactionPatterns`). Closes a real existing security hazard in the v5.4 Vercel adapter that was emitting unredacted logs into PR comments.
+- **Shared `src/adapters/deploy/_http.ts`** — extracted `fetchWithRetry` + `safeReadBody` helpers used by Vercel, Fly, and Render adapters; one canonical retry implementation to maintain.
 
-First-class provider adapters (Vercel/Fly/Render with API-level deploy IDs + rollback hooks) are queued for v5.4.
+### Fixed
+
+- **Bugbot caught + autopilot fixed 4 real bugs across the v5.6 self-eat phases.** HIGH on Phase 2 (Render service-scoped URL — `pollUntilTerminal` and `status()` were using shorthand `/v1/deploys/{id}` which doesn't exist on Render's API). MEDIUM on Phase 3 (Render cursor dedup wasn't sorting same-ms entries by id, silently dropping out-of-order siblings). LOW on Phase 4 (`printAutoRollback` hardcoded "failed 3x" but the constant is now 5). LOW on Phase 5 (`getPreviousFileContent` was being called for `.sql` files where `previousContent` is ignored, wasting a `git show` spawn per migration).
+- **Schema-alignment diff-aware Prisma parsing (PR #44, schema-alignment cleanup)** — `getPreviousFileContent` now defaults to a CI-aware base ref (`GITHUB_BASE_REF` → `origin/<base>`, then `CI_MERGE_REQUEST_TARGET_BRANCH_NAME`, fallback `HEAD~1`) instead of always reading from `HEAD` (which gave empty diffs in CI). Dropped models now emit `drop_column` for every field of the removed model.
+- **Tombstone CLI no longer crashes with a stack trace when presets are missing (PR #82)** — schema-validator was running file IO at module load time, so every `claude-autopilot --version` call eagerly read `presets/aliases.lock.json` + `presets/schemas/migrate.schema.json`; missing presets crashed the CLI before it could format an error. Now lazy-init via memoized `getValidator()`.
+
+## v5.5.2 — Framework-agnostic /migrate (2026-04-30)
+
+### Added
+
+- **Working examples for Rails, Alembic, Django, golang-migrate, Prisma, Drizzle, dbmate, Flyway, supabase-cli, custom scripts** in `skills/migrate/SKILL.md`. The dispatcher was always framework-agnostic, but the prior doc text only described the Supabase path.
+- **Detector `defaultCommand` fills** for `prisma-push`, `drizzle-push`, `golang-migrate`, `typeorm` so `claude-autopilot init` produces a working `stack.md` on first try for these toolchains.
+
+### Fixed
+
+- **`/migrate` skill description rewritten** as a generic dispatcher description with a "when to use migrate-supabase instead" callout. Anyone running `migrate@1` in a non-Supabase repo no longer sees Supabase-specific instructions.
+
+## v5.5.1 — `openai` SDK now optional (2026-04-30)
+
+### Changed
+
+- **`openai` moved to `optionalDependencies`** alongside `@anthropic-ai/sdk`, `@google/generative-ai`, `@modelcontextprotocol/sdk`. All four LLM SDKs are now optional. `npm install --omit=optional` shed grows to **~26 MB** (was ~13 MB after v5.5.0). `scripts/autoregress.ts` migrated to `loadOpenAI()` — the last direct `import OpenAI` outside the adapter layer.
+
+### Notes
+
+- Council runner already handles missing-synth-SDK gracefully — returns `status: 'partial'` with the friendly install hint surfaced via the synthesis error field. Users with only `ANTHROPIC_API_KEY` get a partial result with model responses preserved.
+
+## v5.5.0 — Lazy-load LLM SDKs + Vercel auth doctor (2026-04-30)
+
+### Added
+
+- **`src/adapters/sdk-loader.ts`** with `loadAnthropic` / `loadOpenAI` / `loadGoogleGenerativeAI` + `isSdkInstalled` helper. Friendly `GuardrailError` on `MODULE_NOT_FOUND` points at the exact `npm install` command.
+- **Phase 6 of v5.4 spec — Vercel auth doctor.** `claude-autopilot doctor` detects `deploy.adapter: vercel` in `guardrail.config.yaml` and warns when `VERCEL_TOKEN` is missing.
+- **LLM SDK install-state surface in doctor** — shows which optional LLM SDKs are actually installed.
+
+### Changed
+
+- **`@anthropic-ai/sdk`, `@google/generative-ai`, `@modelcontextprotocol/sdk` moved to `optionalDependencies`**. Six adapters converted from top-level import to dynamic load. Users with `--omit=optional` shed ~13 MB and only need the SDK matching their API key.
+
+## v5.4.0 — Vercel first-class deploy adapter (2026-04-30)
+
+### Added
+
+- **`@delegance/claude-autopilot deploy --adapter vercel`** — first-class Vercel adapter via the v13 deployments API. Returns `dpl_xxx` IDs, polls status until terminal, populates `deployUrl` / `buildLogsUrl` / `output`. Auth via `VERCEL_TOKEN`.
+- **`--watch` SSE+NDJSON log streaming** — subscribes to `/v2/deployments/<id>/events?builds=1`, prints to stderr in real time. Reconnects once with exp backoff on disconnect.
+- **`claude-autopilot deploy rollback` + `deploy status`** — CLI subverbs over the adapter's `rollback()` / `status()` methods. `--to <id>` overrides "previous prod deploy" lookup.
+- **Auto-rollback on health-check failure** — when `rollbackOn: [healthCheckFailure]` is set in config, the CLI promotes the previous prod deploy if the post-deploy health check fails. PR comment shows both URLs (new + rolled-back-to).
+- **`<!-- claude-autopilot-deploy -->` upserting PR comment** — single comment is updated in place across deploy → log-stream → health-check → rollback, instead of spamming the PR with multiple comments.
+
+### Fixed
+
+- **Bugbot caught explicit `--config <missing>` was silently ignored on PR #63 (Phase 3)** — autopilot fixed it with a regression test in 4 minutes.
+- **Phase 4 introduced a regression in Phase 2's `--watch` test surface; caught via `npm test` before PR opened**, autopilot adapted spec interpretation (made health-check opt-in instead of falling back to deployUrl) and documented the deviation.
+
+### Notes
+
+- This release was **shipped as four self-eat PRs** (#59, #61, #63, #64) where autopilot implemented its own next phase end-to-end. Cumulative cost ~\$17.50, wall clock ~82 min, 47 new tests. See [DEMO.md](DEMO.md) for the full proof set.
+- v5.3 "deploy phase" was superseded by v5.4 — the adapter pattern subsumed the generic-command-only design from the in-flight v5.3 spec.
 
 ## v5.2.2 — Demo polish
 

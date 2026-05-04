@@ -37,7 +37,7 @@ function hasListDeployments(a: DeployAdapter): a is DeployAdapter & ListDeployme
 export interface RunDeployOptions {
   configPath?: string;
   /** When set, overrides `deploy.adapter` from config. */
-  adapterOverride?: 'vercel' | 'generic';
+  adapterOverride?: 'vercel' | 'fly' | 'render' | 'generic';
   ref?: string;
   commitSha?: string;
   cwd?: string;
@@ -87,7 +87,7 @@ export interface RunDeployOptions {
 async function loadDeployConfigAsync(opts: {
   cwd?: string;
   configPath?: string;
-  adapterOverride?: 'vercel' | 'generic';
+  adapterOverride?: 'vercel' | 'fly' | 'render' | 'generic';
 }): Promise<{ merged: DeployConfig } | { errorCode: number }> {
   const cwd = opts.cwd ?? process.cwd();
   const explicitConfig = opts.configPath !== undefined;
@@ -333,7 +333,7 @@ function formatErr(prefix: string, err: unknown): string {
 
 export interface RunDeployRollbackOptions {
   configPath?: string;
-  adapterOverride?: 'vercel' | 'generic';
+  adapterOverride?: 'vercel' | 'fly' | 'render' | 'generic';
   /** Specific deploy ID to roll back to. When omitted, the previous prod deploy is used. */
   to?: string;
   cwd?: string;
@@ -343,7 +343,7 @@ export interface RunDeployRollbackOptions {
 
 export interface RunDeployStatusOptions {
   configPath?: string;
-  adapterOverride?: 'vercel' | 'generic';
+  adapterOverride?: 'vercel' | 'fly' | 'render' | 'generic';
   cwd?: string;
   adapterFactory?: (config: DeployConfig) => DeployAdapter;
 }
