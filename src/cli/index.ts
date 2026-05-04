@@ -838,10 +838,16 @@ Full pipeline docs: https://github.com/axledbetter/claude-autopilot#the-pipeline
         break;
       }
       case 'show': {
-        const runId = args.slice(2).find(a => !a.startsWith('--'));
         const events = boolFlag('events');
         const tailRaw = flag('events-tail');
         const eventsTail = tailRaw ? parseInt(tailRaw, 10) : undefined;
+        // Filter out value-flag *values* — without this, `runs show
+        // --events-tail 5 <ULID>` would resolve runId to '5'. Same pattern
+        // as the scan case above. Caught by Cursor Bugbot on PR #88
+        // (MEDIUM).
+        const runId = args.slice(2).find(a =>
+          !a.startsWith('--') && a !== tailRaw,
+        );
         result = await runRunsShow({
           runId: runId ?? '',
           cwd,
@@ -901,7 +907,11 @@ Full pipeline docs: https://github.com/axledbetter/claude-autopilot#the-pipeline
     // optional run id.
     const json = boolFlag('json');
     const fromPhase = flag('from-phase') ?? flag('from');
-    const runId = args.slice(2).find(a => !a.startsWith('--'));
+    // Filter value-flag values out of positional lookup — see same comment
+    // in the `runs show` case above. (Bugbot MEDIUM, PR #88.)
+    const runId = args.slice(2).find(a =>
+      !a.startsWith('--') && a !== fromPhase,
+    );
     const { runRunResume } = await import('./runs.ts');
     const result = await runRunResume({
       runId: runId ?? '',

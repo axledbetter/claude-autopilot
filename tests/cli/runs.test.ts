@@ -497,6 +497,25 @@ describe('runRunResume + computeResumeLookup', () => {
     assert.equal(lookup.nextPhase, null);
   });
 
+  it('decision="already-complete" when --from-phase targets a succeeded phase with idempotent=false AND hasSideEffects=false (Bugbot LOW, PR #88)', () => {
+    // Regression: prior code fell through to the generic "no prior success
+    // — first attempt" reason and a `retry` decision when the target was
+    // succeeded but neither idempotent nor side-effecting (the createRun
+    // default). Wrong reason text + potentially unsafe replay decision once
+    // execution wires in. Now returns `already-complete` with a reason
+    // pointing at --force-replay.
+    const state = fixtureState({
+      phases: [
+        { name: 'plan', status: 'succeeded', idempotent: false, hasSideEffects: false },
+        { name: 'impl', status: 'pending' },
+      ],
+    });
+    const lookup = computeResumeLookup(state, 'plan');
+    assert.equal(lookup.decision, 'already-complete');
+    assert.match(lookup.reason, /previously succeeded/);
+    assert.match(lookup.reason, /--force-replay/);
+  });
+
   it('JSON envelope marks lookup-only and includes the v1 schema', async () => {
     const cwd = tmpCwd();
     const a = await createRun({ cwd, phases: ['plan', 'impl'] });

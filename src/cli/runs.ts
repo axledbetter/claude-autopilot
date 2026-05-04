@@ -917,6 +917,22 @@ export function computeResumeLookup(
         externalRefs,
       };
     }
+    // Bugbot LOW (PR #88): a succeeded phase with idempotent=false AND
+    // hasSideEffects=false used to fall through to the generic
+    // "no prior success — first attempt" reason and a `retry` decision —
+    // factually wrong (the phase already succeeded) and potentially unsafe
+    // once Phase 6+ wires real execution. Treat as already-complete; the
+    // user can pass --force-replay (Phase 4+) to override.
+    return {
+      runId: state.runId,
+      status: state.status,
+      currentPhase: currentName,
+      nextPhase: target.name,
+      decision: 'already-complete',
+      reason:
+        'phase previously succeeded; resume would re-execute. Pass --force-replay to override.',
+      externalRefs,
+    };
   }
 
   return {
