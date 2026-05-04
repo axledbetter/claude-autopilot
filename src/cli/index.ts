@@ -169,7 +169,11 @@ These are aliases for the flat subcommands; they still work without the 'advance
   args.shift(); // drop 'advanced'
 }
 
-const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'migrate', 'migrate-doctor', 'deploy', 'brainstorm', 'help', '--help', '-h'] as const;
+// `internal` is a hidden verb (v6 Phase 2): markdown-driven skills shell out
+// to it to append typed events. Deliberately not in HELP_GROUPS / HELP_VERBS,
+// not advertised in the welcome banner. Documented only via
+// `claude-autopilot internal --help`.
+const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'migrate', 'migrate-doctor', 'deploy', 'brainstorm', 'internal', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity', 'prompt', 'context-file', 'path', 'adapter', 'ref', 'sha'];
 
 // Bare invocation — no subcommand, no flags → show welcome guide
@@ -794,6 +798,20 @@ From the terminal, the CLI subset exposes only the individual review-phase subco
 Full pipeline docs: https://github.com/axledbetter/claude-autopilot#the-pipeline-phase-by-phase
 `);
     process.exit(0);
+    break;
+  }
+
+  case 'internal': {
+    // v6 Phase 2 — hidden verb. Markdown skills shell out to append typed
+    // events into a run's events.ndjson. NOT advertised in the main help.
+    const { runInternalCli } = await import('../core/run-state/cli-internal.ts');
+    const result = await runInternalCli({
+      args: args.slice(1),
+      cwd: process.cwd(),
+    });
+    for (const line of result.stdout) process.stdout.write(line.endsWith('\n') ? line : `${line}\n`);
+    for (const line of result.stderr) process.stderr.write(line.endsWith('\n') ? line : `${line}\n`);
+    process.exit(result.exit);
     break;
   }
 
