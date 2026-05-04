@@ -362,18 +362,27 @@ interface SubPhaseFactoryOpts {
  *  counter so the durable log distinguishes "outer phase 1, child 0" from
  *  "outer phase 1, child 1".
  *
- *  Encoding: subPhase index = parentPhaseIdx * 1000 + childOrdinal. The
- *  1000 multiplier is a sentinel — outer pipelines have ~10 phases in
- *  practice — and lets `replayState` keep treating phaseIdx as a flat int
- *  without a schema bump. Phase 6 may revisit this if nested sub-phases
- *  need a real tree representation. */
+ *  Encoding: subPhase index = (parentPhaseIdx + 1) * 1000 + childOrdinal.
+ *  The +1 offset is critical: without it, parent index 0 (the FIRST phase
+ *  of any pipeline, since createRun is 0-based) would yield child indices
+ *  1, 2, 3… which collide with the regular top-level phases at those
+ *  exact indices — a sub-phase's idempotency / side-effect events would
+ *  then incorrectly gate the real top-level phase. Caught by Cursor
+ *  Bugbot on PR #87 (HIGH). With the +1 offset:
+ *    parent=0 → children 1001, 1002, 1003
+ *    parent=1 → children 2001, 2002, 2003
+ *    parent=N (N<999) → children (N+1)*1000+1..N
+ *  Top-level pipelines have ~10 phases in practice, so the 1000 multiplier
+ *  + the +1 offset keep collisions impossible at any realistic depth.
+ *  Phase 6 may revisit this if nested sub-phases ever need a real tree
+ *  representation. */
 function makeSubPhaseFactory(opts: SubPhaseFactoryOpts): NonNullable<PhaseContext['subPhase']> {
   let childOrdinal = 0;
   return async function subPhase<SI, SO>(
     child: RunPhase<SI, SO>,
     input: SI,
   ): Promise<SO> {
-    const childIdx = opts.parentPhaseIdx * 1000 + (childOrdinal += 1);
+    const childIdx = (opts.parentPhaseIdx + 1) * 1000 + (childOrdinal += 1);
     return runPhase(child, input, {
       runDir: opts.runDir,
       runId: opts.runId,

@@ -317,9 +317,48 @@ describe('runPhase — sub-phases', () => {
     const startsByIdx = events
       .filter(e => e.event === 'phase.start')
       .map(e => (e as { phaseIdx: number; phase: string }));
-    // One parent (idx=1) + two children (idx=1*1000+1=1001 and 1*1000+2=1002).
+    // One parent (idx=1) + two children (idx=(1+1)*1000+1=2001 and 2002).
     const idxs = startsByIdx.map(e => e.phaseIdx).sort((a, b) => a - b);
-    assert.deepEqual(idxs, [1, 1001, 1002]);
+    assert.deepEqual(idxs, [1, 2001, 2002]);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('sub-phase indices do not collide with top-level indices when parent=0 (Bugbot HIGH, PR #87)', async () => {
+    // Regression: prior encoding `parentPhaseIdx * 1000 + childOrdinal`
+    // collapsed to 1, 2, 3… for parent=0, directly colliding with the
+    // top-level phases at those exact indices. Since createRun uses
+    // 0-based indexing, the FIRST top-level phase always triggered this.
+    // Fix: `(parentPhaseIdx + 1) * 1000 + childOrdinal`. Children of
+    // parent=0 are now 1001, 1002, 1003 — non-colliding.
+    const dir = tmp();
+    const runId = path.basename(dir);
+    fs.mkdirSync(dir, { recursive: true });
+    appendEvent(dir, { event: 'run.start', phases: ['parent', 'sibling'] }, { runId, writerId });
+
+    const child: RunPhase<void, void> = {
+      name: 'child', idempotent: true, hasSideEffects: false,
+      run: async () => {},
+    };
+    const parent: RunPhase<void, void> = {
+      name: 'parent', idempotent: false, hasSideEffects: false,
+      run: async (_i, ctx) => {
+        await ctx.subPhase!(child, undefined);
+        await ctx.subPhase!(child, undefined);
+      },
+    };
+    // Parent at idx=0 — the case that used to collide.
+    await runPhase(parent, undefined, { runDir: dir, runId, writerId, phaseIdx: 0 });
+
+    const { events } = readEvents(dir);
+    const startIdxs = events
+      .filter(e => e.event === 'phase.start')
+      .map(e => (e as { phaseIdx: number }).phaseIdx)
+      .sort((a, b) => a - b);
+    // Expect 0 (parent), 1001, 1002 (children) — NEVER 1 or 2 which would
+    // collide with regular top-level phases at those indices.
+    assert.deepEqual(startIdxs, [0, 1001, 1002]);
+    assert.equal(startIdxs.includes(1), false, 'child index 1 would collide with top-level phase 1');
+    assert.equal(startIdxs.includes(2), false, 'child index 2 would collide with top-level phase 2');
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });
