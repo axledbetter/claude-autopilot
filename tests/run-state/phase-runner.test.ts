@@ -7,6 +7,7 @@ import {
   runPhase,
   type RunPhase,
 } from '../../src/core/run-state/phase-runner.ts';
+import type { BudgetCheck } from '../../src/core/run-state/budget.ts';
 import { appendEvent, readEvents } from '../../src/core/run-state/events.ts';
 import { makeWriterId } from '../../src/core/run-state/lock.ts';
 import {
@@ -359,6 +360,250 @@ describe('runPhase — sub-phases', () => {
     assert.deepEqual(startIdxs, [0, 1001, 1002]);
     assert.equal(startIdxs.includes(1), false, 'child index 1 would collide with top-level phase 1');
     assert.equal(startIdxs.includes(2), false, 'child index 2 would collide with top-level phase 2');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 4 — budget enforcement
+// ---------------------------------------------------------------------------
+
+describe('runPhase — budget enforcement (Phase 4)', () => {
+  it('back-compat: no budget config → no budget.check event, no rejection', async () => {
+    const dir = tmp();
+    const runId = seedRun(dir, ['plan']);
+    const phase: RunPhase<void, void> = {
+      name: 'plan', idempotent: false, hasSideEffects: false,
+      run: async () => {},
+    };
+    await runPhase(phase, undefined, { runDir: dir, runId, writerId, phaseIdx: 0 });
+    const { events } = readEvents(dir);
+    const budgetEvents = events.filter(e => e.event === 'budget.check');
+    assert.equal(budgetEvents.length, 0, 'no budget config means no budget.check event');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('proceed decision: emits budget.check then proceeds normally', async () => {
+    const dir = tmp();
+    const runId = seedRun(dir, ['plan']);
+    const phase: RunPhase<void, void> = {
+      name: 'plan', idempotent: false, hasSideEffects: false,
+      estimateCost: () => ({ lowUSD: 0.5, highUSD: 1 }),
+      run: async () => {},
+    };
+    await runPhase(phase, undefined, {
+      runDir: dir, runId, writerId, phaseIdx: 0,
+      budget: { perRunUSD: 25 },
+    });
+    const { events } = readEvents(dir);
+    const kinds = events.map(e => e.event);
+    // budget.check MUST come before phase.start.
+    const idxBudget = kinds.indexOf('budget.check');
+    const idxStart = kinds.indexOf('phase.start');
+    assert.ok(idxBudget >= 0 && idxStart >= 0);
+    assert.ok(idxBudget < idxStart, 'budget.check must precede phase.start');
+    const budgetEv = events[idxBudget] as {
+      decision: string; estimatedHigh: number | null; reserveApplied: number;
+    };
+    assert.equal(budgetEv.decision, 'proceed');
+    assert.equal(budgetEv.estimatedHigh, 1);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('hard-fail decision (CI mode): throws budget_exceeded, no phase.start emitted', async () => {
+    const dir = tmp();
+    const runId = seedRun(dir, ['big']);
+    let executed = false;
+    const phase: RunPhase<void, void> = {
+      name: 'big', idempotent: false, hasSideEffects: false,
+      run: async () => { executed = true; },
+    };
+    await assert.rejects(
+      runPhase(phase, undefined, {
+        runDir: dir, runId, writerId, phaseIdx: 0,
+        budget: { perRunUSD: 1 }, // floor of $5 alone exceeds cap
+        nonInteractive: true,
+      }),
+      (err: unknown) => err instanceof GuardrailError && err.code === 'budget_exceeded',
+    );
+    assert.equal(executed, false, 'phase.run must NOT execute on hard-fail');
+
+    const { events } = readEvents(dir);
+    const kinds = events.map(e => e.event);
+    assert.ok(kinds.includes('budget.check'), 'budget.check must be emitted');
+    assert.equal(kinds.includes('phase.start'), false, 'phase.start must NOT be emitted');
+    assert.equal(kinds.includes('phase.failed'), false, 'phase.failed must NOT be emitted (phase never started)');
+
+    const snap = readPhaseSnapshot(dir, 'big');
+    assert.equal(snap, null, 'no phase snapshot when budget rejects pre-start');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('budget.check payload carries the full BudgetCheck shape', async () => {
+    const dir = tmp();
+    const runId = seedRun(dir, ['validate']);
+    const phase: RunPhase<void, void> = {
+      name: 'validate', idempotent: true, hasSideEffects: false,
+      estimateCost: () => ({ lowUSD: 0.1, highUSD: 0.5 }),
+      run: async () => {},
+    };
+    await runPhase(phase, undefined, {
+      runDir: dir, runId, writerId, phaseIdx: 0,
+      budget: { perRunUSD: 25, conservativePhaseReserveUSD: 1 },
+    });
+    const { events } = readEvents(dir);
+    const ev = events.find(e => e.event === 'budget.check') as unknown as Record<string, unknown>;
+    assert.ok(ev);
+    assert.equal(ev.event, 'budget.check');
+    assert.equal(ev.phase, 'validate');
+    assert.equal(ev.phaseIdx, 0);
+    assert.equal(ev.decision, 'proceed');
+    assert.equal(ev.estimatedHigh, 0.5);
+    assert.equal(ev.actualSoFar, 0);
+    assert.equal(ev.reserveApplied, 1); // max(0.5, 1) = 1
+    assert.equal(typeof ev.capRemaining, 'number');
+    assert.equal(typeof ev.reason, 'string');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('actualSoFar aggregates phase.cost across the WHOLE run, not just this phase', async () => {
+    // Seed the log with prior cost events from earlier phases so the
+    // current phase's preflight sees them.
+    const dir = tmp();
+    const runId = seedRun(dir, ['phaseA', 'phaseB']);
+    appendEvent(dir, {
+      event: 'phase.cost', phase: 'phaseA', phaseIdx: 0,
+      provider: 'openai', inputTokens: 1000, outputTokens: 500, costUSD: 4,
+    }, { writerId, runId });
+    appendEvent(dir, {
+      event: 'phase.cost', phase: 'phaseA', phaseIdx: 0,
+      provider: 'openai', inputTokens: 200, outputTokens: 100, costUSD: 2,
+    }, { writerId, runId });
+
+    const phase: RunPhase<void, void> = {
+      name: 'phaseB', idempotent: false, hasSideEffects: false,
+      estimateCost: () => ({ lowUSD: 0.5, highUSD: 1 }),
+      run: async () => {},
+    };
+    // perRunUSD = 10, actualSoFar = 6, reserveApplied = max(1, 5) = 5
+    // → 6 + 5 = 11 > 10 → hard-fail.
+    await assert.rejects(
+      runPhase(phase, undefined, {
+        runDir: dir, runId, writerId, phaseIdx: 1,
+        budget: { perRunUSD: 10 },
+        nonInteractive: true,
+      }),
+      (err: unknown) => err instanceof GuardrailError && err.code === 'budget_exceeded',
+    );
+    const { events } = readEvents(dir);
+    const ev = events.find(e => e.event === 'budget.check') as { actualSoFar: number };
+    assert.equal(ev.actualSoFar, 6, 'actualSoFar must sum prior-phase costs');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('pause decision (interactive): confirmBudgetPause returning true → proceeds', async () => {
+    const dir = tmp();
+    const runId = seedRun(dir, ['p']);
+    let executed = false;
+    let prompted: BudgetCheck | null = null;
+    const phase: RunPhase<void, void> = {
+      name: 'p', idempotent: false, hasSideEffects: false,
+      run: async () => { executed = true; },
+    };
+    await runPhase(phase, undefined, {
+      runDir: dir, runId, writerId, phaseIdx: 0,
+      budget: { perRunUSD: 1 }, // floor of $5 alone exceeds cap → pause in interactive mode
+      nonInteractive: false,
+      confirmBudgetPause: async (check) => { prompted = check; return true; },
+    });
+    assert.equal(executed, true, 'phase.run must execute on user confirm');
+    assert.ok(prompted, 'confirmBudgetPause must be called');
+    assert.equal((prompted as BudgetCheck).decision, 'pause');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('pause decision (interactive): confirmBudgetPause returning false → throws budget_exceeded', async () => {
+    const dir = tmp();
+    const runId = seedRun(dir, ['p']);
+    let executed = false;
+    const phase: RunPhase<void, void> = {
+      name: 'p', idempotent: false, hasSideEffects: false,
+      run: async () => { executed = true; },
+    };
+    await assert.rejects(
+      runPhase(phase, undefined, {
+        runDir: dir, runId, writerId, phaseIdx: 0,
+        budget: { perRunUSD: 1 },
+        nonInteractive: false,
+        confirmBudgetPause: async () => false,
+      }),
+      (err: unknown) =>
+        err instanceof GuardrailError
+        && err.code === 'budget_exceeded'
+        && (err.details as { userDenied?: boolean }).userDenied === true,
+    );
+    assert.equal(executed, false, 'phase.run must NOT execute on user deny');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('idempotent short-circuit takes precedence over budget check (no budget.check emitted)', async () => {
+    // If a phase already succeeded and is idempotent, the runner short-
+    // circuits BEFORE the budget preflight. This is the right ordering:
+    // a no-op replay shouldn't burn budget headroom or trigger spurious
+    // budget.check events.
+    const dir = tmp();
+    const runId = seedRun(dir, ['validate']);
+    const phase: RunPhase<void, void> = {
+      name: 'validate', idempotent: true, hasSideEffects: false,
+      run: async () => {},
+    };
+    // First run — no budget config, succeeds normally.
+    await runPhase(phase, undefined, { runDir: dir, runId, writerId, phaseIdx: 0 });
+
+    // Second run — with a budget config that WOULD reject. Idempotent
+    // short-circuit must fire first (throwing 'superseded'), so no
+    // budget.check event is emitted.
+    await assert.rejects(
+      runPhase(phase, undefined, {
+        runDir: dir, runId, writerId, phaseIdx: 0,
+        budget: { perRunUSD: 0.01 },
+        nonInteractive: true,
+      }),
+      (err: unknown) => err instanceof GuardrailError && err.code === 'superseded',
+    );
+
+    const { events } = readEvents(dir);
+    const budgetChecks = events.filter(e => e.event === 'budget.check');
+    assert.equal(budgetChecks.length, 0, 'idempotent short-circuit must skip budget preflight');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('phase without estimateCost: Layer 2 floor still enforces (Codex CRITICAL #3)', async () => {
+    // The whole point of Layer 2 — even a phase that doesn't declare
+    // estimateCost gets gated by the conservative floor. Otherwise a phase
+    // can silently bypass budget enforcement by simply omitting the field.
+    const dir = tmp();
+    const runId = seedRun(dir, ['unknown']);
+    const phase: RunPhase<void, void> = {
+      name: 'unknown', idempotent: false, hasSideEffects: false,
+      // no estimateCost
+      run: async () => {},
+    };
+    await assert.rejects(
+      runPhase(phase, undefined, {
+        runDir: dir, runId, writerId, phaseIdx: 0,
+        budget: { perRunUSD: 3 }, // 0 + 5 floor = 5 > 3 → hard-fail
+        nonInteractive: true,
+      }),
+      (err: unknown) => err instanceof GuardrailError && err.code === 'budget_exceeded',
+    );
+    const { events } = readEvents(dir);
+    const ev = events.find(e => e.event === 'budget.check') as {
+      estimatedHigh: number | null; reserveApplied: number; decision: string;
+    };
+    assert.equal(ev.estimatedHigh, null);
+    assert.equal(ev.reserveApplied, 5);
+    assert.equal(ev.decision, 'hard-fail');
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });

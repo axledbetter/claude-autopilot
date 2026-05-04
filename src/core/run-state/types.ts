@@ -251,6 +251,32 @@ export interface IndexRebuiltEvent extends RunEventBase {
   cause: 'missing' | 'corrupt' | 'force';
 }
 
+/** Phase 4 — budget enforcement preflight. Emitted by `runPhase` BEFORE
+ *  `phase.start` for every phase whose parent run carries a `BudgetConfig`.
+ *  Carries the full `BudgetCheck` payload from `checkPhaseBudget` so
+ *  consumers (cost dashboards, CI) can attribute spend and decisions
+ *  without re-running the policy. Per the v6 spec "Budget enforcement"
+ *  section + Codex CRITICAL #3 (two-layer guard, layer 2 always runs). */
+export interface BudgetCheckEvent extends RunEventBase {
+  event: 'budget.check';
+  phase: string;
+  phaseIdx: number;
+  decision: 'proceed' | 'pause' | 'hard-fail';
+  /** `estimate.high` from `RunPhase.estimateCost` if it returned a value;
+   *  null when the phase doesn't implement estimateCost. Layer 2 (the
+   *  mandatory floor) ALWAYS runs regardless. */
+  estimatedHigh: number | null;
+  /** Sum of every prior `phase.cost` event in this run, in USD. */
+  actualSoFar: number;
+  /** The reserve the runner deducted against `perRunUSD` for this phase
+   *  (Layer 2 floor, expressed in USD). */
+  reserveApplied: number;
+  /** USD remaining under `perRunUSD` after `actualSoFar` + the larger of
+   *  `estimatedHigh` and `reserveApplied`. May be negative on hard-fail. */
+  capRemaining: number;
+  reason: string;
+}
+
 /** Discriminated union of every event variant. Add new variants here and
  *  the code that switches over `event` will type-error at compile time. */
 export type RunEvent =
@@ -266,7 +292,8 @@ export type RunEvent =
   | PhaseExternalRefEvent
   | PhaseNeedsHumanEvent
   | LockTakeoverEvent
-  | IndexRebuiltEvent;
+  | IndexRebuiltEvent
+  | BudgetCheckEvent;
 
 /** Distributive Omit so the discriminated-union shape is preserved when we
  *  strip the fields the appender fills in. Plain `Omit<RunEvent, ...>`

@@ -13,6 +13,13 @@ export interface CouncilConfig {
   minSuccessfulResponses: number;
   parallelInputMaxTokens: number;
   synthesisInputMaxTokens: number;
+  /** Phase 4 (v6) — bounded recursion for the synthesizer. If set, every
+   *  synthesizer self-call increments an internal depth counter; exceeding
+   *  this value aborts the council with `partial` status (never deeper).
+   *  Default: undefined (no bound; current single-shot synthesizer is
+   *  unaffected — the bound only matters when the synthesizer itself
+   *  recurses into runCouncil). */
+  councilMaxRecursionDepth?: number;
 }
 
 export type ModelResponseStatus = 'ok' | 'timeout' | 'error';

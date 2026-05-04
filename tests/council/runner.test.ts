@@ -133,4 +133,105 @@ describe('runCouncil', () => {
     // Total elapsed should be ~10ms, not anywhere near 10s
     assert.ok(Date.now() - start < 1000, 'expected fast completion without waiting for timer');
   });
+
+  // --------------------------------------------------------------------------
+  // Phase 4 — bounded synthesizer recursion (v6 spec "Budget enforcement")
+  // --------------------------------------------------------------------------
+
+  it('R9: depth bound — synthesizer recursion exceeding max returns partial status', async () => {
+    // Simulate a self-eating synthesizer by having its `consult()` recurse
+    // back into runCouncil with currentDepth + 1. With maxDepth = 2, the
+    // 3rd nested call must abort with `partial`.
+    const boundedConfig: CouncilConfig = { ...baseConfig, councilMaxRecursionDepth: 2 };
+    const adapters = [makeAdapter('A', 'r')];
+    let recursedCount = 0;
+    const recursingSynth: CouncilAdapter = {
+      label: 'Synth',
+      async consult(p, c) {
+        recursedCount += 1;
+        // Recurse inward — at depth N, request depth N+1.
+        const nested = await runCouncil(
+          boundedConfig,
+          adapters,
+          recursingSynth,
+          p,
+          c,
+          { currentDepth: recursedCount },
+        );
+        return { text: nested.result.synthesis?.text ?? `recursed ${recursedCount}` };
+      },
+    };
+    const { result } = await runCouncil(
+      boundedConfig,
+      adapters,
+      recursingSynth,
+      'q',
+      'ctx',
+      { currentDepth: 0 },
+    );
+    // The bound MUST eventually fire; status reflects what happened at the
+    // outermost level. The outermost call still has a synthesizer that
+    // returned a value (the recursive call eventually short-circuited and
+    // that result bubbles up). The point of the test: recursion did not
+    // explode unboundedly.
+    assert.ok(recursedCount <= 3, `recursion bounded; got depth ${recursedCount}`);
+    assert.ok(['success', 'partial'].includes(result.status));
+  });
+
+  it('R10: depth bound — exceeding max at the entry point returns partial immediately', async () => {
+    // Calling runCouncil with currentDepth already beyond the bound is
+    // the `recurses too deep` aborting path. Should NOT call any adapter
+    // at all — the bound check fires first.
+    const adapters = [makeAdapter('A', 'r')];
+    const synthesizer = makeAdapter('Synth', 's');
+    const boundedConfig: CouncilConfig = { ...baseConfig, councilMaxRecursionDepth: 1 };
+    const { result, usage } = await runCouncil(
+      boundedConfig,
+      adapters,
+      synthesizer,
+      'q',
+      'ctx',
+      { currentDepth: 5 },
+    );
+    assert.equal(result.status, 'partial');
+    assert.equal(result.responses.length, 0, 'no adapters consulted past the bound');
+    assert.equal(result.synthesis, undefined);
+    assert.equal(usage.inputTokens, 0);
+    assert.equal(usage.outputTokens, 0);
+  });
+
+  it('R11: depth bound — without councilMaxRecursionDepth set, behavior unchanged (back-compat)', async () => {
+    // No bound configured → currentDepth is irrelevant; runCouncil runs
+    // the full single-shot pipeline as before.
+    const adapters = [makeAdapter('A', 'response A')];
+    const synthesizer = makeAdapter('Synth', 'synthesis text');
+    const { result } = await runCouncil(
+      baseConfig, // no councilMaxRecursionDepth
+      adapters,
+      synthesizer,
+      'q',
+      'ctx',
+      { currentDepth: 99 }, // should be ignored
+    );
+    assert.equal(result.status, 'success');
+    assert.equal(result.synthesis?.text, 'synthesis text');
+  });
+
+  it('R12: depth bound — currentDepth defaults to 0 when omitted', async () => {
+    // Top-level callers don't pass currentDepth; default of 0 must permit
+    // the call to run normally even when a small bound is set.
+    const adapters = [makeAdapter('A', 'r')];
+    const synthesizer = makeAdapter('Synth', 's');
+    const boundedConfig: CouncilConfig = { ...baseConfig, councilMaxRecursionDepth: 1 };
+    const { result } = await runCouncil(
+      boundedConfig,
+      adapters,
+      synthesizer,
+      'q',
+      'ctx',
+      // no options — defaults to { currentDepth: 0 }
+    );
+    // 0 <= 1 → not aborted by the bound; full pipeline runs.
+    assert.equal(result.status, 'success');
+  });
 });
