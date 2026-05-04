@@ -422,7 +422,10 @@ function applyEvent(state: RunState, ev: RunEvent): void {
     case 'run.recovery':
     case 'index.rebuilt':
     case 'lock.takeover':
-      // Pure observability; no state mutation needed.
+    case 'budget.check':
+      // Pure observability; no state mutation needed. The runner reads
+      // events.ndjson directly to compute actualSoFar — replay does not
+      // need to track budget decisions for state-correctness purposes.
       break;
     case 'phase.start': {
       state.status = 'running';
