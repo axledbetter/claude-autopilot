@@ -39,7 +39,9 @@
 // Spec: docs/specs/v6-run-state-engine.md "Phase contract", "Run lifecycle",
 // "Idempotency rules + external operation ledger".
 
+import * as readline from 'node:readline';
 import { GuardrailError } from '../errors.ts';
+import { checkPhaseBudget, type BudgetCheck, type BudgetConfig } from './budget.ts';
 import { appendEvent, readEvents } from './events.ts';
 import {
   buildPhaseContext,
@@ -54,6 +56,7 @@ import {
   RUN_STATE_SCHEMA_VERSION,
   type ExternalRef,
   type PhaseSnapshot,
+  type RunEvent,
   type WriterId,
 } from './types.ts';
 
@@ -106,6 +109,18 @@ export interface ParentRunContext {
   /** When true, override the side-effects gate even if a prior success
    *  exists. Records a `run.warning` event noting the override. */
   forceReplay?: boolean;
+  /** Phase 4 — optional budget enforcement config. When omitted the
+   *  runner is back-compat: no `budget.check` event, no preflight, no
+   *  rejection. When present, the runner consults `checkPhaseBudget`
+   *  BEFORE emitting `phase.start` and may throw `budget_exceeded`. */
+  budget?: BudgetConfig;
+  /** When true, a `pause` budget decision becomes `hard-fail` instead of
+   *  prompting the user. Callers in CI / `--json` mode MUST set this.
+   *  Default: false (interactive). */
+  nonInteractive?: boolean;
+  /** Override the interactive confirm prompt. Returning `true` proceeds,
+   *  `false` rejects. Mainly a test seam; the default uses readline. */
+  confirmBudgetPause?: (check: BudgetCheck) => Promise<boolean>;
 }
 
 // Re-export the context surface so callers don't need to import from two
@@ -131,7 +146,16 @@ export async function runPhase<I, O>(
   input: I,
   parentCtx: ParentRunContext,
 ): Promise<O> {
-  const { runDir, runId, writerId, phaseIdx, forceReplay } = parentCtx;
+  const {
+    runDir,
+    runId,
+    writerId,
+    phaseIdx,
+    forceReplay,
+    budget,
+    nonInteractive,
+    confirmBudgetPause,
+  } = parentCtx;
 
   // -- Idempotency / side-effect gating ----------------------------------
   // We replay events.ndjson once up-front to detect prior outcomes for this
@@ -241,6 +265,76 @@ export async function runPhase<I, O>(
         },
         { writerId, runId },
       );
+    }
+  }
+
+  // -- Budget preflight (Phase 4) ----------------------------------------
+  // Runs AFTER idempotency gating (we don't gate replays we're already
+  // going to skip) and BEFORE phase.start (a rejection means the phase
+  // never started — no phase.start, no phase.failed; the runner throws
+  // GuardrailError budget_exceeded so the caller sees a typed failure
+  // and the run can be marked aborted/paused at the orchestrator level).
+  if (budget) {
+    const actualSoFarUSD = sumRunCost(prior.events);
+    const estimate = phase.estimateCost ? phase.estimateCost(input) : null;
+    const check = checkPhaseBudget({
+      budget,
+      phaseName: phase.name,
+      phaseIdx,
+      estimatedCost: estimate,
+      actualSoFarUSD,
+      nonInteractive: nonInteractive === true,
+    });
+
+    appendEvent(
+      runDir,
+      {
+        event: 'budget.check',
+        phase: phase.name,
+        phaseIdx,
+        decision: check.decision,
+        estimatedHigh: check.estimatedHigh,
+        actualSoFar: check.actualSoFar,
+        reserveApplied: check.reserveApplied,
+        capRemaining: check.capRemaining,
+        reason: check.reason,
+      },
+      { writerId, runId },
+    );
+
+    if (check.decision === 'hard-fail') {
+      throw new GuardrailError(
+        `phase ${phase.name} blocked by budget: ${check.reason}`,
+        {
+          code: 'budget_exceeded',
+          provider: 'run-state',
+          details: {
+            runDir,
+            phaseIdx,
+            check,
+          },
+        },
+      );
+    }
+
+    if (check.decision === 'pause') {
+      const confirm = confirmBudgetPause ?? defaultConfirmBudgetPause;
+      const proceed = await confirm(check);
+      if (!proceed) {
+        throw new GuardrailError(
+          `phase ${phase.name} blocked by budget (user denied resume): ${check.reason}`,
+          {
+            code: 'budget_exceeded',
+            provider: 'run-state',
+            details: {
+              runDir,
+              phaseIdx,
+              check,
+              userDenied: true,
+            },
+          },
+        );
+      }
     }
   }
 
@@ -390,4 +484,39 @@ function makeSubPhaseFactory(opts: SubPhaseFactoryOpts): NonNullable<PhaseContex
       phaseIdx: childIdx,
     });
   };
+}
+
+// ----------------------------------------------------------------------------
+// Phase 4 — budget helpers
+// ----------------------------------------------------------------------------
+
+/** Sum every `phase.cost` event across the WHOLE run (not just the current
+ *  phaseIdx). The budget cap is run-wide; sub-phase costs and prior-phase
+ *  costs both count against `perRunUSD`. */
+function sumRunCost(events: RunEvent[]): number {
+  let total = 0;
+  for (const ev of events) {
+    if (ev.event === 'phase.cost') total += ev.costUSD;
+  }
+  return total;
+}
+
+/** Default interactive confirm prompt used when no `confirmBudgetPause`
+ *  override is supplied. Uses node:readline so the runner doesn't pull in
+ *  a dependency just for prompting. */
+async function defaultConfirmBudgetPause(check: BudgetCheck): Promise<boolean> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const message =
+      `Budget warning: ${check.reason}\n` +
+      `  phase: ${check.phase} (idx ${check.phaseIdx})\n` +
+      `  actualSoFar: $${check.actualSoFar.toFixed(2)}\n` +
+      `  reserveApplied: $${check.reserveApplied.toFixed(2)}\n` +
+      `  capRemaining: $${check.capRemaining.toFixed(2)}\n` +
+      `Continue and accept the overage? [y/N] `;
+    const answer: string = await new Promise(resolve => rl.question(message, resolve));
+    return /^y(es)?$/i.test(answer.trim());
+  } finally {
+    rl.close();
+  }
 }
