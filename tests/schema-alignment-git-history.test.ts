@@ -85,4 +85,48 @@ describe('getPreviousFileContent — base ref', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('default base prefers GITHUB_BASE_REF over HEAD~1 (Bugbot follow-up MEDIUM, PR #44)', () => {
+    // Build a fixture repo with main commit + a feature branch with two
+    // additional commits. Without env-var awareness, the default HEAD~1
+    // points at the previous commit on the feature branch, NOT the merge
+    // base — so a multi-commit PR would diff against the wrong version.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-git-history-base-'));
+    try {
+      git(dir, 'init', '-q', '-b', 'main');
+      git(dir, 'config', 'user.email', 'test@example.com');
+      git(dir, 'config', 'user.name', 'Test');
+      // main commit — file = MAIN-V1
+      fs.writeFileSync(path.join(dir, 'file.txt'), 'MAIN-V1\n');
+      git(dir, 'add', 'file.txt');
+      git(dir, 'commit', '-q', '-m', 'main 1');
+      // Simulate origin/main so `origin/main:file.txt` resolves
+      git(dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+      // Feature branch with two further commits
+      git(dir, 'checkout', '-q', '-b', 'feature');
+      fs.writeFileSync(path.join(dir, 'file.txt'), 'FEATURE-V2\n');
+      git(dir, 'add', 'file.txt');
+      git(dir, 'commit', '-q', '-m', 'feature 2');
+      fs.writeFileSync(path.join(dir, 'file.txt'), 'FEATURE-V3\n');
+      git(dir, 'add', 'file.txt');
+      git(dir, 'commit', '-q', '-m', 'feature 3');
+
+      const savedGh = process.env.GITHUB_BASE_REF;
+      try {
+        // Without env var: defaults to HEAD~1 → previous feature commit
+        // ("FEATURE-V2"), NOT the merge base.
+        delete process.env.GITHUB_BASE_REF;
+        assert.equal(getPreviousFileContent('file.txt', dir), 'FEATURE-V2\n');
+        // With GITHUB_BASE_REF=main: defaults to origin/main → merge-base
+        // content ("MAIN-V1") — the correct PR-base for diffing.
+        process.env.GITHUB_BASE_REF = 'main';
+        assert.equal(getPreviousFileContent('file.txt', dir), 'MAIN-V1\n');
+      } finally {
+        if (savedGh === undefined) delete process.env.GITHUB_BASE_REF;
+        else process.env.GITHUB_BASE_REF = savedGh;
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
