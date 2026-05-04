@@ -79,9 +79,12 @@ export const schemaAlignmentRule: StaticRule = {
     type EntityWithSource = { entity: SchemaEntity; sourceFile: string };
     // For Prisma schema files, fetch the previous version from git so we only
     // emit entities for what actually changed in this diff. SQL migrations
-    // are inherently a diff already, so previousContent is irrelevant there.
+    // are inherently a diff already; the SQL extractor ignores
+    // `previousContent`, so skipping the `git show` spawn there avoids pure
+    // waste (Bugbot LOW on PR #44).
     const allEntities: EntityWithSource[] = migrationFiles.flatMap(f => {
-      const previousContent = getPreviousFileContent(f, cwd);
+      const isPrisma = f.endsWith('.prisma');
+      const previousContent = isPrisma ? getPreviousFileContent(f, cwd) : null;
       return extract(f, previousContent).map(entity => ({ entity, sourceFile: f }));
     });
     if (allEntities.length === 0) return [];

@@ -41,49 +41,74 @@ function makeRepoWithTwoCommits(): { dir: string; tearDown: () => void } {
   };
 }
 
+/**
+ * Run `fn` with `GITHUB_BASE_REF` and `CI_MERGE_REQUEST_TARGET_BRANCH_NAME`
+ * cleared, restoring on exit. The CI-aware default in `getPreviousFileContent`
+ * reads these vars first, so tests that pin the bare HEAD~1 default fall over
+ * in CI environments (GitHub Actions sets `GITHUB_BASE_REF` on PR builds).
+ */
+function withCleanCiEnv(fn: () => void): void {
+  const savedGh = process.env.GITHUB_BASE_REF;
+  const savedGl = process.env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME;
+  delete process.env.GITHUB_BASE_REF;
+  delete process.env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME;
+  try {
+    fn();
+  } finally {
+    if (savedGh !== undefined) process.env.GITHUB_BASE_REF = savedGh;
+    if (savedGl !== undefined) process.env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME = savedGl;
+  }
+}
+
 describe('getPreviousFileContent — base ref', () => {
   it('defaults to HEAD~1 (not HEAD) so post-commit contexts return the prior version', () => {
-    const { dir, tearDown } = makeRepoWithTwoCommits();
-    try {
-      // Default base: should return commit-1 content ("ONE"), NOT current ("TWO").
-      // Reading HEAD would return "TWO" — same as the working tree — and the
-      // diff would be empty. That's the bug.
-      const prev = getPreviousFileContent('file.txt', dir);
-      assert.equal(prev, 'ONE\n');
-    } finally {
-      tearDown();
-    }
+    withCleanCiEnv(() => {
+      const { dir, tearDown } = makeRepoWithTwoCommits();
+      try {
+        // Default base: should return commit-1 content ("ONE"), NOT current ("TWO").
+        // Reading HEAD would return "TWO" — same as the working tree — and the
+        // diff would be empty. That's the bug.
+        const prev = getPreviousFileContent('file.txt', dir);
+        assert.equal(prev, 'ONE\n');
+      } finally {
+        tearDown();
+      }
+    });
   });
 
   it('accepts an explicit base override (e.g. main, a SHA, GITHUB_BASE_REF resolution)', () => {
-    const { dir, tearDown } = makeRepoWithTwoCommits();
-    try {
-      // Explicitly pass HEAD~1 — same content as the default.
-      const prev = getPreviousFileContent('file.txt', dir, 'HEAD~1');
-      assert.equal(prev, 'ONE\n');
-      // And HEAD reads the current commit (would be the bug if we used it as default)
-      const current = getPreviousFileContent('file.txt', dir, 'HEAD');
-      assert.equal(current, 'TWO\n');
-    } finally {
-      tearDown();
-    }
+    withCleanCiEnv(() => {
+      const { dir, tearDown } = makeRepoWithTwoCommits();
+      try {
+        // Explicitly pass HEAD~1 — same content as the default.
+        const prev = getPreviousFileContent('file.txt', dir, 'HEAD~1');
+        assert.equal(prev, 'ONE\n');
+        // And HEAD reads the current commit (would be the bug if we used it as default)
+        const current = getPreviousFileContent('file.txt', dir, 'HEAD');
+        assert.equal(current, 'TWO\n');
+      } finally {
+        tearDown();
+      }
+    });
   });
 
   it('returns null when the ref does not resolve (e.g. first-commit repo with no HEAD~1)', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-git-history-empty-'));
-    try {
-      git(dir, 'init', '-q', '-b', 'main');
-      git(dir, 'config', 'user.email', 'test@example.com');
-      git(dir, 'config', 'user.name', 'Test');
-      fs.writeFileSync(path.join(dir, 'file.txt'), 'only\n');
-      git(dir, 'add', 'file.txt');
-      git(dir, 'commit', '-q', '-m', 'first commit');
-      // No HEAD~1 exists — expect null, not a throw.
-      const prev = getPreviousFileContent('file.txt', dir);
-      assert.equal(prev, null);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
+    withCleanCiEnv(() => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-git-history-empty-'));
+      try {
+        git(dir, 'init', '-q', '-b', 'main');
+        git(dir, 'config', 'user.email', 'test@example.com');
+        git(dir, 'config', 'user.name', 'Test');
+        fs.writeFileSync(path.join(dir, 'file.txt'), 'only\n');
+        git(dir, 'add', 'file.txt');
+        git(dir, 'commit', '-q', '-m', 'first commit');
+        // No HEAD~1 exists — expect null, not a throw.
+        const prev = getPreviousFileContent('file.txt', dir);
+        assert.equal(prev, null);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 
   it('default base prefers GITHUB_BASE_REF over HEAD~1 (Bugbot follow-up MEDIUM, PR #44)', () => {
