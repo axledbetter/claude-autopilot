@@ -3,10 +3,15 @@ import type { GuardrailConfig } from '../config/types.ts';
 import type { ReviewEngine } from '../../adapters/review-engine/types.ts';
 import { dedupFindings, findingContentKey } from '../findings/dedup.ts';
 
+export interface StaticRuleContext {
+  config?: GuardrailConfig;
+  engine?: ReviewEngine;
+}
+
 export interface StaticRule {
   name: string;
   severity: 'critical' | 'warning' | 'note';
-  check(touchedFiles: string[], config?: Record<string, unknown>): Promise<Finding[]>;
+  check(touchedFiles: string[], ctx?: StaticRuleContext): Promise<Finding[]>;
   autofix?(finding: Finding): Promise<FixStatus>;
 }
 
@@ -79,12 +84,9 @@ async function runAllChecks(
   config?: GuardrailConfig,
   engine?: ReviewEngine,
 ): Promise<Finding[]> {
-  const ruleConfig: Record<string, unknown> = {
-    ...(config ? (config as unknown as Record<string, unknown>) : {}),
-    _engine: engine,
-  };
+  const ctx: StaticRuleContext = { config, engine };
   const all: Finding[] = [];
-  for (const rule of rules) all.push(...(await rule.check(files, ruleConfig)));
+  for (const rule of rules) all.push(...(await rule.check(files, ctx)));
   return all;
 }
 

@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { StaticRule } from '../../phases/static-rules.ts';
+import type { StaticRule, StaticRuleContext } from '../../phases/static-rules.ts';
 import type { Finding } from '../../findings/types.ts';
 import { extractTailwindColors } from '../tailwind-extractor.ts';
 
@@ -44,10 +44,8 @@ export const brandTokensRule: StaticRule = {
   name: 'brand-tokens',
   severity: 'warning',
 
-  async check(touchedFiles: string[], config: Record<string, unknown> = {}): Promise<Finding[]> {
-    const brandCfg = config.brand as
-      | { colorsFrom?: string; colors?: string[]; fonts?: string[] }
-      | undefined;
+  async check(touchedFiles: string[], ctx: StaticRuleContext = {}): Promise<Finding[]> {
+    const brandCfg = ctx.config?.brand;
 
     if (!brandCfg) return [];
 

@@ -1,8 +1,7 @@
 // src/core/static-rules/rules/schema-alignment.ts
-import type { StaticRule } from '../../phases/static-rules.ts';
+import type { StaticRule, StaticRuleContext } from '../../phases/static-rules.ts';
 import type { Finding } from '../../findings/types.ts';
-import type { SchemaAlignmentConfig, LayerScanResult, AlignmentFinding, Evidence, SchemaEntity } from '../../schema-alignment/types.ts';
-import type { ReviewEngine } from '../../../adapters/review-engine/types.ts';
+import type { LayerScanResult, AlignmentFinding, Evidence, SchemaEntity } from '../../schema-alignment/types.ts';
 import { detect } from '../../schema-alignment/detector.ts';
 import { extract } from '../../schema-alignment/extractor/index.ts';
 import { scanLayers } from '../../schema-alignment/scanner.ts';
@@ -66,8 +65,8 @@ export const schemaAlignmentRule: StaticRule = {
   name: 'schema-alignment',
   severity: 'warning',
 
-  async check(touchedFiles: string[], config: Record<string, unknown> = {}): Promise<Finding[]> {
-    const saConfig = config['schema-alignment'] as SchemaAlignmentConfig | undefined;
+  async check(touchedFiles: string[], ctx: StaticRuleContext = {}): Promise<Finding[]> {
+    const saConfig = ctx.config?.['schema-alignment'];
     if (saConfig?.enabled === false) return [];
 
     const cwd = process.cwd();
@@ -97,7 +96,7 @@ export const schemaAlignmentRule: StaticRule = {
 
     const defaultSev = saConfig?.severity ?? 'warning';
     const llmEnabled = saConfig?.llmCheck !== false;
-    const engine = config['_engine'] as ReviewEngine | undefined;
+    const engine = ctx.engine;
 
     // Structural mode — always compute these so we can fall back if LLM path yields nothing
     const structural: Finding[] = [];
