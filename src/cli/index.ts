@@ -250,25 +250,45 @@ function boolFlag(name: string): boolean {
  *
  * Both `migrate doctor` (two-word) and `migrate-doctor` (single-verb alias)
  * resolve to this helper to keep their behavior locked together.
+ *
+ * Phase 5: also handles --json (envelope on stdout, no human banner).
  */
 async function runMigrateDoctorCLI(): Promise<never> {
   const fix = args.includes('--fix');
-  const result = await runMigrateDoctor({ repoRoot: process.cwd(), fix });
-  for (const r of result.results) {
-    const mark = r.result.ok ? '\x1b[32m✓\x1b[0m' : '\x1b[31m✗\x1b[0m';
-    console.log(`${mark} ${r.name}${r.result.message ? ` — ${r.result.message}` : ''}`);
-    if (!r.result.ok && r.result.fixHint) {
-      console.log(`  \x1b[2mhint: ${r.result.fixHint}\x1b[0m`);
-    }
-  }
-  if (result.mutations && result.mutations.length > 0) {
-    console.log(`\n\x1b[1mFixes applied:\x1b[0m`);
-    for (const m of result.mutations) console.log(`  - ${m}`);
-  }
-  if (result.migrationReportPath) {
-    console.log(`\n\x1b[2mMigration report: ${result.migrationReportPath}\x1b[0m`);
-  }
-  process.exit(result.allOk ? 0 : 1);
+  const json = args.includes('--json');
+  let docResult: Awaited<ReturnType<typeof runMigrateDoctor>> | null = null;
+  const code = await runUnderJsonMode(
+    {
+      command: 'migrate-doctor',
+      active: json,
+      payload: () => docResult ? {
+        results: docResult.results,
+        mutations: docResult.mutations ?? [],
+        migrationReportPath: docResult.migrationReportPath,
+        allOk: docResult.allOk,
+      } : {},
+      statusFor: exit => exit === 0 ? 'pass' : 'fail',
+    },
+    async () => {
+      docResult = await runMigrateDoctor({ repoRoot: process.cwd(), fix });
+      for (const r of docResult.results) {
+        const mark = r.result.ok ? '\x1b[32m✓\x1b[0m' : '\x1b[31m✗\x1b[0m';
+        console.log(`${mark} ${r.name}${r.result.message ? ` — ${r.result.message}` : ''}`);
+        if (!r.result.ok && r.result.fixHint) {
+          console.log(`  \x1b[2mhint: ${r.result.fixHint}\x1b[0m`);
+        }
+      }
+      if (docResult.mutations && docResult.mutations.length > 0) {
+        console.log(`\n\x1b[1mFixes applied:\x1b[0m`);
+        for (const m of docResult.mutations) console.log(`  - ${m}`);
+      }
+      if (docResult.migrationReportPath) {
+        console.log(`\n\x1b[2mMigration report: ${docResult.migrationReportPath}\x1b[0m`);
+      }
+      return docResult.allOk ? 0 : 1;
+    },
+  );
+  process.exit(code);
 }
 
 function printUsage(): void {
@@ -719,11 +739,15 @@ switch (subcommand) {
   }
 
   case 'migrate-v4': {
-    const code = await runMigrateV4({
-      cwd: flag('path') ?? process.cwd(),
-      write: boolFlag('write'),
-      undo: boolFlag('undo'),
-    });
+    const json = boolFlag('json');
+    const code = await runUnderJsonMode(
+      { command: 'migrate-v4', active: json },
+      () => runMigrateV4({
+        cwd: flag('path') ?? process.cwd(),
+        write: boolFlag('write'),
+        undo: boolFlag('undo'),
+      }),
+    );
     process.exit(code);
     break;
   }
@@ -742,6 +766,7 @@ switch (subcommand) {
     const envName = flag('env') ?? 'dev';
     const dryRun = boolFlag('dry-run');
     const yesFlag = boolFlag('yes');
+    const json = boolFlag('json');
 
     // Read package version for the runtime handshake.
     const root = findPackageRoot(import.meta.url);
@@ -757,25 +782,50 @@ switch (subcommand) {
       }
     }
 
-    const result = await runMigrateDispatch({
-      repoRoot: process.cwd(),
-      env: envName,
-      yesFlag,
-      nonInteractive: !process.stdin.isTTY,
-      currentRuntimeVersion: runtimeVersion,
-      dryRun,
-    });
+    // Capture migrate result in an outer ref so the wrapper's payload
+    // callback can surface its structured fields in --json mode.
+    let migrateResult: Awaited<ReturnType<typeof runMigrateDispatch>> | null = null;
+    const code = await runUnderJsonMode(
+      {
+        command: 'migrate',
+        active: json,
+        payload: () => migrateResult ? {
+          migrate: {
+            status: migrateResult.status,
+            reasonCode: migrateResult.reasonCode,
+            appliedMigrations: migrateResult.appliedMigrations,
+            nextActions: migrateResult.nextActions,
+          },
+          ...(migrateResult.nextActions.length > 0 ? { nextActions: migrateResult.nextActions } : {}),
+        } : {},
+        statusFor: exit => {
+          if (!migrateResult) return exit === 0 ? 'pass' : 'fail';
+          return migrateResult.status === 'applied' || migrateResult.status === 'skipped' ? 'pass' : 'fail';
+        },
+      },
+      async () => {
+        migrateResult = await runMigrateDispatch({
+          repoRoot: process.cwd(),
+          env: envName,
+          yesFlag,
+          nonInteractive: json || !process.stdin.isTTY,
+          currentRuntimeVersion: runtimeVersion,
+          dryRun,
+        });
 
-    const ok = result.status === 'applied' || result.status === 'skipped';
-    const color = ok ? '\x1b[32m' : '\x1b[31m';
-    console.log(`${color}[migrate] status=${result.status} reason=${result.reasonCode}\x1b[0m`);
-    if (result.appliedMigrations.length > 0) {
-      console.log(`  applied: ${result.appliedMigrations.join(', ')}`);
-    }
-    if (result.nextActions.length > 0) {
-      console.log(`  next: ${result.nextActions.join('; ')}`);
-    }
-    process.exit(ok ? 0 : 1);
+        const ok = migrateResult.status === 'applied' || migrateResult.status === 'skipped';
+        const color = ok ? '\x1b[32m' : '\x1b[31m';
+        console.log(`${color}[migrate] status=${migrateResult.status} reason=${migrateResult.reasonCode}\x1b[0m`);
+        if (migrateResult.appliedMigrations.length > 0) {
+          console.log(`  applied: ${migrateResult.appliedMigrations.join(', ')}`);
+        }
+        if (migrateResult.nextActions.length > 0) {
+          console.log(`  next: ${migrateResult.nextActions.join('; ')}`);
+        }
+        return ok ? 0 : 1;
+      },
+    );
+    process.exit(code);
     break;
   }
 
@@ -804,20 +854,27 @@ switch (subcommand) {
     // non-flag positional after `deploy` selects the verb. The historic
     // `claude-autopilot deploy` (no subverb) keeps calling runDeploy.
     const subverb = args[1] && !args[1].startsWith('--') ? args[1] : undefined;
+    const json = boolFlag('json');
     if (subverb === 'rollback') {
       const to = flag('to');
-      const code = await runDeployRollback({
-        configPath: config,
-        adapterOverride: adapterArg as AdapterName | undefined,
-        to,
-      });
+      const code = await runUnderJsonMode(
+        { command: 'deploy rollback', active: json },
+        () => runDeployRollback({
+          configPath: config,
+          adapterOverride: adapterArg as AdapterName | undefined,
+          to,
+        }),
+      );
       process.exit(code);
     }
     if (subverb === 'status') {
-      const code = await runDeployStatus({
-        configPath: config,
-        adapterOverride: adapterArg as AdapterName | undefined,
-      });
+      const code = await runUnderJsonMode(
+        { command: 'deploy status', active: json },
+        () => runDeployStatus({
+          configPath: config,
+          adapterOverride: adapterArg as AdapterName | undefined,
+        }),
+      );
       process.exit(code);
     }
     if (subverb !== undefined) {
@@ -841,14 +898,17 @@ switch (subcommand) {
       }
       prNum = n;
     }
-    const code = await runDeploy({
-      configPath: config,
-      adapterOverride: adapterArg as AdapterName | undefined,
-      ref,
-      commitSha,
-      watch,
-      pr: prNum,
-    });
+    const code = await runUnderJsonMode(
+      { command: 'deploy', active: json },
+      () => runDeploy({
+        configPath: config,
+        adapterOverride: adapterArg as AdapterName | undefined,
+        ref,
+        commitSha,
+        watch,
+        pr: prNum,
+      }),
+    );
     process.exit(code);
     break;
   }
