@@ -121,11 +121,12 @@ export function readEvents(
     try {
       parsed = JSON.parse(line) as RunEvent;
     } catch (err) {
-      if (i === lastIdx && !endsWithNewline) {
-        // Already counted as truncated tail above.
-        truncatedTail = true;
-        continue;
-      }
+      // The truncated tail (when present) is already excluded from the loop
+      // by the `lastIdx -= 1` decrement above, so any parse failure here is
+      // real mid-file corruption. Caught by Cursor Bugbot on PR #86 (MEDIUM):
+      // the prior `i === lastIdx && !endsWithNewline` heuristic also matched
+      // the LAST processed (well-terminated) line of a tail-truncated file
+      // and silently swallowed genuine corruption on it.
       throw new GuardrailError(
         `events.ndjson: corrupt JSON at line ${i + 1}`,
         {
@@ -233,11 +234,22 @@ function truncateToLastNewline(runDir: string): void {
   if (lastNl < 0) {
     // No newline at all — file is entirely partial. Wipe it.
     try { fs.writeFileSync(p, '', 'utf8'); } catch { /* ignore */ }
+    invalidateSeqSidecar(runDir);
     return;
   }
   // Keep everything through the last '\n'.
   const kept = raw.slice(0, lastNl + 1);
   try { fs.writeFileSync(p, kept, 'utf8'); } catch { /* ignore */ }
+  // The .seq sidecar may now reference a seq from the truncated fragment,
+  // which would create a phantom gap on the next append → foldEvents
+  // throws corrupted_state, breaking the very recovery path. Invalidate it
+  // so the next readMaxSeq falls back to scanning the (now correct) file.
+  // Caught by Cursor Bugbot on PR #86 (LOW).
+  invalidateSeqSidecar(runDir);
+}
+
+function invalidateSeqSidecar(runDir: string): void {
+  try { fs.unlinkSync(seqSidecarPath(runDir)); } catch { /* ignore — not present is fine */ }
 }
 
 function appendEventInner(

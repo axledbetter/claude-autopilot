@@ -101,6 +101,37 @@ describe('appendEvent', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it('partial-write recovery invalidates the .seq sidecar so foldEvents stays gap-free (Bugbot LOW, PR #86)', () => {
+    // Regression: prior code didn't drop the .seq sidecar after truncation.
+    // Subsequent appendEvent read the stale max-seq, which referred to an event
+    // in the truncated fragment, producing a phantom seq-gap that broke
+    // foldEvents on next replay.
+    const dir = tmp();
+    appendEvent(dir, { event: 'run.start', phases: ['a'] }, { writerId, runId: 'R1' });
+    // First real event lands at seq=2. Manually inflate the sidecar to look
+    // like a seq=99 event was written (simulating the partial fragment that
+    // was about to be truncated).
+    fs.writeFileSync(path.join(dir, '.seq'), '99', 'utf8');
+    // Append a partial fragment (no newline) — this is the bytes that would
+    // have ended up at seq=99 had the write completed.
+    fs.appendFileSync(eventsPath(dir), '{"partial":', 'utf8');
+    // First read marks truncation + sets the partial-write marker.
+    const r = readEvents(dir);
+    assert.equal(r.truncatedTail, true);
+    // Next append triggers truncateToLastNewline + recovery event.
+    // After the fix, the sidecar is invalidated so seq picks up from the
+    // real on-disk max (1) → recovery=2 → next event=3, no gap.
+    appendEvent(dir, {
+      event: 'phase.start', phase: 'a', phaseIdx: 0,
+      idempotent: true, hasSideEffects: false, attempt: 1,
+    }, { writerId, runId: 'R1' });
+    // foldEvents must NOT throw corrupted_state.
+    const final = readEvents(dir);
+    assert.equal(final.events.length, 3);
+    assert.deepEqual(final.events.map(e => e.seq), [1, 2, 3]);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it('readEvents throws partial_write on mid-file corruption', () => {
     const dir = tmp();
     // Write 2 valid lines and one mid-file corrupt one followed by a valid line
@@ -122,6 +153,28 @@ describe('appendEvent', () => {
   it('readMaxSeq returns 0 for an empty/missing log', () => {
     const dir = tmp();
     assert.equal(readMaxSeq(dir), 0);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('throws partial_write on mid-file corruption EVEN when file also has truncated tail (Bugbot MEDIUM, PR #86)', () => {
+    // Regression: prior code used `i === lastIdx && !endsWithNewline` to silently
+    // skip parse failures as truncation. After the lastIdx decrement excludes
+    // the actual fragment, that check could match the LAST processed
+    // (well-terminated) line and silently swallow real mid-file corruption.
+    const dir = tmp();
+    // Line 1 is corrupt JSON, line 2 is the truncated fragment (no newline).
+    // The catch should throw on line 1 (real corruption), NOT silently treat
+    // it as the truncation case.
+    fs.writeFileSync(eventsPath(dir),
+      '{this is bogus mid-file corruption}\n' +
+      '{"schema_version":1,"ts":"2026-01-01","runId":"X","seq":2,"writerId":{"pid":1,"hostHash":"h"},"event":"phase.start","phase":"foo","phaseIdx":0,"idempotent":true,"hasSideEffects":false}',
+      'utf8',
+    );
+    assert.throws(
+      () => readEvents(dir),
+      (err: unknown) =>
+        err instanceof GuardrailError && err.code === 'partial_write',
+    );
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });
