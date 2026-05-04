@@ -98,6 +98,28 @@ describe('runCouncil', () => {
     );
   });
 
+  it('R8: synthesizer receives advisor responses exactly once (no doc/prompt duplication)', async () => {
+    // Capture what the synthesizer sees so we can prove responseSections
+    // is not duplicated across prompt + context.
+    let capturedPrompt = '';
+    let capturedContext = '';
+    const synthesizer: CouncilAdapter = {
+      label: 'Synth',
+      async consult(p: string, c: string): Promise<string> {
+        capturedPrompt = p;
+        capturedContext = c;
+        return 'synthesis';
+      },
+    };
+    const adapters = [makeAdapter('A', 'response-A-text-marker'), makeAdapter('B', 'response-B-text-marker')];
+    await runCouncil(baseConfig, adapters, synthesizer, 'q', 'context-doc-marker');
+    const matchesA = (capturedPrompt + capturedContext).split('response-A-text-marker').length - 1;
+    const matchesB = (capturedPrompt + capturedContext).split('response-B-text-marker').length - 1;
+    assert.equal(matchesA, 1, 'response A should appear exactly once across prompt+context');
+    assert.equal(matchesB, 1, 'response B should appear exactly once across prompt+context');
+    assert.ok(capturedContext.includes('context-doc-marker'), 'context should still carry the original conversation doc');
+  });
+
   it('R7: successful adapter clears timeout timer (does not keep event loop alive)', async () => {
     // If the timer were not cleared, this test would hang for the full timeoutMs
     // after the adapter resolves. node:test has a default 30s timeout; if we
