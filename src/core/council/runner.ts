@@ -47,14 +47,47 @@ export interface CouncilRunOutput {
   usage: { inputTokens: number; outputTokens: number; costUSD: number };
 }
 
+/** Phase 4 — bounded recursion options. The current single-shot
+ *  synthesizer never sets this; it's plumbed for future self-eat
+ *  patterns where the synthesizer recursively calls runCouncil. */
+export interface CouncilRunOptions {
+  /** Current recursion depth. Top-level callers omit this (default 0).
+   *  A synthesizer that calls runCouncil internally MUST pass
+   *  `currentDepth + 1` so the bound takes effect. */
+  currentDepth?: number;
+}
+
 export async function runCouncil(
   config: CouncilConfig,
   adapters: CouncilAdapter[],
   synthesizer: CouncilAdapter,
   prompt: string,
   contextDoc: string,
+  options: CouncilRunOptions = {},
 ): Promise<CouncilRunOutput> {
   const run_id = crypto.randomUUID();
+  const currentDepth = options.currentDepth ?? 0;
+
+  // -- Recursion bound (Phase 4) ------------------------------------------
+  // Strict `>` so a maxDepth of N permits N nested self-calls — i.e.
+  // depth 0 (top-level) + N inner calls. Exceeding aborts with `partial`
+  // and never recurses deeper.
+  if (
+    typeof config.councilMaxRecursionDepth === 'number'
+    && currentDepth > config.councilMaxRecursionDepth
+  ) {
+    return {
+      result: {
+        schema_version: 1,
+        run_id,
+        status: 'partial',
+        prompt,
+        responses: [],
+      },
+      usage: { inputTokens: 0, outputTokens: 0, costUSD: 0 },
+    };
+  }
+
   const context = windowContext(contextDoc, config.parallelInputMaxTokens);
 
   const responses = await Promise.all(
