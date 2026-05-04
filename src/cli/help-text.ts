@@ -79,6 +79,13 @@ export const HELP_GROUPS: HelpGroup[] = [
     ],
   },
   {
+    name: 'Engine',
+    tagline: 'v6 run state engine — list, inspect, GC, resume',
+    verbs: [
+      { verb: 'runs', summary: 'Inspect run state: runs list | show <id> | resume <id> | gc | delete <id> | doctor' },
+    ],
+  },
+  {
     name: 'Advanced',
     tagline: 'server / experimental — hidden from welcome screen',
     verbs: [
@@ -140,6 +147,49 @@ export const HELP_OPTIONS: Record<string, string> = {
   --yes                Required to apply prod migrations in CI`,
   'migrate-doctor': `Options (migrate doctor / migrate-doctor):
   --fix                Apply auto-fixable mutations (legacy stack.md, skills/migrate/, schema_version)`,
+  runs: `Sub-verbs (runs):
+  runs list                              List runs newest-first
+  runs show <id>                         Show a run's state + last events
+  runs gc                                Delete completed runs older than N days
+  runs delete <id>                       Delete a single run (terminal-status only)
+  runs doctor                            Replay events vs. state.json; report drift
+  run resume <id>                        Lookup-only: identify the next phase + decision
+
+Options (runs list):
+  --status <s>         Filter: pending | running | paused | completed | failed | aborted
+  --json               Emit a structured JSON envelope on stdout
+
+Options (runs show):
+  <id>                 ULID of the run to inspect
+  --events             Tail events.ndjson after the state summary
+  --events-tail <n>    How many tail events to show (default 20)
+  --json               Emit a structured JSON envelope on stdout
+
+Options (runs gc):
+  --older-than-days <n>  Cutoff in days (default 30)
+  --dry-run              Preview deletions without touching disk
+  --yes                  Skip the confirmation prompt
+  --json                 Emit a structured JSON envelope on stdout
+
+Options (runs delete):
+  <id>                 ULID of the run to delete
+  --force              Override the terminal-status guard (dangerous)
+  --json               Emit a structured JSON envelope on stdout
+
+Options (runs doctor):
+  <id>                 Limit the check to a single run id (optional)
+  --fix                Rewrite state.json from events.ndjson where drift is found
+  --json               Emit a structured JSON envelope on stdout
+
+Options (run resume):
+  <id>                 ULID of the run to look up
+  --from-phase <name>  Resume target phase by name (must exist on the run)
+  --json               Emit a structured JSON envelope on stdout
+
+  NOTE: \`run resume\` in v6 Phase 3 is LOOKUP-ONLY. It identifies which phase
+        would resume from and the decision rationale (retry, skip-idempotent,
+        needs-human, already-complete) without actually executing the phase.
+        Real execution wires in v6 Phase 6+.`,
   deploy: `Options (deploy):
   --adapter <vercel|fly|render|generic>   Override deploy.adapter from config
   --config <path>              Path to config file

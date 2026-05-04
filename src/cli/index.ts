@@ -173,7 +173,12 @@ These are aliases for the flat subcommands; they still work without the 'advance
 // to it to append typed events. Deliberately not in HELP_GROUPS / HELP_VERBS,
 // not advertised in the welcome banner. Documented only via
 // `claude-autopilot internal --help`.
-const SUBCOMMANDS = ['init', 'run', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'migrate', 'migrate-doctor', 'deploy', 'brainstorm', 'internal', 'help', '--help', '-h'] as const;
+//
+// `runs` (plural) is the v6 Phase 3 umbrella verb — its sub-verbs (list, show,
+// gc, delete, doctor) are dispatched inside its case block. The singular
+// `run resume` form is handled BEFORE the default `run` -> review dispatch
+// kicks in (see disambiguation block just below).
+const SUBCOMMANDS = ['init', 'run', 'runs', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'migrate', 'migrate-doctor', 'deploy', 'brainstorm', 'internal', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity', 'prompt', 'context-file', 'path', 'adapter', 'ref', 'sha'];
 
 // Bare invocation — no subcommand, no flags → show welcome guide
@@ -212,8 +217,16 @@ Run \x1b[36mclaude-autopilot --help\x1b[0m for full command reference.
   process.exit(0);
 }
 
-// Detect first non-flag arg as subcommand, default to 'run'
-const subcommand = (args[0] && !args[0].startsWith('--')) ? args[0] : 'run';
+// Detect first non-flag arg as subcommand, default to 'run'.
+//
+// v6 Phase 3 disambiguation: `run resume <id>` is a v6 verb; the bare `run`
+// remains the legacy review-phase entry point. We rewrite the head to a
+// synthetic 'run-resume' subcommand so the existing 'run' case keeps doing
+// `runReview` and we don't need to special-case it inside the review path.
+let subcommand = (args[0] && !args[0].startsWith('--')) ? args[0] : 'run';
+if (subcommand === 'run' && args[1] === 'resume') {
+  subcommand = 'run-resume';
+}
 
 /** Returns value for --name <value>. Exits if value is missing (next token is another flag or absent). */
 function flag(name: string): string | undefined {
@@ -798,6 +811,107 @@ From the terminal, the CLI subset exposes only the individual review-phase subco
 Full pipeline docs: https://github.com/axledbetter/claude-autopilot#the-pipeline-phase-by-phase
 `);
     process.exit(0);
+    break;
+  }
+
+  case 'runs': {
+    // v6 Phase 3 — umbrella verb. Sub-verbs: list, show, gc, delete, doctor.
+    const sub = args[1];
+    const json = boolFlag('json');
+    const cwd = process.cwd();
+    if (!sub || sub === '--help' || sub === '-h' || sub === 'help') {
+      const focused = (await import('./help-text.ts')).buildCommandHelpText('runs');
+      process.stdout.write(focused ?? buildHelpText());
+      process.exit(0);
+    }
+    const {
+      runRunsList,
+      runRunsShow,
+      runRunsGc,
+      runRunsDelete,
+      runRunsDoctor,
+    } = await import('./runs.ts');
+    let result;
+    switch (sub) {
+      case 'list': {
+        result = await runRunsList({ cwd, status: flag('status'), json });
+        break;
+      }
+      case 'show': {
+        const runId = args.slice(2).find(a => !a.startsWith('--'));
+        const events = boolFlag('events');
+        const tailRaw = flag('events-tail');
+        const eventsTail = tailRaw ? parseInt(tailRaw, 10) : undefined;
+        result = await runRunsShow({
+          runId: runId ?? '',
+          cwd,
+          events,
+          ...(eventsTail !== undefined ? { eventsTail } : {}),
+          json,
+        });
+        break;
+      }
+      case 'gc': {
+        const dryRun = boolFlag('dry-run');
+        const yes = boolFlag('yes');
+        const olderRaw = flag('older-than-days');
+        const olderThanDays = olderRaw ? parseInt(olderRaw, 10) : undefined;
+        result = await runRunsGc({
+          cwd,
+          dryRun,
+          yes,
+          ...(olderThanDays !== undefined ? { olderThanDays } : {}),
+          json,
+        });
+        break;
+      }
+      case 'delete': {
+        const runId = args.slice(2).find(a => !a.startsWith('--'));
+        const force = boolFlag('force');
+        result = await runRunsDelete({ runId: runId ?? '', cwd, force, json });
+        break;
+      }
+      case 'doctor': {
+        const runId = args.slice(2).find(a => !a.startsWith('--'));
+        const fix = boolFlag('fix');
+        result = await runRunsDoctor({
+          cwd,
+          ...(runId ? { runId } : {}),
+          fix,
+          json,
+        });
+        break;
+      }
+      default: {
+        process.stderr.write(`\x1b[31m[claude-autopilot] runs: unknown sub-verb "${sub}" — valid: list, show, gc, delete, doctor\x1b[0m\n`);
+        process.exit(1);
+      }
+    }
+    for (const line of result.stdout) process.stdout.write(line.endsWith('\n') ? line : `${line}\n`);
+    for (const line of result.stderr) process.stderr.write(line.endsWith('\n') ? line : `${line}\n`);
+    process.exit(result.exit);
+    break;
+  }
+
+  case 'run-resume': {
+    // v6 Phase 3 — `run resume <id>`. Lookup-only: identifies the next phase
+    // and decision rationale. Actual phase execution wires in Phase 6+.
+    // The synthetic 'run-resume' subcommand was set above by the
+    // disambiguation block; args[0]==='run', args[1]==='resume', args[2] is
+    // optional run id.
+    const json = boolFlag('json');
+    const fromPhase = flag('from-phase') ?? flag('from');
+    const runId = args.slice(2).find(a => !a.startsWith('--'));
+    const { runRunResume } = await import('./runs.ts');
+    const result = await runRunResume({
+      runId: runId ?? '',
+      cwd: process.cwd(),
+      ...(fromPhase ? { fromPhase } : {}),
+      json,
+    });
+    for (const line of result.stdout) process.stdout.write(line.endsWith('\n') ? line : `${line}\n`);
+    for (const line of result.stderr) process.stderr.write(line.endsWith('\n') ? line : `${line}\n`);
+    process.exit(result.exit);
     break;
   }
 
