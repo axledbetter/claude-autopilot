@@ -111,31 +111,13 @@ export function checkPhaseBudget(opts: CheckPhaseBudgetOpts): BudgetCheck {
   const projected = actualSoFarUSD + reserveApplied;
   const capRemaining = budget.perRunUSD - projected;
 
-  // Layer 2 — mandatory floor against perRunUSD. Runs first so a missing
-  // estimate can't bypass it.
-  if (projected > budget.perRunUSD) {
-    const decision = nonInteractive ? 'hard-fail' : 'pause';
-    return {
-      decision,
-      phase: phaseName,
-      phaseIdx,
-      estimatedHigh,
-      actualSoFar: actualSoFarUSD,
-      reserveApplied,
-      capRemaining,
-      reason:
-        `run cap exceeded — actual $${fmtUSD(actualSoFarUSD)} + reserve ` +
-        `$${fmtUSD(reserveApplied)} = $${fmtUSD(projected)} > perRunUSD ` +
-        `$${fmtUSD(budget.perRunUSD)}`,
-    };
-  }
-
-  // Layer 1 — advisory using the explicit estimate. Only fires when the
-  // estimate is present AND would push us past perRunUSD on its own.
-  // We've already proved Layer 2 (which is `max(estimate, floor)`) fits;
-  // this branch is therefore unreachable when both layers see the same
-  // numbers. We keep it as an explicit reason field for the rare case
-  // where future policy diverges (e.g. a higher Layer 1 multiplier).
+  // Layer 1 — ADVISORY using the explicit estimate. Runs FIRST so a precise
+  // estimate produces a precise reason ("estimate would exceed cap") instead
+  // of falling through to Layer 2's conservative-floor wording. Only fires
+  // when an estimate is present AND would push us past perRunUSD on its own.
+  // (Bugbot LOW on PR #89 caught the prior ordering, where Layer 2 always
+  // ran first and Layer 1 was provably unreachable since `reserveApplied =
+  // max(estimatedHigh, floor) >= estimatedHigh`.)
   if (estimatedHigh !== null && actualSoFarUSD + estimatedHigh > budget.perRunUSD) {
     const decision = nonInteractive ? 'hard-fail' : 'pause';
     return {
@@ -150,6 +132,28 @@ export function checkPhaseBudget(opts: CheckPhaseBudgetOpts): BudgetCheck {
         `advisory estimate would exceed run cap — actual ` +
         `$${fmtUSD(actualSoFarUSD)} + estimate.high ` +
         `$${fmtUSD(estimatedHigh)} > perRunUSD $${fmtUSD(budget.perRunUSD)}`,
+    };
+  }
+
+  // Layer 2 — MANDATORY floor against perRunUSD. Catches the case where the
+  // estimate is missing (Layer 1 didn't fire) OR present-but-tiny (estimate
+  // alone fits, but the conservative reserve floor pushes over). This is the
+  // safety net that prevents phases without `estimateCost` from sneaking
+  // past the cap.
+  if (projected > budget.perRunUSD) {
+    const decision = nonInteractive ? 'hard-fail' : 'pause';
+    return {
+      decision,
+      phase: phaseName,
+      phaseIdx,
+      estimatedHigh,
+      actualSoFar: actualSoFarUSD,
+      reserveApplied,
+      capRemaining,
+      reason:
+        `run cap exceeded — actual $${fmtUSD(actualSoFarUSD)} + reserve ` +
+        `$${fmtUSD(reserveApplied)} = $${fmtUSD(projected)} > perRunUSD ` +
+        `$${fmtUSD(budget.perRunUSD)}`,
     };
   }
 

@@ -67,6 +67,29 @@ describe('checkPhaseBudget — Layer 1 (advisory, estimate present)', () => {
     });
     assert.equal(result.decision, 'hard-fail');
   });
+
+  it('Layer 1 reason fires BEFORE Layer 2 when both would catch (Bugbot LOW, PR #89)', () => {
+    // Regression: prior implementation ran Layer 2 first, and because
+    // `reserveApplied = max(estimatedHigh, floor) >= estimatedHigh`, Layer 1
+    // was provably unreachable. Both layers would have the same trigger and
+    // Layer 2 always won. Now Layer 1 runs first so a precise estimate
+    // produces the precise "advisory estimate would exceed" reason instead
+    // of the conservative "reserve" wording.
+    //
+    // estimatedHigh=8 > floor=5; both Layer 1 (5+8=13 > 10) and Layer 2
+    // (5+max(8,5)=13 > 10) would fire. Assert the Layer 1 reason wins.
+    const result = checkPhaseBudget({
+      budget: { perRunUSD: 10, conservativePhaseReserveUSD: 5 },
+      phaseName: 'pricey',
+      phaseIdx: 2,
+      estimatedCost: { lowUSD: 4, highUSD: 8 },
+      actualSoFarUSD: 5,
+      nonInteractive: false,
+    });
+    assert.equal(result.decision, 'pause');
+    assert.match(result.reason, /advisory estimate/, 'expected Layer 1 wording');
+    assert.ok(!/reserve \$/.test(result.reason), 'must not show Layer 2 wording when Layer 1 caught it');
+  });
 });
 
 // ---------------------------------------------------------------------------
