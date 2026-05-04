@@ -35,6 +35,7 @@ import { runDeploy, runDeployRollback, runDeployStatus } from './deploy.ts';
 import { findPackageRoot } from './_pkg-root.ts';
 import { GuardrailError } from '../core/errors.ts';
 import { buildHelpText, buildCommandHelpText } from './help-text.ts';
+import { runUnderJsonMode, EXIT_NEEDS_HUMAN } from './json-envelope.ts';
 
 // Format unhandled errors as a one-line user-facing message instead of dumping a
 // Node stack trace. Auth/network failures are by far the most common path here
@@ -285,16 +286,20 @@ switch (subcommand) {
     }
     const dryRun = boolFlag('dry-run');
     const all = boolFlag('all');
+    const json = boolFlag('json');
     // Remaining non-flag args after 'scan' are paths
     const targets = args.slice(1).filter(a => !a.startsWith('--') && a !== ask && a !== focusArg && a !== config);
-    const code = await runScan({
-      configPath: config,
-      targets: targets.length > 0 ? targets : undefined,
-      all,
-      ask,
-      focus: focusArg as 'security' | 'logic' | 'performance' | 'brand' | 'all' | undefined,
-      dryRun,
-    });
+    const code = await runUnderJsonMode(
+      { command: 'scan', active: json },
+      () => runScan({
+        configPath: config,
+        targets: targets.length > 0 ? targets : undefined,
+        all,
+        ask,
+        focus: focusArg as 'security' | 'logic' | 'performance' | 'brand' | 'all' | undefined,
+        dryRun,
+      }),
+    );
     process.exit(code);
     break;
   }
@@ -408,22 +413,26 @@ switch (subcommand) {
       process.exit(1);
     }
     const newOnly = boolFlag('new-only');
+    const json = boolFlag('json');
 
-    const code = await runCommand({
-      base,
-      configPath: config,
-      files: filesArg ? filesArg.split(',').map(f => f.trim()) : undefined,
-      dryRun,
-      diff,
-      delta,
-      newOnly,
-      failOn: failOnArg as 'critical' | 'warning' | 'note' | 'none' | undefined,
-      inlineComments,
-      postComments,
-      format: formatArg as 'text' | 'sarif' | 'junit' | undefined,
-      outputPath,
-      skipReview: staticOnly,
-    });
+    const code = await runUnderJsonMode(
+      { command: 'run', active: json },
+      () => runCommand({
+        base,
+        configPath: config,
+        files: filesArg ? filesArg.split(',').map(f => f.trim()) : undefined,
+        dryRun,
+        diff,
+        delta,
+        newOnly,
+        failOn: failOnArg as 'critical' | 'warning' | 'note' | 'none' | undefined,
+        inlineComments,
+        postComments,
+        format: formatArg as 'text' | 'sarif' | 'junit' | undefined,
+        outputPath,
+        skipReview: staticOnly,
+      }),
+    );
     process.exit(code);
     break;
   }
@@ -437,16 +446,20 @@ switch (subcommand) {
     const diff = boolFlag('diff');
     const newOnly = boolFlag('new-only');
     const failOnArg = flag('fail-on');
-    const code = await runCi({
-      configPath: config,
-      base,
-      sarifOutput: outputPath,
-      postComments: noPostComments ? false : undefined,
-      inlineComments: noInlineComments ? false : undefined,
-      diff,
-      newOnly,
-      failOn: failOnArg as 'critical' | 'warning' | 'note' | 'none' | undefined,
-    });
+    const json = boolFlag('json');
+    const code = await runUnderJsonMode(
+      { command: 'ci', active: json },
+      () => runCi({
+        configPath: config,
+        base,
+        sarifOutput: outputPath,
+        postComments: noPostComments ? false : undefined,
+        inlineComments: noInlineComments ? false : undefined,
+        diff,
+        newOnly,
+        failOn: failOnArg as 'critical' | 'warning' | 'note' | 'none' | undefined,
+      }),
+    );
     process.exit(code);
     break;
   }
@@ -456,7 +469,11 @@ switch (subcommand) {
     const sub = args[1] ?? 'show';
     const note = flag('note');
     const config = flag('config');
-    const code = await rb(sub, { cwd: process.cwd(), note, baselinePath: config });
+    const json = boolFlag('json');
+    const code = await runUnderJsonMode(
+      { command: `baseline ${sub}`, active: json },
+      () => rb(sub, { cwd: process.cwd(), note, baselinePath: config }),
+    );
     process.exit(code);
     break;
   }
@@ -465,13 +482,17 @@ switch (subcommand) {
     const config = flag('config');
     const noPostComments = boolFlag('no-post-comments');
     const noInlineComments = boolFlag('no-inline-comments');
+    const json = boolFlag('json');
     const prNumber = args.slice(1).find(a => !a.startsWith('--') && /^\d+$/.test(a));
-    const code = await runPr({
-      configPath: config,
-      prNumber,
-      noPostComments,
-      noInlineComments,
-    });
+    const code = await runUnderJsonMode(
+      { command: 'pr', active: json },
+      () => runPr({
+        configPath: config,
+        prNumber,
+        noPostComments,
+        noInlineComments,
+      }),
+    );
     process.exit(code);
     break;
   }
@@ -505,12 +526,16 @@ switch (subcommand) {
     }
     const dryRun = boolFlag('dry-run');
     const noVerify = boolFlag('no-verify');
-    const code = await runFix({
-      configPath: config,
-      severity: severityArg as 'critical' | 'warning' | 'all' | undefined,
-      dryRun,
-      noVerify,
-    });
+    const json = boolFlag('json');
+    const code = await runUnderJsonMode(
+      { command: 'fix', active: json },
+      () => runFix({
+        configPath: config,
+        severity: severityArg as 'critical' | 'warning' | 'all' | undefined,
+        dryRun,
+        noVerify,
+      }),
+    );
     process.exit(code);
     break;
   }
@@ -518,7 +543,11 @@ switch (subcommand) {
   case 'triage': {
     const sub = args[1];
     const rest = args.slice(2);
-    const code = await runTriage(sub, rest);
+    const json = boolFlag('json');
+    const code = await runUnderJsonMode(
+      { command: `triage${sub ? ` ${sub}` : ''}`, active: json },
+      () => runTriage(sub, rest),
+    );
     process.exit(code);
     break;
   }
@@ -563,7 +592,11 @@ switch (subcommand) {
 
   case 'costs': {
     const { runCosts } = await import('./costs.ts');
-    const code = await runCosts();
+    const json = boolFlag('json');
+    const code = await runUnderJsonMode(
+      { command: 'costs', active: json },
+      () => runCosts(),
+    );
     process.exit(code);
     break;
   }
@@ -571,16 +604,24 @@ switch (subcommand) {
   case 'report': {
     const outputPath = flag('output');
     const trend = boolFlag('trend');
-    const code = await runReport({ output: outputPath, trend });
+    const json = boolFlag('json');
+    const code = await runUnderJsonMode(
+      { command: 'report', active: json },
+      () => runReport({ output: outputPath, trend }),
+    );
     process.exit(code);
     break;
   }
 
   case 'explain': {
     const config = flag('config');
+    const json = boolFlag('json');
     // Target is the first non-flag arg after 'explain'
     const target = args.slice(1).find(a => !a.startsWith('--'));
-    const code = await runExplain({ configPath: config, target });
+    const code = await runUnderJsonMode(
+      { command: 'explain', active: json },
+      () => runExplain({ configPath: config, target }),
+    );
     process.exit(code);
     break;
   }
