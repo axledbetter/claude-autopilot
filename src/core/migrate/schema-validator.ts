@@ -79,7 +79,19 @@ function buildValidator() {
   return ajv.compile(schema);
 }
 
-const validate = buildValidator();
+// Lazy-init: previously the validator was built at module load, which meant
+// every `claude-autopilot --version` (or any CLI invocation that imports the
+// migrate module via dispatch chain) eagerly read presets/aliases.lock.json
+// + presets/schemas/migrate.schema.json. Missing files crashed the entire
+// CLI with a stack trace before the user-facing entry point even started.
+// Rebuilding on first use also keeps tests that don't touch validation
+// from paying the AJV compile cost. Caught by the tombstone-bin test
+// (`does not leak a node stack trace when claude-autopilot is unreachable`).
+let _validate: ReturnType<typeof buildValidator> | undefined;
+function getValidator(): ReturnType<typeof buildValidator> {
+  if (_validate === undefined) _validate = buildValidator();
+  return _validate;
+}
 
 function commandsEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
@@ -126,6 +138,7 @@ export function validateStackMd(yamlSource: string): ValidationResult {
     };
   }
 
+  const validate = getValidator();
   const ok = validate(parsed);
   const schemaErrors = ok ? [] : ajvErrorsToValidationErrors(validate.errors ?? []);
   const crossFieldErrors = ok ? checkDevCommandReuse(parsed) : [];
