@@ -34,6 +34,7 @@ import { dispatch as runMigrateDispatch } from '../core/migrate/dispatcher.ts';
 import { runDeploy, runDeployRollback, runDeployStatus } from './deploy.ts';
 import { findPackageRoot } from './_pkg-root.ts';
 import { GuardrailError } from '../core/errors.ts';
+import { buildHelpText, buildCommandHelpText } from './help-text.ts';
 
 // Format unhandled errors as a one-line user-facing message instead of dumping a
 // Node stack trace. Auth/network failures are by far the most common path here
@@ -253,102 +254,7 @@ async function runMigrateDoctorCLI(): Promise<never> {
 }
 
 function printUsage(): void {
-  console.log(`
-Usage: claude-autopilot <command> [options]  (legacy alias: guardrail)
-
-Commands:
-  run          Review git-changed files (default)
-  scan         Review any path — no git required
-  report       Render cached findings as a markdown report
-  explain      Deep-dive explanation + remediation for a specific finding
-  ignore       Interactively add findings to .guardrail-ignore
-  watch        Watch for file changes and re-run on each save
-  pr           Review a specific PR by number (auto-detects if on PR branch)
-  fix          Auto-fix cached findings using the configured LLM
-  costs        Show per-run cost summary
-  ci           Opinionated CI entrypoint (post comments + SARIF)
-  init         Scaffold guardrail.config.yaml + auto-detect migrate stack (writes .autopilot/stack.md)
-  migrate      Run database migrations via the stack-aware dispatcher
-  migrate doctor   Validate .autopilot/stack.md and skill manifests (alias: migrate-doctor)
-  deploy       Deploy via configured adapter (vercel | fly | render | generic) — also: rollback, status
-  setup        Auto-detect stack, write config, install pre-push hook
-  doctor       Check prerequisites (alias: preflight)
-  preflight    Check prerequisites (alias: doctor)
-  hook         Install / remove the pre-push git hook
-  baseline     Manage the committed findings baseline (create|update|show|delete)
-  triage       Mark individual findings as accepted/dismissed
-  pr-desc      Generate a PR title / summary / test plan from the current diff
-  council      Multi-model review — dispatch the diff to N models and synthesize consensus
-  mcp          MCP server for Claude / ChatGPT integration
-  autoregress  Snapshot regression tests (run|diff|update|generate)
-  lsp          Language server — publishes findings as LSP diagnostics (stdin/stdout)
-  worker       Persistent review daemon for multi-terminal parallel usage (start|stop|status)
-  test-gen     Detect uncovered exports and generate test cases using the LLM
-
-Options (run):
-  --base <ref>         Git base ref for diff (default: HEAD~1)
-  --config <path>      Path to config file (default: ./guardrail.config.yaml)
-  --files <a,b,c>      Explicit comma-separated file list (skips git detection)
-  --dry-run            Show what would run without executing
-  --diff               Send git diff hunks instead of full files (~70% fewer tokens)
-  --delta              Only report findings new since last run (suppress pre-existing)
-  --inline-comments    Post per-line review comments on the PR diff
-  --post-comments      Post/update a summary comment on the open PR
-  --format <text|sarif>  Output format (default: text)
-  --output <path>        Output file path (required with --format sarif)
-
-Options (scan):
-  <path> [path...]     Files or directories to scan (or --all for entire codebase)
-  --all                Scan entire codebase
-  --ask <question>     Targeted question to inject into the LLM review prompt
-  --focus <type>       security | logic | performance (default: all)
-  --dry-run            List files that would be scanned without running
-  --config <path>      Path to config file
-
-Options (pr):
-  <number>                   PR number to review (optional if on a PR branch)
-  --no-post-comments         Skip posting/updating PR summary comment
-  --no-inline-comments       Skip posting per-line inline annotations
-  --config <path>            Path to config file
-
-Options (fix):
-  --severity <critical|warning|all>  Which findings to fix (default: critical)
-  --dry-run                          Preview fixes without writing files
-  --config <path>                    Path to config file
-
-Options (watch):
-  --config <path>      Path to config file (default: ./guardrail.config.yaml)
-  --debounce <ms>      Debounce delay in ms (default: 300)
-
-Options (autoregress):
-  --all                    Run/diff all snapshots
-  --since <ref>            Git ref for changed-files detection
-  --snapshot <slug>        Target a single snapshot
-  --files <a,b,c>          Explicit file list for generate (skips git detection)
-
-Options (migrate):
-  --env <name>         Target environment from .autopilot/stack.md (default: dev)
-  --dry-run            Run skill in dry-run mode (no side effects)
-  --yes                Required to apply prod migrations in CI
-
-Options (migrate doctor / migrate-doctor):
-  --fix                Apply auto-fixable mutations (legacy stack.md, skills/migrate/, schema_version)
-
-Options (deploy):
-  --adapter <vercel|fly|render|generic>   Override deploy.adapter from config
-  --config <path>              Path to config file
-  --ref <ref>                  Git ref (branch / tag) to deploy
-  --sha <commit>               Specific commit SHA to deploy
-  --watch                      Stream build logs to stderr in real time (vercel: SSE; fly: WebSocket; render: REST polling)
-  --to <deploy-id>             Target deploy ID for 'deploy rollback'
-  --pr <n>                     Post upserting deploy summary comment on the PR
-
-Subcommands (deploy):
-  deploy                       Deploy via configured adapter
-  deploy rollback              Roll back to previous prod deploy
-  deploy rollback --to <id>    Roll back to a specific deploy
-  deploy status                Show current prod + last 5 builds
-`);
+  process.stdout.write(buildHelpText());
 }
 
 switch (subcommand) {
@@ -426,9 +332,24 @@ switch (subcommand) {
 
   case 'help':
   case '--help':
-  case '-h':
+  case '-h': {
+    // `claude-autopilot help <command>` — focused per-command help. Falls back
+    // to the full two-level listing with an "unknown command" notice + exit 1
+    // when the named verb isn't documented.
+    const target = args[1];
+    if (target && !target.startsWith('-')) {
+      const focused = buildCommandHelpText(target);
+      if (focused !== null) {
+        process.stdout.write(focused);
+        process.exit(0);
+      }
+      process.stderr.write(`\x1b[31m[claude-autopilot] unknown command: "${target}"\x1b[0m\n`);
+      process.stdout.write(buildHelpText());
+      process.exit(1);
+    }
     printUsage();
     break;
+  }
 
   case 'watch': {
     const config = flag('config');
