@@ -105,10 +105,10 @@ describe('runCouncil', () => {
     let capturedContext = '';
     const synthesizer: CouncilAdapter = {
       label: 'Synth',
-      async consult(p: string, c: string): Promise<string> {
+      async consult(p: string, c: string) {
         capturedPrompt = p;
         capturedContext = c;
-        return 'synthesis';
+        return { text: 'synthesis' };
       },
     };
     const adapters = [makeAdapter('A', 'response-A-text-marker'), makeAdapter('B', 'response-B-text-marker')];
