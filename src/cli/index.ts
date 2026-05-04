@@ -307,41 +307,51 @@ switch (subcommand) {
   case 'init': {
     // `init` and `setup` are aliases. Keep both supported — no nag banner.
     const force = args.includes('--force');
-    await runSetup({ force });
+    const json = boolFlag('json');
+    const code = await runUnderJsonMode(
+      { command: 'init', active: json },
+      async () => {
+        await runSetup({ force });
 
-    // After the existing init/setup logic, sniff for a migration tool and write
-    // .autopilot/stack.md. Non-interactive: high-confidence single matches are
-    // auto-selected; ambiguity / no-match downgrades to a TODO 'none@1' shape so
-    // we don't block the user. (Interactive prompts come from the autopilot skill,
-    // not the CLI.)
-    try {
-      const result = await initMigrate({
-        repoRoot: process.cwd(),
-        force,
-      });
-      for (const ws of result.workspaces) {
-        const rel = ws.workspace === process.cwd() ? '.' : ws.workspace;
-        console.log(`\x1b[2m[init-migrate] ${ws.action} ${rel}/.autopilot/stack.md (skill: ${ws.skill})\x1b[0m`);
-      }
-    } catch (err) {
-      if (err instanceof NoMigrationToolDetectedError) {
-        // No high-confidence match — fall back to skipMigrate shape so the user
-        // can edit it later. This matches the auto-detection contract documented
-        // in the v5.2.0 CHANGELOG.
+        // After the existing init/setup logic, sniff for a migration tool and write
+        // .autopilot/stack.md. Non-interactive: high-confidence single matches are
+        // auto-selected; ambiguity / no-match downgrades to a TODO 'none@1' shape so
+        // we don't block the user. (Interactive prompts come from the autopilot skill,
+        // not the CLI.)
         try {
-          await initMigrate({
+          const result = await initMigrate({
             repoRoot: process.cwd(),
             force,
-            skipMigrate: true,
           });
-          console.log(`\x1b[33m[init-migrate] No migration tool detected — wrote 'none@1' stack.md (edit .autopilot/stack.md to configure)\x1b[0m`);
-        } catch (fallbackErr) {
-          console.error(`\x1b[31m[init-migrate] failed: ${(fallbackErr as Error).message}\x1b[0m`);
+          for (const ws of result.workspaces) {
+            const rel = ws.workspace === process.cwd() ? '.' : ws.workspace;
+            console.log(`\x1b[2m[init-migrate] ${ws.action} ${rel}/.autopilot/stack.md (skill: ${ws.skill})\x1b[0m`);
+          }
+        } catch (err) {
+          if (err instanceof NoMigrationToolDetectedError) {
+            // No high-confidence match — fall back to skipMigrate shape so the user
+            // can edit it later. This matches the auto-detection contract documented
+            // in the v5.2.0 CHANGELOG.
+            try {
+              await initMigrate({
+                repoRoot: process.cwd(),
+                force,
+                skipMigrate: true,
+              });
+              console.log(`\x1b[33m[init-migrate] No migration tool detected — wrote 'none@1' stack.md (edit .autopilot/stack.md to configure)\x1b[0m`);
+            } catch (fallbackErr) {
+              console.error(`\x1b[31m[init-migrate] failed: ${(fallbackErr as Error).message}\x1b[0m`);
+              return 1;
+            }
+          } else {
+            console.error(`\x1b[31m[init-migrate] failed: ${(err as Error).message}\x1b[0m`);
+            return 1;
+          }
         }
-      } else {
-        console.error(`\x1b[31m[init-migrate] failed: ${(err as Error).message}\x1b[0m`);
-      }
-    }
+        return 0;
+      },
+    );
+    if (json) process.exit(code);
     break;
   }
 
@@ -576,12 +586,20 @@ switch (subcommand) {
     const base = baseIdx !== -1 ? args[baseIdx + 1] : undefined;
     const outputIdx = args.indexOf('--output');
     const output = outputIdx !== -1 ? args[outputIdx + 1] : undefined;
-    await runPrDesc({
-      base,
-      post: args.includes('--post'),
-      yes: args.includes('--yes'),
-      output,
-    });
+    const json = boolFlag('json');
+    const code = await runUnderJsonMode(
+      { command: 'pr-desc', active: json },
+      async () => {
+        await runPrDesc({
+          base,
+          post: args.includes('--post'),
+          yes: args.includes('--yes'),
+          output,
+        });
+        return 0;
+      },
+    );
+    if (json) process.exit(code);
     break;
   }
 
@@ -637,11 +655,19 @@ switch (subcommand) {
   case 'setup': {
     const force = args.includes('--force');
     const profileArg = flag('profile');
+    const json = boolFlag('json');
     if (profileArg && !['security-strict', 'team', 'solo'].includes(profileArg)) {
       console.error(`\x1b[31m[claude-autopilot] --profile must be "security-strict", "team", or "solo"\x1b[0m`);
       process.exit(1);
     }
-    await runSetup({ force, profile: profileArg as 'security-strict' | 'team' | 'solo' | undefined });
+    const code = await runUnderJsonMode(
+      { command: 'setup', active: json },
+      async () => {
+        await runSetup({ force, profile: profileArg as 'security-strict' | 'team' | 'solo' | undefined });
+        return 0;
+      },
+    );
+    if (json) process.exit(code);
     break;
   }
 
@@ -834,6 +860,25 @@ switch (subcommand) {
     // primary quickstart, so users WILL land here. Give them clear instructions
     // instead of a generic "Unknown subcommand" rejection. Only reference CLI
     // subcommands that actually route (verified by the welcome regression test).
+    const json = boolFlag('json');
+    if (json) {
+      // --json mode: surface the resume hint via nextActions, not a banner.
+      const code = await runUnderJsonMode(
+        {
+          command: 'brainstorm',
+          active: true,
+          payload: () => ({
+            note: 'brainstorm is a Claude Code skill, not a CLI subcommand',
+            nextActions: [
+              'Invoke /brainstorm from Claude Code for interactive spec writing',
+              'Then /autopilot to run the full pipeline from an approved spec',
+            ],
+          }),
+        },
+        async () => 0,
+      );
+      process.exit(code);
+    }
     console.log(`
 \x1b[1m[brainstorm]\x1b[0m The pipeline entry point is a Claude Code skill, not a CLI subcommand.
 
