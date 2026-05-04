@@ -5,7 +5,7 @@ import type { SchemaEntity } from '../types.ts';
 import { extractFromSql } from './sql.ts';
 import { extractFromPrisma } from './prisma.ts';
 
-export function extract(filePath: string): SchemaEntity[] {
+export function extract(filePath: string, previousContent?: string | null): SchemaEntity[] {
   let content: string;
   try {
     content = fs.readFileSync(filePath, 'utf8');
@@ -17,7 +17,7 @@ export function extract(filePath: string): SchemaEntity[] {
   const base = path.basename(filePath).toLowerCase();
 
   if (ext === '.sql') return extractFromSql(content);
-  if (base === 'schema.prisma' || ext === '.prisma') return extractFromPrisma(content);
+  if (base === 'schema.prisma' || ext === '.prisma') return extractFromPrisma(content, previousContent);
 
   process.stderr.write(`[schema-alignment] no extractor for ${ext} files — skipping ${path.basename(filePath)}\n`);
   return [];

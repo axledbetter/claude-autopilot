@@ -162,6 +162,107 @@ model Order { id String @id \n  total Float }
     assert.ok(tables.includes('User'));
     assert.ok(tables.includes('Order'));
   });
+
+  it('with previousContent identical to current emits no entities', async () => {
+    const { extractFromPrisma } = await import('../src/core/schema-alignment/extractor/prisma.ts');
+    const content = `
+model User {
+  id    String @id
+  email String
+  name  String?
+}
+`;
+    const entities = extractFromPrisma(content, content);
+    assert.deepEqual(entities, [], `expected zero entities for unchanged schema, got: ${JSON.stringify(entities)}`);
+  });
+
+  it('with previousContent missing a field emits add_column for that field only', async () => {
+    const { extractFromPrisma } = await import('../src/core/schema-alignment/extractor/prisma.ts');
+    const previous = `
+model User {
+  id    String @id
+  email String
+}
+`;
+    const current = `
+model User {
+  id     String @id
+  email  String
+  status String
+}
+`;
+    const entities = extractFromPrisma(current, previous);
+    assert.equal(entities.length, 1, `expected exactly one entity, got: ${JSON.stringify(entities)}`);
+    assert.equal(entities[0]!.operation, 'add_column');
+    assert.equal(entities[0]!.column, 'status');
+    assert.equal(entities[0]!.table, 'User');
+  });
+
+  it('with previousContent containing extra field emits drop_column', async () => {
+    const { extractFromPrisma } = await import('../src/core/schema-alignment/extractor/prisma.ts');
+    const previous = `
+model User {
+  id           String @id
+  email        String
+  legacy_field String
+}
+`;
+    const current = `
+model User {
+  id    String @id
+  email String
+}
+`;
+    const entities = extractFromPrisma(current, previous);
+    assert.equal(entities.length, 1, `expected exactly one entity, got: ${JSON.stringify(entities)}`);
+    assert.equal(entities[0]!.operation, 'drop_column');
+    assert.equal(entities[0]!.column, 'legacy_field');
+  });
+
+  it('with previousContent missing a table emits create_table + add_column', async () => {
+    const { extractFromPrisma } = await import('../src/core/schema-alignment/extractor/prisma.ts');
+    const previous = `model User { id String @id \n  email String }`;
+    const current = `
+model User { id String @id \n  email String }
+model Order { id String @id \n  total Float }
+`;
+    const entities = extractFromPrisma(current, previous);
+    const newTable = entities.find(e => e.operation === 'create_table');
+    assert.ok(newTable, 'expected create_table for new Order model');
+    assert.equal(newTable!.table, 'Order');
+    const newCols = entities.filter(e => e.operation === 'add_column' && e.table === 'Order');
+    assert.equal(newCols.length, 1);
+    assert.equal(newCols[0]!.column, 'total');
+    // User table unchanged → no User entries
+    assert.equal(entities.filter(e => e.table === 'User').length, 0);
+  });
+
+  it('with previousContent=null falls back to original behavior (treat all as added)', async () => {
+    const { extractFromPrisma } = await import('../src/core/schema-alignment/extractor/prisma.ts');
+    const content = `model User { id String @id \n  email String }`;
+    const entitiesWithoutHistory = extractFromPrisma(content, null);
+    const entitiesUndefined = extractFromPrisma(content);
+    assert.deepEqual(entitiesWithoutHistory, entitiesUndefined, 'null and undefined should produce identical fallback output');
+    assert.ok(entitiesWithoutHistory.some(e => e.operation === 'create_table'));
+  });
+
+  it('with a model entirely removed in current emits drop_column for every previous field (Bugbot MEDIUM, PR #44)', async () => {
+    const { extractFromPrisma } = await import('../src/core/schema-alignment/extractor/prisma.ts');
+    const previous = `
+model User { id String @id \n  email String \n  name String }
+model Order { id String @id \n  total Float \n  status String \n  notes String }
+`;
+    // Order is entirely removed
+    const current = `model User { id String @id \n  email String \n  name String }`;
+    const entities = extractFromPrisma(current, previous);
+    // User unchanged
+    assert.equal(entities.filter(e => e.table === 'User').length, 0);
+    // Order's three non-id fields each emit drop_column
+    const orderDrops = entities.filter(e => e.table === 'Order' && e.operation === 'drop_column');
+    const droppedColumns = new Set(orderDrops.map(e => e.column));
+    assert.deepEqual(droppedColumns, new Set(['total', 'status', 'notes']),
+      `expected drop_column for total/status/notes, got ${[...droppedColumns].join(',')}`);
+  });
 });
 
 describe('extractor index', () => {

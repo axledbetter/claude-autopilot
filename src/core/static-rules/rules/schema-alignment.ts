@@ -4,6 +4,7 @@ import type { Finding } from '../../findings/types.ts';
 import type { LayerScanResult, AlignmentFinding, Evidence, SchemaEntity } from '../../schema-alignment/types.ts';
 import { detect } from '../../schema-alignment/detector.ts';
 import { extract } from '../../schema-alignment/extractor/index.ts';
+import { getPreviousFileContent } from '../../schema-alignment/git-history.ts';
 import { scanLayers } from '../../schema-alignment/scanner.ts';
 import { runLlmCheck } from '../../schema-alignment/llm-check.ts';
 
@@ -76,9 +77,16 @@ export const schemaAlignmentRule: StaticRule = {
     // Preserve source migration file for each entity so findings can point back
     // to the SQL/Prisma file that caused the change.
     type EntityWithSource = { entity: SchemaEntity; sourceFile: string };
-    const allEntities: EntityWithSource[] = migrationFiles.flatMap(f =>
-      extract(f).map(entity => ({ entity, sourceFile: f })),
-    );
+    // For Prisma schema files, fetch the previous version from git so we only
+    // emit entities for what actually changed in this diff. SQL migrations
+    // are inherently a diff already; the SQL extractor ignores
+    // `previousContent`, so skipping the `git show` spawn there avoids pure
+    // waste (Bugbot LOW on PR #44).
+    const allEntities: EntityWithSource[] = migrationFiles.flatMap(f => {
+      const isPrisma = f.endsWith('.prisma');
+      const previousContent = isPrisma ? getPreviousFileContent(f, cwd) : null;
+      return extract(f, previousContent).map(entity => ({ entity, sourceFile: f }));
+    });
     if (allEntities.length === 0) return [];
 
     const scanResults = scanLayers(allEntities.map(e => e.entity), cwd, saConfig);
