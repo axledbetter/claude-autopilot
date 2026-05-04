@@ -60,5 +60,15 @@ export function extractFromPrisma(content: string, previousContent?: string | nu
       if (!currentFields.has(column)) entities.push({ table, column, operation: 'drop_column' });
     }
   }
+  // Second pass — entirely dropped models. The first loop only iterates
+  // `current`, so a model present in `previous` but removed from `current`
+  // would never emit any entity, leaving stale references in type/API/UI
+  // layers undetected. Caught by Cursor Bugbot on PR #44 (MEDIUM).
+  for (const [table, previousFields] of previous) {
+    if (current.has(table)) continue;
+    for (const column of previousFields) {
+      entities.push({ table, column, operation: 'drop_column' });
+    }
+  }
   return entities;
 }

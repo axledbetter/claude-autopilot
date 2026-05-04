@@ -245,6 +245,24 @@ model Order { id String @id \n  total Float }
     assert.deepEqual(entitiesWithoutHistory, entitiesUndefined, 'null and undefined should produce identical fallback output');
     assert.ok(entitiesWithoutHistory.some(e => e.operation === 'create_table'));
   });
+
+  it('with a model entirely removed in current emits drop_column for every previous field (Bugbot MEDIUM, PR #44)', async () => {
+    const { extractFromPrisma } = await import('../src/core/schema-alignment/extractor/prisma.ts');
+    const previous = `
+model User { id String @id \n  email String \n  name String }
+model Order { id String @id \n  total Float \n  status String \n  notes String }
+`;
+    // Order is entirely removed
+    const current = `model User { id String @id \n  email String \n  name String }`;
+    const entities = extractFromPrisma(current, previous);
+    // User unchanged
+    assert.equal(entities.filter(e => e.table === 'User').length, 0);
+    // Order's three non-id fields each emit drop_column
+    const orderDrops = entities.filter(e => e.table === 'Order' && e.operation === 'drop_column');
+    const droppedColumns = new Set(orderDrops.map(e => e.column));
+    assert.deepEqual(droppedColumns, new Set(['total', 'status', 'notes']),
+      `expected drop_column for total/status/notes, got ${[...droppedColumns].join(',')}`);
+  });
 });
 
 describe('extractor index', () => {
