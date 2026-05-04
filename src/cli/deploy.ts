@@ -111,7 +111,7 @@ async function loadDeployConfigAsync(opts: {
   if (!adapter) {
     console.error(
       '\x1b[31m[deploy] no deploy adapter configured\x1b[0m\n' +
-        '  hint: set `deploy.adapter` in guardrail.config.yaml, or pass --adapter <vercel|generic>',
+        '  hint: set `deploy.adapter` in guardrail.config.yaml, or pass --adapter <vercel|fly|render|generic>',
     );
     return { errorCode: 1 };
   }
