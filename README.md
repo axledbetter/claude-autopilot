@@ -96,6 +96,7 @@ Each phase is a Claude Code skill (`.claude/skills/<name>/SKILL.md`). You can in
 | **PR** | `commit-push-pr` | Opens the PR with auto-generated title, summary, and test plan | Claude |
 | **Review** | `review-2pass` / `council` | Multi-model review of the diff (critical pass + informational pass) | Multiple |
 | **Triage** | `bugbot` | Fetches automated reviewer findings, auto-fixes real bugs, dismisses false positives | Claude |
+| **Deploy** | `deploy` | Deploys via configured adapter (`vercel` \| `fly` \| `render` \| `generic`) with optional log streaming, health check, and bounded auto-rollback (see [Deploy phase](#deploy-phase)) | Deterministic |
 
 ### Migrate phase
 
@@ -115,6 +116,32 @@ migrate:
 ```
 
 See `skills/migrate/SKILL.md` for examples covering Alembic, Django, Prisma, Drizzle, golang-migrate, dbmate, flyway, and custom scripts.
+
+### Deploy phase
+
+Configure your deploy target in `guardrail.config.yaml` under a `deploy:` block. Four adapters ship in 5.6:
+
+- **`vercel`** — Vercel v13 deployments API. SSE+NDJSON log streaming, native rollback via `/promote`. Auth: `VERCEL_TOKEN`.
+- **`fly`** — Fly.io Machines API. WebSocket log streaming, native rollback with simulated fallback. Auth: `FLY_API_TOKEN`. Requires the image to be pre-pushed (`fly deploy --build-only --push`).
+- **`render`** — Render REST API. Polling-based log stream with `(timestamp, logId)` cursor dedup, simulated rollback (re-deploys prior commit). Auth: `RENDER_API_KEY`.
+- **`generic`** — runs any shell `deployCommand` (`vercel --prod`, `kubectl apply`, `make deploy`, etc). No platform integration; `--watch` and `rollback` aren't supported.
+
+Each adapter speaks the same `DeployAdapter` contract: `deploy()`, optional `status()` / `rollback()` / `streamLogs()`, plus a `capabilities` block (`streamMode: 'websocket' | 'polling' | 'none'`, `nativeRollback: boolean`) so the CLI can degrade UX honestly (polling adapters print a one-line stderr notice under `--watch`). Auto-rollback is bounded: max one rollback per deploy attempt, with `runHealthCheck` capped at 5×6s. Log lines emitted into PR comments run through a redaction pass (`AKIA…`, `sk-…`, `eyJ…`, `ghp_`, `xoxb-`, plus configurable patterns) so build output can't leak secrets.
+
+Example (Fly):
+
+```yaml
+deploy:
+  adapter: fly
+  app: my-app
+  image: registry.fly.io/my-app:latest
+  region: ord
+  watchBuildLogs: true
+  healthCheckUrl: https://my-app.fly.dev/health
+  rollbackOn: [healthCheckFailure]
+```
+
+`claude-autopilot doctor` checks for the relevant auth env var when an adapter is configured. See `docs/specs/v5.6-fly-render-adapters.md` for the full adapter contract.
 
 ## What's distinctive
 

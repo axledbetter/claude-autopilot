@@ -270,7 +270,7 @@ Commands:
   init         Scaffold guardrail.config.yaml + auto-detect migrate stack (writes .autopilot/stack.md)
   migrate      Run database migrations via the stack-aware dispatcher
   migrate doctor   Validate .autopilot/stack.md and skill manifests (alias: migrate-doctor)
-  deploy       Deploy via configured adapter (vercel | generic) — also: rollback, status
+  deploy       Deploy via configured adapter (vercel | fly | render | generic) — also: rollback, status
   setup        Auto-detect stack, write config, install pre-push hook
   doctor       Check prerequisites (alias: preflight)
   preflight    Check prerequisites (alias: doctor)
@@ -335,11 +335,11 @@ Options (migrate doctor / migrate-doctor):
   --fix                Apply auto-fixable mutations (legacy stack.md, skills/migrate/, schema_version)
 
 Options (deploy):
-  --adapter <vercel|generic>   Override deploy.adapter from config
+  --adapter <vercel|fly|render|generic>   Override deploy.adapter from config
   --config <path>              Path to config file
   --ref <ref>                  Git ref (branch / tag) to deploy
   --sha <commit>               Specific commit SHA to deploy
-  --watch                      Stream build logs to stderr in real time (Vercel only)
+  --watch                      Stream build logs to stderr in real time (vercel: SSE; fly: WebSocket; render: REST polling)
   --to <deploy-id>             Target deploy ID for 'deploy rollback'
   --pr <n>                     Post upserting deploy summary comment on the PR
 
@@ -784,8 +784,15 @@ switch (subcommand) {
   case 'deploy': {
     const config = flag('config');
     const adapterArg = flag('adapter');
-    if (adapterArg && !['vercel', 'generic'].includes(adapterArg)) {
-      console.error(`\x1b[31m[claude-autopilot] --adapter must be "vercel" or "generic"\x1b[0m`);
+    // Keep this list in sync with `DeployConfig.adapter` in
+    // src/adapters/deploy/types.ts and the factory in
+    // src/adapters/deploy/index.ts.
+    const ADAPTER_NAMES = ['vercel', 'fly', 'render', 'generic'] as const;
+    type AdapterName = typeof ADAPTER_NAMES[number];
+    if (adapterArg && !ADAPTER_NAMES.includes(adapterArg as AdapterName)) {
+      console.error(
+        `\x1b[31m[claude-autopilot] --adapter must be one of: ${ADAPTER_NAMES.join(', ')}\x1b[0m`,
+      );
       process.exit(1);
     }
     // Phase 3 — `deploy rollback` and `deploy status` subverbs. The first
@@ -796,7 +803,7 @@ switch (subcommand) {
       const to = flag('to');
       const code = await runDeployRollback({
         configPath: config,
-        adapterOverride: adapterArg as 'vercel' | 'generic' | undefined,
+        adapterOverride: adapterArg as AdapterName | undefined,
         to,
       });
       process.exit(code);
@@ -804,7 +811,7 @@ switch (subcommand) {
     if (subverb === 'status') {
       const code = await runDeployStatus({
         configPath: config,
-        adapterOverride: adapterArg as 'vercel' | 'generic' | undefined,
+        adapterOverride: adapterArg as AdapterName | undefined,
       });
       process.exit(code);
     }
@@ -831,7 +838,7 @@ switch (subcommand) {
     }
     const code = await runDeploy({
       configPath: config,
-      adapterOverride: adapterArg as 'vercel' | 'generic' | undefined,
+      adapterOverride: adapterArg as AdapterName | undefined,
       ref,
       commitSha,
       watch,
