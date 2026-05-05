@@ -307,6 +307,27 @@ The pitch becomes tangibly stronger with v6 in place:
 
 The Run State Engine is the bridge from "impressive demo" to "production-trustworthy."
 
+## What was actually built (Phase 7)
+
+Phase 7 shipped as a single PR against master. Scope landed exactly as the spec described — five assertions per provider × three providers — with one practical wrinkle around live credentials:
+
+- **No live creds configured at merge time.** The cert tests are env-gated through the harness's `resolveProviderEnv()`. Until Alex adds the GitHub Secrets listed in `docs/adapters/cert-suite.md`, every cert test reports `skipped` rather than `passed`. This is the dominant case both on dev machines and in CI today, and it's exactly what the spec called for ("Skipped without `VERCEL_TOKEN_TEST` / `FLY_API_TOKEN_TEST` / `RENDER_API_KEY_TEST`").
+- **Harness has its own unit tests.** The flake-control logic (retry budget, soft-fail counter, 3-strike escalation, env-skip detection, artifact path generation) ships with 42 unit tests in `tests/adapters/live/_harness.test.ts` that run under regular `npm test`. The harness is the most subtle bit of Phase 7 — verifying it without needing live credentials was non-negotiable.
+- **Fly cert needs a third env var (`FLY_IMAGE_TEST`).** The Fly adapter doesn't build images itself per the v5.6 spec, so the cert suite assumes the operator pushed a hello-world image once during sandbox setup. Documented in `docs/adapters/cert-suite.md`.
+
+| File | Role |
+|---|---|
+| `tests/adapters/live/_harness.ts` | env-gated skip detection, retry budget (1s/4s/16s × 3), soft-fail counter with 3-strike escalation, artifact paths, NDJSON event sink, log-tail writer |
+| `tests/adapters/live/_harness.test.ts` | 42 unit tests for the harness — runs under regular `npm test`, no live creds needed |
+| `tests/adapters/live/vercel.cert.ts` | 5 live assertions, env-gated |
+| `tests/adapters/live/fly.cert.ts` | 5 live assertions, env-gated; needs `FLY_IMAGE_TEST` |
+| `tests/adapters/live/render.cert.ts` | 5 live assertions, env-gated |
+| `.github/workflows/adapter-cert.yml` | nightly schedule (09:00 UTC) + manual `workflow_dispatch`, uploads `events.ndjson` + `log-tail.txt` artifacts on every run |
+| `docs/adapters/cert-suite.md` | operator runbook — sandbox setup, secrets list, soft-fail vs hard-fail interpretation |
+| `package.json` | new `test:adapters:live` script |
+
+**What needs to happen for the suite to run live.** Add seven GitHub Secrets per the table in `docs/adapters/cert-suite.md` (`VERCEL_TOKEN_TEST` + `VERCEL_PROJECT_TEST`, `FLY_API_TOKEN_TEST` + `FLY_APP_TEST` + `FLY_IMAGE_TEST`, `RENDER_API_KEY_TEST` + `RENDER_SERVICE_TEST`). Each provider's secrets are independent — adding only Render's set will make Render's cert tests run live while Vercel/Fly continue to skip.
+
 ---
 
-*Drafted 2026-05-04 against v5.6 master. Codex-reviewed (twice) and refined: the framing of "Run State Engine" as the unifying subsystem comes from the first review; persistence-protocol atomicity, external-operation-ledger for replay safety, strict `--json` channel discipline, copy-not-symlink artifacts, mandatory budget runtime guard, index.json as pure cache, flake-control for live adapter cert, and the precedence matrix all come from the second review of this spec.*
+*Drafted 2026-05-04 against v5.6 master. Codex-reviewed (twice) and refined: the framing of "Run State Engine" as the unifying subsystem comes from the first review; persistence-protocol atomicity, external-operation-ledger for replay safety, strict `--json` channel discipline, copy-not-symlink artifacts, mandatory budget runtime guard, index.json as pure cache, flake-control for live adapter cert, and the precedence matrix all come from the second review of this spec. Phase 7 reconciled 2026-05-05 after the implementation PR landed.*
