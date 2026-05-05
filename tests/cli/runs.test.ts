@@ -452,7 +452,8 @@ describe('runRunResume + computeResumeLookup', () => {
     const lookup = computeResumeLookup(state);
     assert.equal(lookup.decision, 'retry');
     assert.equal(lookup.nextPhase, 'plan');
-    assert.match(lookup.reason, /retry safe/);
+    // Phase 6 — reason now comes from decideReplay's vocabulary.
+    assert.match(lookup.reason, /first attempt/);
   });
 
   it('decision="skip-idempotent" when prior success + idempotent target', () => {
@@ -473,6 +474,10 @@ describe('runRunResume + computeResumeLookup', () => {
 
   it('decision="needs-human" when prior success + side-effects target', () => {
     // Keep a trailing pending phase so the run isn't already-complete.
+    // Phase 6 — without externalRefs the decision is "no externalRefs" /
+    // needs-human; with refs but no readbacks (CLI lookup mode) the
+    // decision is "no live readback" / needs-human. Both surface needs-human;
+    // the reason text differs but always mentions needing human review.
     const state = fixtureState({
       phases: [
         { name: 'deploy', status: 'succeeded', hasSideEffects: true },
@@ -481,7 +486,7 @@ describe('runRunResume + computeResumeLookup', () => {
     });
     const lookup = computeResumeLookup(state, 'deploy');
     assert.equal(lookup.decision, 'needs-human');
-    assert.match(lookup.reason, /human approval/);
+    assert.match(lookup.reason, /human review|human approval/);
   });
 
   it('decision="already-complete" when every phase succeeded', () => {
@@ -512,8 +517,12 @@ describe('runRunResume + computeResumeLookup', () => {
     });
     const lookup = computeResumeLookup(state, 'plan');
     assert.equal(lookup.decision, 'already-complete');
+    // Phase 6 — reason now comes from decideReplay's vocabulary; the
+    // skip-already-applied-because-no-side-effects case mentions exactly
+    // that. Existing CLI consumers see the same `already-complete` decision
+    // verb, but the inner reason changed.
     assert.match(lookup.reason, /previously succeeded/);
-    assert.match(lookup.reason, /--force-replay/);
+    assert.match(lookup.reason, /no side effects|skip-already-applied/);
   });
 
   it('JSON envelope marks lookup-only and includes the v1 schema', async () => {
