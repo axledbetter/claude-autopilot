@@ -911,6 +911,10 @@ export function computeResumeLookup(
     forceReplay: false,
   });
 
+  // Bugbot LOW (PR #91): exhaustive switch — no `default` branch so TypeScript
+  // catches a missing case at compile time if a new ReplayDecisionKind variant
+  // is added. The `never` assignment is the standard pattern (mirrors the
+  // foldEvents switch in events.ts).
   let mappedDecision: ResumeDecision;
   switch (decision.decision) {
     case 'retry':
@@ -926,8 +930,10 @@ export function computeResumeLookup(
       // so existing CLI consumers don't need to learn a new verb.
       mappedDecision = target.idempotent ? 'skip-idempotent' : 'already-complete';
       break;
-    default:
-      mappedDecision = 'retry';
+    default: {
+      const _exhaustive: never = decision.decision;
+      throw new Error(`unreachable ReplayDecisionKind: ${String(_exhaustive)}`);
+    }
   }
 
   return {
