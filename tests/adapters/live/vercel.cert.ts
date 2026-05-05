@@ -226,9 +226,17 @@ describe('vercel adapter — live certification', () => {
       pollIntervalMs: 5000,
       maxPollMs: 8 * 60 * 1000,
     });
-    const lines: string[] = [];
+    // Declared at outer scope so the `writeLogTail` call below has the
+    // most-recent attempt's buffer. The callback RESETS it on each
+    // invocation (Bugbot MEDIUM PR #92): a prior version pushed across
+    // retries without clearing, which made the `lines.length >= 5`
+    // early-exit fire prematurely on a retry (counting stale lines)
+    // and rendered the `lines.length === 0` no-stream guard
+    // unreachable on retries where a prior attempt pushed lines.
+    let lines: string[] = [];
     const result = await runCheck(
       async () => {
+        lines = []; // fresh buffer per attempt
         // Kick off a deploy and capture its ID via onDeployStart so we
         // can subscribe to logs in parallel.
         let deployId: string | undefined;

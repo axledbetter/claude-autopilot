@@ -151,12 +151,16 @@ export function resolveProviderEnv(
 export const RETRY_BACKOFF_MS: readonly number[] = Object.freeze([1000, 4000, 16000]);
 
 /**
- * Maximum attempts — counted as "first attempt + RETRY_BACKOFF_MS.length - 1
- * retries". The spec phrases this as "3 attempts with exp backoff
- * (1s / 4s / 16s)"; we treat the schedule's length as authoritative
- * so changing one cell in the table updates both call sites.
+ * Maximum attempts — `RETRY_BACKOFF_MS.length + 1`. The schedule
+ * `[1000, 4000, 16000]` defines the WAITS that happen *between* attempts,
+ * so N waits implies N+1 attempts. With 4 attempts and 3 inter-attempt
+ * gaps, every entry in `RETRY_BACKOFF_MS` is exercised. (Bugbot MEDIUM
+ * PR #92: a prior `MAX_ATTEMPTS = RETRY_BACKOFF_MS.length` setting made
+ * `RETRY_BACKOFF_MS[2]` (16s) provably unreachable, contradicting the
+ * spec's "1s / 4s / 16s" schedule.) Total worst-case wall time per
+ * provider+check: 1s + 4s + 16s = 21s of sleep + 4 × per-attempt cost.
  */
-export const MAX_ATTEMPTS: number = RETRY_BACKOFF_MS.length;
+export const MAX_ATTEMPTS: number = RETRY_BACKOFF_MS.length + 1;
 
 /**
  * After this many *consecutive* soft-fails on the same `(provider, check)`
@@ -459,7 +463,14 @@ export async function runCheck(
 
   let lastErr: unknown;
   let lastCategory: FailureCategory = 'unknown';
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  // `attempt` is hoisted out of the for-clause so the post-loop hard-fail
+  // branch can read the actual final attempt number. Bugbot LOW PR #92:
+  // a prior `for (let attempt = ...)` made the variable inaccessible
+  // post-loop and the hard-fail return path hardcoded `attempts: 1`,
+  // which lied when the function had retried on transient errors before
+  // finally throwing a deterministic error.
+  let attempt = 0;
+  for (attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     sink?.write({
       ts: new Date(now()).toISOString(),
       event: 'check.attempt',
@@ -553,7 +564,11 @@ export async function runCheck(
   });
   return {
     outcome: 'hard-fail',
-    attempts: 1,
+    // Use the actual loop counter, not a hardcoded `1`. When a transient
+    // error retries and a later attempt throws a deterministic error,
+    // `attempt` reflects the real attempt number that produced the
+    // hard-fail. (Bugbot LOW PR #92.)
+    attempts: attempt,
     durationMs,
     category: lastCategory,
     message,

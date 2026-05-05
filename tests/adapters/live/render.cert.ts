@@ -203,9 +203,13 @@ describe('render adapter — live certification', () => {
       // Tighter log-poll interval so the test gets lines faster.
       logPollIntervalMs: 1000,
     });
-    const lines: string[] = [];
+    // Outer-scope buffer so `writeLogTail` below sees the last attempt's
+    // lines; callback RESETS each retry (Bugbot MEDIUM PR #92 — see
+    // vercel.cert.ts for the full failure mode).
+    let lines: string[] = [];
     const result = await runCheck(
       async () => {
+        lines = []; // fresh buffer per attempt
         let deployId: string | undefined;
         const deployPromise = adapter.deploy({
           meta: { CERT_PLANTED_SECRET: 'AKIAIOSFODNN7EXAMPLE' },

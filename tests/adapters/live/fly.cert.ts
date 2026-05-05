@@ -226,9 +226,13 @@ describe('fly adapter — live certification', () => {
       pollIntervalMs: 5000,
       maxPollMs: 8 * 60 * 1000,
     });
-    const lines: string[] = [];
+    // Outer-scope buffer so `writeLogTail` below sees the last attempt's
+    // lines; callback RESETS each retry (Bugbot MEDIUM PR #92 — see
+    // vercel.cert.ts for the full failure mode).
+    let lines: string[] = [];
     const result = await runCheck(
       async () => {
+        lines = []; // fresh buffer per attempt
         let releaseId: string | undefined;
         const deployPromise = adapter.deploy({
           // Plant a secret in the deploy meta so the adapter has

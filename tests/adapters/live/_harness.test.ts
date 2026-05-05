@@ -421,14 +421,67 @@ describe('runCheck — retry budget + flake control', () => {
     assert.equal(result.category, 'unknown');
   });
 
-  it('exposes the configured backoff schedule (1s / 4s / 16s)', () => {
+  it('exposes the configured backoff schedule (1s / 4s / 16s) — N waits implies N+1 attempts', () => {
     // Per spec NOTE: "Per-provider retry budget: 3 attempts with
     // exp backoff (1s / 4s / 16s) on transient categories."
-    // Pinning the table here makes a schedule change a deliberate
-    // diff that touches the test suite.
+    // Bugbot MEDIUM PR #92 caught that prior `MAX_ATTEMPTS = length`
+    // wiring made the 16s entry unreachable. The schedule defines the
+    // WAITS *between* attempts — N waits implies N+1 attempts. With
+    // length=3 we now run 4 attempts and exercise all three gaps.
+    // Pinning the table here makes a schedule change a deliberate diff.
     assert.deepEqual([...RETRY_BACKOFF_MS], [1000, 4000, 16000]);
-    assert.equal(MAX_ATTEMPTS, 3);
+    assert.equal(MAX_ATTEMPTS, 4);
     assert.equal(SOFT_FAIL_ESCALATION_THRESHOLD, 3);
+  });
+
+  it('Bugbot MEDIUM PR #92 — uses every backoff entry, including the last (16s)', async () => {
+    // Regression: every `RETRY_BACKOFF_MS` entry must be consulted
+    // before declaring the budget exhausted. We capture the actual
+    // sleep durations the harness asks for and assert the full
+    // schedule was applied.
+    const sleeps: number[] = [];
+    const result = await runCheck(
+      async () => {
+        throw new GuardrailError('5xx', { code: 'transient_network', provider: 'fly' });
+      },
+      {
+        provider: 'fly',
+        check: 'budget-uses-all-backoffs',
+        counter: new SoftFailCounter(),
+        sleepImpl: async (ms) => { sleeps.push(ms); },
+      },
+    );
+    assert.equal(result.outcome, 'soft-fail');
+    // 4 attempts → 3 inter-attempt waits → exactly the schedule.
+    assert.deepEqual(sleeps, [1000, 4000, 16000]);
+  });
+
+  it('Bugbot LOW PR #92 — hard-fail attempts reflect the actual attempt count after a transient retry', async () => {
+    // Regression: when a transient error retries (attempts 1, 2) and a
+    // later attempt throws a deterministic error (attempt 3), the
+    // hard-fail return path must report attempts:3, not the prior
+    // hardcoded attempts:1.
+    let calls = 0;
+    const result = await runCheck(
+      async () => {
+        calls++;
+        if (calls < 3) {
+          throw new GuardrailError('5xx', { code: 'transient_network', provider: 'render' });
+        }
+        // Third call: deterministic — must hard-fail with the real attempt count.
+        throw new GuardrailError('bad token', { code: 'auth', provider: 'render' });
+      },
+      {
+        provider: 'render',
+        check: 'transient-then-deterministic',
+        counter: new SoftFailCounter(),
+        sleepImpl: sleepNoop,
+      },
+    );
+    assert.equal(result.outcome, 'hard-fail');
+    assert.equal(result.category, 'deterministic');
+    assert.equal(calls, 3);
+    assert.equal(result.attempts, 3, 'must report the real attempt count, not hardcoded 1');
   });
 
   it('writes attempt+success events to the NDJSON sink', async () => {
