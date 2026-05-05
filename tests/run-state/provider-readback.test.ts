@@ -57,21 +57,24 @@ describe('readbackForRef — registry lookup', () => {
   });
 
   it('default registry handles every Phase 6 ref kind that needs a readback', () => {
-    const kinds: ExternalRef['kind'][] = [
-      'github-pr',
-      'github-comment',
-      'git-remote-push',
-      'deploy',
-      'rollback-target',
-      'migration-version',
+    // For provider-scoped kinds (deploy, rollback-target) the lookup is
+    // (kind, provider) — caller must supply a provider matching one of the
+    // registered deploy readbacks. Pick vercel as a representative provider.
+    const cases: Array<{ kind: ExternalRef['kind']; provider?: string }> = [
+      { kind: 'github-pr' },
+      { kind: 'github-comment' },
+      { kind: 'git-remote-push' },
+      { kind: 'deploy', provider: 'vercel' },
+      { kind: 'rollback-target', provider: 'vercel' },
+      { kind: 'migration-version' },
     ];
-    for (const k of kinds) {
-      const rb = readbackForRef(ref({ kind: k }));
-      assert.ok(rb, `no readback for kind=${k}`);
+    for (const { kind, provider } of cases) {
+      const rb = readbackForRef(ref({ kind, ...(provider !== undefined ? { provider } : {}) }));
+      assert.ok(rb, `no readback for kind=${kind} provider=${provider ?? '<none>'}`);
     }
   });
 
-  it('first-match-wins on duplicate handlers', () => {
+  it('first-match-wins on duplicate handlers (no provider allowlist)', () => {
     const a: ProviderReadback = {
       name: 'a',
       handles: ['github-pr'],
@@ -85,6 +88,38 @@ describe('readbackForRef — registry lookup', () => {
     setProviderReadbacks([a, b]);
     const rb = readbackForRef(ref({ kind: 'github-pr' }));
     assert.equal(rb?.name, 'a');
+  });
+
+  // Bugbot MEDIUM on PR #91: vercel/fly/render all declare
+  // handles: ['deploy', 'rollback-target']. Before the fix, the first
+  // registered (vercel) won every lookup and fly/render were dead code.
+  // The registry now disambiguates by ref.provider when readbacks declare
+  // a `providers` allowlist.
+  it('Bugbot PR #91 — disambiguates duplicate kinds by ref.provider', () => {
+    const r1 = readbackForRef(ref({ kind: 'deploy', id: 'dpl_x', provider: 'vercel' }));
+    assert.equal(r1?.name, 'vercel');
+    const r2 = readbackForRef(ref({ kind: 'deploy', id: 'dpl_x', provider: 'fly' }));
+    assert.equal(r2?.name, 'fly');
+    const r3 = readbackForRef(ref({ kind: 'deploy', id: 'dpl_x', provider: 'render' }));
+    assert.equal(r3?.name, 'render');
+    const r4 = readbackForRef(ref({ kind: 'rollback-target', id: 'dpl_y', provider: 'fly' }));
+    assert.equal(r4?.name, 'fly');
+  });
+
+  it('Bugbot PR #91 — unknown deploy provider returns null (not silent vercel match)', () => {
+    const rb = readbackForRef(ref({ kind: 'deploy', id: 'dpl_x', provider: 'netlify' }));
+    assert.equal(rb, null);
+  });
+
+  it('Bugbot PR #91 — kind-only readbacks (no `providers`) match regardless of ref.provider', () => {
+    // The github readback handles github-pr without a `providers` allowlist —
+    // its routing must not regress: refs with the matching kind always pick
+    // it whether or not they declare a provider, including provider values
+    // the readback never explicitly opted into.
+    const r1 = readbackForRef(ref({ kind: 'github-pr', id: '1', provider: 'github' }));
+    assert.equal(r1?.name, 'github');
+    const r2 = readbackForRef(ref({ kind: 'github-pr', id: '2', provider: 'someone-else' }));
+    assert.equal(r2?.name, 'github');
   });
 });
 

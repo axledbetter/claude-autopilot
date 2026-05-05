@@ -63,9 +63,16 @@ export interface ReadbackResult {
 export interface ProviderReadback {
   /** Stable identifier — useful in logs / decision details. */
   readonly name: string;
-  /** Which ref kinds this readback handles. A ref's kind picks at most ONE
-   *  readback from the registry (first match wins). */
+  /** Which ref kinds this readback handles. The registry filters first by
+   *  kind; if multiple entries match a kind, `providers` then disambiguates
+   *  on `ref.provider`. */
   readonly handles: ReadonlyArray<ExternalRefKind>;
+  /** Optional provider-name allowlist. When present, the registry only
+   *  routes a ref to this readback if `ref.provider` is in this list. Lets
+   *  multiple readbacks share a kind (e.g. vercel/fly/render all handle
+   *  `deploy`) without shadowing each other. Omit for kind-exclusive
+   *  readbacks (e.g. github handles `github-pr`). */
+  readonly providers?: ReadonlyArray<string>;
   verifyRef(ref: ExternalRef): Promise<ReadbackResult>;
 }
 
@@ -268,6 +275,7 @@ export function makeDeployReadback(name: string, providers: ReadonlyArray<string
   return {
     name,
     handles: ['deploy', 'rollback-target'],
+    providers,
     verifyRef: (ref) => failClosed(name, ref, async () => {
       const provider = ref.provider ?? null;
       if (!provider || !providers.includes(provider)) {
@@ -415,12 +423,25 @@ export function setProviderReadbacks(list: ProviderReadback[] | null): void {
   providerReadbacks = list === null ? buildDefaultRegistry() : list;
 }
 
-/** Look up the readback that handles a given ref. Returns null if no
- *  registered readback claims this ref kind — caller treats null as
- *  "no readback available, route to needs-human". */
+/** Look up the readback that handles a given ref. Two-pass match: first try
+ *  a strict (kind + provider) match so multiple readbacks sharing a kind
+ *  (vercel/fly/render all on `deploy`) don't shadow each other; then fall
+ *  back to a kind-only match for readbacks that don't declare a provider
+ *  allowlist (e.g. the github readback handles `github-pr` regardless of
+ *  ref.provider). Returns null if no registered readback claims this ref —
+ *  caller treats null as "no readback available, route to needs-human".
+ *
+ *  Bugbot MEDIUM (PR #91): without provider-aware matching, the first deploy
+ *  readback registered (vercel) won every `deploy`/`rollback-target` lookup
+ *  and the fly/render readbacks were dead code. */
 export function readbackForRef(ref: ExternalRef): ProviderReadback | null {
+  if (ref.provider) {
+    for (const rb of providerReadbacks) {
+      if (rb.handles.includes(ref.kind) && rb.providers?.includes(ref.provider)) return rb;
+    }
+  }
   for (const rb of providerReadbacks) {
-    if (rb.handles.includes(ref.kind)) return rb;
+    if (rb.handles.includes(ref.kind) && !rb.providers) return rb;
   }
   return null;
 }
