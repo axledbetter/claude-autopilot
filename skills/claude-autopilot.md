@@ -47,7 +47,7 @@ Each phase writes its output to disk. Claude can stop, the user can edit the art
    - PR review finds criticals → fix on branch, push, re-review (max 2 rounds).
    - Bugbot finds real bugs → fix, push, re-triage (max 3 rounds).
    - Unrecoverable failure → stop, report what completed, show what remains.
-4. **Codex review is part of the loop, not optional.** The pipeline explicitly dispatches to `gpt-5.3-codex` for spec review, plan review, and PR review. This is the multi-model moat — don't skip it.
+4. **Codex review is part of the loop, not optional.** The pipeline explicitly dispatches to `gpt-5.5` for spec review, plan review, and PR review. This is the multi-model moat — don't skip it.
 5. **Skills are swappable.** `review-2pass` and `council` are alternative review phases — a user can configure which runs. The pipeline doesn't hardcode Claude or Codex.
 
 ## Phase outputs

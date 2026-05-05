@@ -5,15 +5,18 @@ import type { ReviewEngine, ReviewInput, ReviewOutput } from './types.ts';
 import { buildSystemPrompt, classifyError } from './prompt-builder.ts';
 import { loadOpenAI } from '../sdk-loader.ts';
 
-const DEFAULT_MODEL = process.env.CODEX_MODEL ?? 'gpt-5.3-codex';
+const DEFAULT_MODEL = process.env.CODEX_MODEL ?? 'gpt-5.5';
 const MAX_OUTPUT_TOKENS = 4096;
 
-// Per-million-token rates for gpt-5.3-codex (override via env for other models).
+// Per-million-token rates for gpt-5.5 (override via env for other models).
 // Computed client-side because the OpenAI Responses API returns token counts
 // but no $-cost field. Without this, every codex run logged costUSD=0 even
 // though tokens were tracked correctly.
-const COST_PER_M_INPUT = Number(process.env.CODEX_COST_INPUT_PER_M ?? 1.25);
-const COST_PER_M_OUTPUT = Number(process.env.CODEX_COST_OUTPUT_PER_M ?? 10.0);
+// gpt-5.5 pricing (2026-04-23 release): $5.00 input / $30.00 output per 1M.
+// 2× more expensive than 5.4 — leaving the old 5.4 numbers (1.25/10.0)
+// would silently halve every autopilot run's reported cost.
+const COST_PER_M_INPUT = Number(process.env.CODEX_COST_INPUT_PER_M ?? 5.0);
+const COST_PER_M_OUTPUT = Number(process.env.CODEX_COST_OUTPUT_PER_M ?? 30.0);
 
 const SYSTEM_PROMPT_TEMPLATE = `You are a senior software architect providing feedback on designs, proposals, and ideas.
 

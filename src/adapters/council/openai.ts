@@ -8,19 +8,22 @@ const MAX_OUTPUT_TOKENS = 2048;
 
 // Models that ONLY work via the Responses API (not chat.completions).
 // Codex variants and the o-series reasoning models all 404 on chat.completions.
-// Without this branch, putting `gpt-5.3-codex` (the typical default) in
+// Without this branch, putting `gpt-5.3-codex` (the prior default) in
 // council.models throws model_not_found, AND the synthesizer (also typically
-// gpt-5.3-codex) fails the same way — so the whole council returns `partial`
+// the same model) fails the same way — so the whole council returns `partial`
 // with no synthesis. That regression made the marketed multi-model differentiator
 // unusable for any user who only had OPENAI_API_KEY.
+// gpt-5.5 (the new default, 2026-04-23) drops the `-codex` suffix and works
+// via standard chat.completions, so it is intentionally NOT matched here.
 function isResponsesOnlyModel(model: string): boolean {
   return /codex|^o[1-9]|^gpt-5\.3-/i.test(model);
 }
 
-// Per-million-token rates for gpt-5.3-codex (override via env for other models).
+// Per-million-token rates for gpt-5.5 (override via env for other models).
 // Mirrors the review-engine codex adapter's pricing.
-const COST_PER_M_INPUT = Number(process.env.CODEX_COST_INPUT_PER_M ?? 1.25);
-const COST_PER_M_OUTPUT = Number(process.env.CODEX_COST_OUTPUT_PER_M ?? 10.0);
+// gpt-5.5 pricing (2026-04-23 release): $5.00 input / $30.00 output per 1M.
+const COST_PER_M_INPUT = Number(process.env.CODEX_COST_INPUT_PER_M ?? 5.0);
+const COST_PER_M_OUTPUT = Number(process.env.CODEX_COST_OUTPUT_PER_M ?? 30.0);
 
 export function makeOpenAICouncilAdapter(model: string, label: string): CouncilAdapter {
   return {
