@@ -259,7 +259,7 @@ async function cmdGenerate(args: string[]): Promise<number> {
     let snapContent: string;
     try {
       const response = await client.responses.create({
-        model: process.env.CODEX_MODEL ?? 'gpt-5.3-codex',
+        model: process.env.CODEX_MODEL ?? 'gpt-5.5',
         instructions: 'You write TypeScript snapshot tests. Output ONLY the file contents, no markdown fences.',
         input: prompt,
         max_output_tokens: 2000,

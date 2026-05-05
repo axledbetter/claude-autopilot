@@ -4,16 +4,19 @@ import type { Capabilities } from '../base.ts';
 import type { ReviewEngine, ReviewInput, ReviewOutput } from './types.ts';
 import { buildSystemPrompt, classifyError } from './prompt-builder.ts';
 import { loadOpenAI } from '../sdk-loader.ts';
+import { getModelPricing } from '../pricing.ts';
 
-const DEFAULT_MODEL = process.env.CODEX_MODEL ?? 'gpt-5.3-codex';
+const DEFAULT_MODEL = process.env.CODEX_MODEL ?? 'gpt-5.5';
 const MAX_OUTPUT_TOKENS = 4096;
 
-// Per-million-token rates for gpt-5.3-codex (override via env for other models).
-// Computed client-side because the OpenAI Responses API returns token counts
-// but no $-cost field. Without this, every codex run logged costUSD=0 even
-// though tokens were tracked correctly.
-const COST_PER_M_INPUT = Number(process.env.CODEX_COST_INPUT_PER_M ?? 1.25);
-const COST_PER_M_OUTPUT = Number(process.env.CODEX_COST_OUTPUT_PER_M ?? 10.0);
+// Per-million-token rates. Bugbot LOW PR #93: wired to read from the
+// canonical MODEL_PRICING table so the table is no longer dead code.
+// Resolution order: env override → MODEL_PRICING entry for DEFAULT_MODEL →
+// numeric fallback (gpt-5.5 published rates). Costs are computed client-side
+// because the OpenAI Responses API returns token counts but no $-cost field.
+const _pricing = getModelPricing(DEFAULT_MODEL);
+const COST_PER_M_INPUT = Number(process.env.CODEX_COST_INPUT_PER_M ?? _pricing?.inputPer1M ?? 5.0);
+const COST_PER_M_OUTPUT = Number(process.env.CODEX_COST_OUTPUT_PER_M ?? _pricing?.outputPer1M ?? 30.0);
 
 const SYSTEM_PROMPT_TEMPLATE = `You are a senior software architect providing feedback on designs, proposals, and ideas.
 

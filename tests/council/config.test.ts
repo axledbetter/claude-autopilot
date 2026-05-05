@@ -6,9 +6,19 @@ import { GuardrailError } from '../../src/core/errors.ts';
 const validRaw = {
   models: [
     { adapter: 'claude', model: 'claude-opus-4-7', label: 'Claude' },
-    { adapter: 'openai', model: 'gpt-5.4', label: 'Codex' },
+    // gpt-5.5 (released 2026-04-23) is the current default. Keeping
+    // gpt-5.4 in the alt-config below so back-compat is exercised too.
+    { adapter: 'openai', model: 'gpt-5.5', label: 'Codex' },
   ],
   synthesizer: { adapter: 'claude', model: 'claude-opus-4-7', label: 'Synthesizer' },
+};
+
+const validRawLegacyModel = {
+  ...validRaw,
+  models: [
+    { adapter: 'claude', model: 'claude-opus-4-7', label: 'Claude' },
+    { adapter: 'openai', model: 'gpt-5.4', label: 'Codex' },
+  ],
 };
 
 describe('parseCouncilConfig', () => {
@@ -20,7 +30,13 @@ describe('parseCouncilConfig', () => {
     assert.equal(cfg.synthesisInputMaxTokens, 12000);
     assert.equal(cfg.models.length, 2);
     assert.equal(cfg.models[0]!.label, 'Claude');
+    assert.equal(cfg.models[1]!.model, 'gpt-5.5');
     assert.equal(cfg.synthesizer.label, 'Synthesizer');
+  });
+
+  it('CC1b: parses legacy gpt-5.4 model string for back-compat with pinned configs', () => {
+    const cfg = parseCouncilConfig(validRawLegacyModel);
+    assert.equal(cfg.models[1]!.model, 'gpt-5.4');
   });
 
   it('CC2: throws on fewer than 2 models', () => {

@@ -1,6 +1,16 @@
 ## Unreleased
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
+- **Default codex/council model bumped `gpt-5.3-codex` → `gpt-5.5`.** OpenAI
+  released GPT-5.5 (codename Spud) on 2026-04-23 — better at coding than 5.4
+  with fewer tokens, available via standard Responses/Chat Completions API
+  at `gpt-5.5` (no `-codex` suffix). Pricing **doubles** to $5/1M input +
+  $30/1M output, so the per-adapter `COST_PER_M_INPUT/OUTPUT` defaults moved
+  in lockstep — without this, every cost-ledger entry would silently halve.
+  New canonical pricing table at `src/adapters/pricing.ts` keeps the legacy
+  `gpt-5.3-codex` and `gpt-5.4` entries for back-compat with pinned
+  `CODEX_MODEL`/`council.models[].model` configs. Override via env vars
+  (`CODEX_MODEL`, `CODEX_COST_INPUT_PER_M`, `CODEX_COST_OUTPUT_PER_M`).
 
 ## v5.6.0 — Fly.io + Render deploy adapters (2026-05-04)
 
