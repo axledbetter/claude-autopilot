@@ -377,8 +377,23 @@ switch (subcommand) {
 
   case 'doctor':
   case 'preflight': {
-    const result = await runDoctor();
-    process.exit(result.blockers > 0 ? 1 : 0);
+    const json = boolFlag('json');
+    let docResult: Awaited<ReturnType<typeof runDoctor>> | null = null;
+    const code = await runUnderJsonMode(
+      {
+        command: subcommand,
+        active: json,
+        payload: () => docResult ? {
+          blockers: docResult.blockers,
+          warnings: docResult.warnings,
+        } : {},
+      },
+      async () => {
+        docResult = await runDoctor();
+        return docResult.blockers > 0 ? 1 : 0;
+      },
+    );
+    process.exit(code);
     break;
   }
 
@@ -587,15 +602,19 @@ switch (subcommand) {
     const base = flag('base');
     const dryRun = boolFlag('dry-run');
     const verify = boolFlag('verify');
+    const json = boolFlag('json');
     const targets = args.slice(1).filter(a => !a.startsWith('--') && a !== config && a !== base);
-    const code = await runTestGen({
-      cwd: process.cwd(),
-      configPath: config,
-      targets: targets.length > 0 ? targets : undefined,
-      base,
-      dryRun,
-      verify,
-    });
+    const code = await runUnderJsonMode(
+      { command: 'test-gen', active: json },
+      () => runTestGen({
+        cwd: process.cwd(),
+        configPath: config,
+        targets: targets.length > 0 ? targets : undefined,
+        base,
+        dryRun,
+        verify,
+      }),
+    );
     process.exit(code);
     break;
   }
@@ -705,13 +724,17 @@ switch (subcommand) {
     const contextFile = flag('context-file');
     const dryRun = boolFlag('dry-run');
     const noSynthesize = boolFlag('no-synthesize');
-    const code = await runCouncilCmd({
-      prompt,
-      contextFile,
-      configPath: config,
-      dryRun,
-      noSynthesize,
-    });
+    const json = boolFlag('json');
+    const code = await runUnderJsonMode(
+      { command: 'council', active: json },
+      () => runCouncilCmd({
+        prompt,
+        contextFile,
+        configPath: config,
+        dryRun,
+        noSynthesize,
+      }),
+    );
     process.exit(code);
     break;
   }
