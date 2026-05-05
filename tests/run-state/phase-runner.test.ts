@@ -222,9 +222,11 @@ describe('runPhase — idempotency / side-effects gating', () => {
     assert.equal(runCount, 1, 'phase.run must not have been called again');
 
     const { events } = readEvents(dir);
+    // Phase 6 — short-circuit reason renamed from idempotent-replay to
+    // skip-already-applied (the canonical decision verb from decideReplay).
     const warns = events.filter(
       e => e.event === 'run.warning'
-        && (e as { details?: { reason?: string } }).details?.reason === 'idempotent-replay',
+        && (e as { details?: { reason?: string } }).details?.reason === 'skip-already-applied',
     );
     assert.equal(warns.length, 1);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -276,10 +278,10 @@ describe('runPhase — idempotency / side-effects gating', () => {
     assert.equal(runCount, 2);
 
     const { events } = readEvents(dir);
-    const overrides = events.filter(
-      e => e.event === 'run.warning'
-        && (e as { details?: { reason?: string } }).details?.reason === 'force-replay',
-    );
+    // Phase 6 — force-replay now emits a dedicated replay.override event
+    // instead of a generic run.warning. Spec: "a `--force-replay` override
+    // writes an explicit `replay.override` event with user-supplied reason."
+    const overrides = events.filter(e => e.event === 'replay.override');
     assert.equal(overrides.length, 1);
     fs.rmSync(dir, { recursive: true, force: true });
   });

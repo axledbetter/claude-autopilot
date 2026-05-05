@@ -100,6 +100,11 @@ export interface PhaseSnapshot {
   externalRefs: ExternalRef[];
   /** Phase-specific metadata. Free-form; engine doesn't introspect. */
   meta?: Record<string, unknown>;
+  /** Phase 6 — last successful output, persisted so a future
+   *  `skip-already-applied` decision can return it without re-execution.
+   *  The engine writes this on every `phase.success`; absent on failed
+   *  / pre-Phase-6 snapshots. JSON-serializable values only. */
+  result?: unknown;
 }
 
 /** The state.json checkpoint. Authoritative answer is always
@@ -277,6 +282,21 @@ export interface BudgetCheckEvent extends RunEventBase {
   reason: string;
 }
 
+/** Phase 6 — emitted when a `forceReplay` override flips a needs-human (or
+ *  any other refusal) into a retry. Carries the phase and the refs that
+ *  WERE consulted so the durable log shows exactly what was overridden.
+ *  Spec: "a `--force-replay` override writes an explicit `replay.override`
+ *  event with user-supplied reason." */
+export interface ReplayOverrideEvent extends RunEventBase {
+  event: 'replay.override';
+  phase: string;
+  phaseIdx: number;
+  /** Free-form user / CI reason for the override. */
+  reason: string;
+  /** Refs the underlying refusal cited (echoed for triage). */
+  refsConsulted: ExternalRef[];
+}
+
 /** Discriminated union of every event variant. Add new variants here and
  *  the code that switches over `event` will type-error at compile time. */
 export type RunEvent =
@@ -293,7 +313,8 @@ export type RunEvent =
   | PhaseNeedsHumanEvent
   | LockTakeoverEvent
   | IndexRebuiltEvent
-  | BudgetCheckEvent;
+  | BudgetCheckEvent
+  | ReplayOverrideEvent;
 
 /** Distributive Omit so the discriminated-union shape is preserved when we
  *  strip the fields the appender fills in. Plain `Omit<RunEvent, ...>`
