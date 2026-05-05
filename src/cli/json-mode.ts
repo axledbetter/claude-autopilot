@@ -40,7 +40,7 @@
 // handler completes so test runs (which spawn many handlers in-process) get
 // a clean slate.
 
-import { stripAnsi, syntheticRunWarning } from './json-envelope.ts';
+import { __getChannelTestSink, stripAnsi, syntheticRunWarning } from './json-envelope.ts';
 
 export interface CapturedMessage {
   level: 'log' | 'warn' | 'error' | 'info' | 'debug';
@@ -99,8 +99,18 @@ export function installJsonModeChannelDiscipline(opts: { active: boolean } = { a
     };
   }
 
+  const sink = __getChannelTestSink();
   const origStdoutWrite = process.stdout.write.bind(process.stdout);
   const origStderrWrite = process.stderr.write.bind(process.stderr);
+  // When a test sink is installed, the shim still wraps process streams so
+  // user code goes through capture, but pass-through writes (NDJSON we want
+  // to surface as-is) go to the sink so tests can read them deterministically
+  // without interleaving with the test runner's own TAP output on the real
+  // streams.
+  const writeStderr = (line: string): void => {
+    if (sink) sink.stderr(line);
+    else origStderrWrite(line);
+  };
   const origConsoleLog = console.log;
   const origConsoleError = console.error;
   const origConsoleWarn = console.warn;
@@ -140,10 +150,10 @@ export function installJsonModeChannelDiscipline(opts: { active: boolean } = { a
       const parsed = tryParse(line);
       if (parsed !== undefined) {
         // Pass through as-is (with trailing newline) — already NDJSON.
-        origStderrWrite(line + '\n');
+        writeStderr(line + '\n');
       } else {
         const ev = syntheticRunWarning(line, { level });
-        origStderrWrite(JSON.stringify(ev) + '\n');
+        writeStderr(JSON.stringify(ev) + '\n');
       }
     }
   }

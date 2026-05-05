@@ -90,6 +90,21 @@ export function stripAnsi(s: string): string {
   return s.replace(ANSI_RE, '');
 }
 
+/** Test seam — when set, emitEnvelope writes to this collector instead of
+ *  process.stdout. installJsonModeChannelDiscipline uses the same seam for
+ *  its inner shim's pass-through paths. Production code never sets this. */
+export interface ChannelTestSink {
+  stdout: (line: string) => void;
+  stderr: (line: string) => void;
+}
+let _testSink: ChannelTestSink | null = null;
+export function __setChannelTestSink(sink: ChannelTestSink | null): void {
+  _testSink = sink;
+}
+export function __getChannelTestSink(): ChannelTestSink | null {
+  return _testSink;
+}
+
 /** Emit the envelope as exactly one stdout line. The newline IS the
  *  separator — consumers calling `JSON.parse(stdout)` should split on `\n`
  *  if they spawn the CLI more than once. */
@@ -119,7 +134,9 @@ export function emitEnvelope(env: JsonEnvelope): void {
   if (Array.isArray(cleaned.messages)) {
     cleaned.messages = cleaned.messages.map(m => ({ ...m, text: stripAnsi(m.text) }));
   }
-  process.stdout.write(JSON.stringify(cleaned) + '\n');
+  const line = JSON.stringify(cleaned) + '\n';
+  if (_testSink) _testSink.stdout(line);
+  else process.stdout.write(line);
 }
 
 /** Emit a typed event as a single NDJSON line on stderr.
@@ -130,7 +147,9 @@ export function emitEnvelope(env: JsonEnvelope): void {
  *  if it came out of the run-state engine, or a partial shape if it's a
  *  CLI-synthetic warning routed via console.warn. */
 export function emitStderrEvent(event: RunEvent | RunEventInput | Record<string, unknown>): void {
-  process.stderr.write(JSON.stringify(event) + '\n');
+  const line = JSON.stringify(event) + '\n';
+  if (_testSink) _testSink.stderr(line);
+  else process.stderr.write(line);
 }
 
 /** Channel options carried alongside per-verb opts. Uniform across every
