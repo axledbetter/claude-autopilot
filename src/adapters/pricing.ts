@@ -45,12 +45,15 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   // adapter + council openai adapter. Better at coding than 5.4 with fewer
   // tokens, but ~2× more expensive per token. Available via standard
   // Responses/Chat Completions API at `gpt-5.5` (no `-codex` suffix).
-  // TODO: confirm published `cachedInputPer1M` — heuristic is ~1/8 of input
-  // (so ~$0.625/1M) but we have no definitive source yet, so leave 0.
+  // Bugbot MEDIUM PR #93: `cachedInputPer1M` is `null` (NOT 0) until we have
+  // a confirmed published number. The interface contract treats `0` as
+  // "cached tokens are free" — using it would make consumers silently
+  // compute $0 for cached usage. Heuristic is ~1/8 of input (~$0.625/1M)
+  // per OpenAI's prompt-cache pattern, but no definitive source yet.
   'gpt-5.5': {
     inputPer1M: 5.0,
     outputPer1M: 30.0,
-    cachedInputPer1M: 0,
+    cachedInputPer1M: null,
   },
 };
 

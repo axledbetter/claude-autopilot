@@ -10,6 +10,15 @@ describe('MODEL_PRICING', () => {
     assert.equal(p!.outputPer1M, 30.0);
   });
 
+  it('Bugbot MEDIUM PR #93 — gpt-5.5 cachedInputPer1M is null (not 0)', () => {
+    // The interface contract: `null` means "no confirmed cached tier";
+    // `0` means "cached tokens are free". Until OpenAI publishes the
+    // exact rate, we MUST use null so consumers fall back to a
+    // "unknown — don't pretend $0" code path.
+    const p = getModelPricing('gpt-5.5');
+    assert.equal(p!.cachedInputPer1M, null);
+  });
+
   it('keeps the prior gpt-5.4 entry for back-compat with pinned configs', () => {
     const p = getModelPricing('gpt-5.4');
     assert.ok(p, 'gpt-5.4 must remain in MODEL_PRICING for back-compat');
