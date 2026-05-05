@@ -51,7 +51,15 @@ import {
   sumPhaseCost,
   type PhaseContext,
 } from './phase-context.ts';
-import { writePhaseSnapshot } from './snapshot.ts';
+import {
+  decideReplay,
+  type ReplayDecision,
+} from './replay-decision.ts';
+import {
+  verifyRefs as defaultVerifyRefs,
+  type ReadbackResult,
+} from './provider-readback.ts';
+import { readPhaseSnapshot, writePhaseSnapshot } from './snapshot.ts';
 import {
   RUN_STATE_SCHEMA_VERSION,
   type ExternalRef,
@@ -121,6 +129,10 @@ export interface ParentRunContext {
   /** Override the interactive confirm prompt. Returning `true` proceeds,
    *  `false` rejects. Mainly a test seam; the default uses readline. */
   confirmBudgetPause?: (check: BudgetCheck) => Promise<boolean>;
+  /** Phase 6 — override the readback layer. Defaults to `verifyRefs` from
+   *  `provider-readback.ts`, which uses the registered providers. Tests
+   *  inject a stub to avoid hitting `gh` / network. */
+  verifyRefs?: (refs: ReadonlyArray<ExternalRef>) => Promise<ReadbackResult[]>;
 }
 
 // Re-export the context surface so callers don't need to import from two
@@ -155,9 +167,10 @@ export async function runPhase<I, O>(
     budget,
     nonInteractive,
     confirmBudgetPause,
+    verifyRefs,
   } = parentCtx;
 
-  // -- Idempotency / side-effect gating ----------------------------------
+  // -- Idempotency / side-effect gating (Phase 6) ------------------------
   // We replay events.ndjson once up-front to detect prior outcomes for this
   // phaseIdx. Cheap — Phase 1 already reads the whole file for replayState.
   const prior = readEvents(runDir);
@@ -166,71 +179,59 @@ export async function runPhase<I, O>(
   const priorRefs = collectExternalRefs(prior.events, phaseIdx);
 
   if (priorSuccessCount > 0) {
-    if (phase.idempotent) {
-      // Short-circuit. Emit a `run.warning` so consumers see the skip
-      // (we don't have a dedicated phase.skipped variant in the Phase 1
-      // event union — this is intentional: replay produces the same
-      // PhaseSnapshot regardless of how many times the runner short-
-      // circuited, so the durable log doesn't need a separate event).
-      // Phase 2 invariant: the snapshot's `attempts` is bumped and `meta`
-      // records the skip so debug tooling can surface it.
-      appendEvent(
-        runDir,
-        {
-          event: 'run.warning',
-          message: `phase ${phase.name} short-circuited on idempotent-replay`,
-          details: {
-            phase: phase.name,
-            phaseIdx,
-            priorSuccesses: priorSuccessCount,
-            reason: 'idempotent-replay',
-          },
-        },
-        { writerId, runId },
-      );
-
-      // Refresh + re-persist snapshot with the bumped attempts/meta.
-      const snapshot: PhaseSnapshot = {
-        schema_version: RUN_STATE_SCHEMA_VERSION,
-        name: phase.name,
-        index: phaseIdx,
-        status: 'succeeded',
-        idempotent: phase.idempotent,
-        hasSideEffects: phase.hasSideEffects,
-        costUSD: sumPhaseCost(prior.events, phaseIdx),
-        attempts: priorAttemptCount, // unchanged — we did NOT start
-        artifacts: [],
-        externalRefs: priorRefs,
-        meta: { skipped: true, reason: 'idempotent-replay' },
-      };
-      writePhaseSnapshot(runDir, snapshot);
-
-      // We don't re-execute, but we owe the caller an O. The contract is
-      // that an idempotent phase's prior output is durably recorded
-      // somewhere external (Phase 6 will wire onResume to surface it).
-      // For Phase 2 we throw a typed error if the caller actually depends
-      // on the return value — surfaces clearly rather than silently
-      // returning `undefined as O`.
-      throw new GuardrailError(
-        `phase ${phase.name} was already completed and is idempotent — ` +
-          `runPhase short-circuited; the caller should consult phases/${phase.name}.json or onResume.`,
-        {
-          code: 'superseded',
-          provider: 'run-state',
-          details: { runDir, phaseIdx, priorRefs },
-        },
-      );
+    // Run readbacks ONLY when we'd actually need them (side-effect phases
+    // with refs). Idempotent / no-side-effect / no-refs branches don't
+    // need a network call to decide.
+    let readbacks: ReadbackResult[] = [];
+    if (phase.hasSideEffects && !phase.idempotent && priorRefs.length > 0 && !forceReplay) {
+      const verifier = verifyRefs ?? defaultVerifyRefs;
+      try {
+        readbacks = await verifier(priorRefs);
+      } catch {
+        // Defense in depth — verifyRefs is supposed to fail-closed per ref,
+        // but if the wrapper itself throws we collapse all refs to unknown.
+        readbacks = priorRefs.map(r => ({
+          refKind: r.kind,
+          refId: r.id,
+          existsOnPlatform: false,
+          currentState: 'unknown',
+        }));
+      }
     }
 
-    if (phase.hasSideEffects && !forceReplay) {
-      // Refuse without explicit override.
+    const decision = decideReplay({
+      phaseName: phase.name,
+      hasPriorSuccess: true,
+      priorAttempts: priorAttemptCount,
+      idempotent: phase.idempotent,
+      hasSideEffects: phase.hasSideEffects,
+      externalRefs: priorRefs,
+      readbacks,
+      forceReplay: forceReplay === true,
+    });
+
+    if (decision.decision === 'skip-already-applied') {
+      return handleSkipAlreadyApplied({
+        decision,
+        phase,
+        phaseIdx,
+        priorEvents: prior.events,
+        priorAttemptCount,
+        priorRefs,
+        runDir,
+        runId,
+        writerId,
+      });
+    }
+
+    if (decision.decision === 'needs-human') {
       appendEvent(
         runDir,
         {
           event: 'phase.needs-human',
           phase: phase.name,
           phaseIdx,
-          reason: 'replay-requires-human-approval',
+          reason: decision.reason,
           nextActions: [
             `Inspect prior externalRefs for phase ${phase.name}.`,
             `Re-run with --force-replay if you accept the risk of duplicate side effects.`,
@@ -239,8 +240,7 @@ export async function runPhase<I, O>(
         { writerId, runId },
       );
       throw new GuardrailError(
-        `phase ${phase.name} previously succeeded with side effects; ` +
-          `replay requires explicit --force-replay (or onResume === 'retry').`,
+        `phase ${phase.name} previously succeeded; ${decision.reason}`,
         {
           code: 'superseded',
           provider: 'run-state',
@@ -248,20 +248,36 @@ export async function runPhase<I, O>(
             runDir,
             phaseIdx,
             priorRefs,
+            readbacks: decision.readbacksConsulted,
             reason: 'side-effecting-replay-needs-human',
           },
         },
       );
     }
 
-    if (phase.hasSideEffects && forceReplay) {
-      // Note the override in the log.
+    if (decision.decision === 'abort') {
+      throw new GuardrailError(
+        `phase ${phase.name} aborted by replay decision: ${decision.reason}`,
+        {
+          code: 'user_input',
+          provider: 'run-state',
+          details: { runDir, phaseIdx, priorRefs, reason: 'replay-decision-abort' },
+        },
+      );
+    }
+
+    // decision.decision === 'retry' — continue. If forceReplay drove this,
+    // record an explicit replay.override event so the durable log shows the
+    // override happened (per spec).
+    if (forceReplay === true) {
       appendEvent(
         runDir,
         {
-          event: 'run.warning',
-          message: `phase ${phase.name} replay forced via --force-replay`,
-          details: { phase: phase.name, phaseIdx, priorRefs, reason: 'force-replay' },
+          event: 'replay.override',
+          phase: phase.name,
+          phaseIdx,
+          reason: decision.reason,
+          refsConsulted: priorRefs,
         },
         { writerId, runId },
       );
@@ -421,6 +437,13 @@ export async function runPhase<I, O>(
   );
   // Re-read to capture costs / refs the phase emitted during run().
   const after = readEvents(runDir);
+  // Phase 6 — persist the phase output so a future skip-already-applied
+  // can return it without re-execution. Only persist values that JSON
+  // round-trip cleanly; if the phase returned something non-serializable
+  // (a function, a class instance with circular refs, a Buffer, …) we
+  // store undefined and rely on the phase being idempotent enough that a
+  // future caller doesn't actually need the prior value.
+  const persistedResult = jsonRoundTrip(output);
   const successSnapshot: PhaseSnapshot = {
     schema_version: RUN_STATE_SCHEMA_VERSION,
     name: phase.name,
@@ -435,9 +458,111 @@ export async function runPhase<I, O>(
     attempts: attempt,
     artifacts: [],
     externalRefs: collectExternalRefs(after.events, phaseIdx),
+    ...(persistedResult !== undefined ? { result: persistedResult } : {}),
   };
   writePhaseSnapshot(runDir, successSnapshot);
   return output;
+}
+
+// ----------------------------------------------------------------------------
+// Phase 6 — skip-already-applied path
+// ----------------------------------------------------------------------------
+
+interface SkipAlreadyAppliedOpts<O> {
+  decision: ReplayDecision;
+  phase: RunPhase<unknown, O>;
+  phaseIdx: number;
+  priorEvents: RunEvent[];
+  priorAttemptCount: number;
+  priorRefs: ExternalRef[];
+  runDir: string;
+  runId: string;
+  writerId: WriterId;
+}
+
+/** Phase 6 — handle a `skip-already-applied` decision. Surfaces the prior
+ *  result from the persisted snapshot if available; otherwise records the
+ *  skip and rewrites the snapshot with `meta.skipped=true` then throws a
+ *  typed `superseded` so the caller can react (matches the Phase 2
+ *  contract for idempotent short-circuits). */
+function handleSkipAlreadyApplied<O>(opts: SkipAlreadyAppliedOpts<O>): O {
+  const {
+    decision, phase, phaseIdx, priorEvents, priorAttemptCount, priorRefs,
+    runDir, runId, writerId,
+  } = opts;
+
+  appendEvent(
+    runDir,
+    {
+      event: 'run.warning',
+      message: `phase ${phase.name} short-circuited: ${decision.reason}`,
+      details: {
+        phase: phase.name,
+        phaseIdx,
+        reason: 'skip-already-applied',
+        decision: decision.decision,
+        readbacks: decision.readbacksConsulted,
+      },
+    },
+    { writerId, runId },
+  );
+
+  const priorSnapshot = readPhaseSnapshot(runDir, phase.name);
+  const persistedResult = priorSnapshot?.result;
+
+  const refreshed: PhaseSnapshot = {
+    schema_version: RUN_STATE_SCHEMA_VERSION,
+    name: phase.name,
+    index: phaseIdx,
+    status: 'succeeded',
+    idempotent: phase.idempotent,
+    hasSideEffects: phase.hasSideEffects,
+    costUSD: sumPhaseCost(priorEvents, phaseIdx),
+    attempts: priorAttemptCount, // unchanged — we did NOT start
+    artifacts: priorSnapshot?.artifacts ?? [],
+    externalRefs: priorRefs.length > 0 ? priorRefs : (priorSnapshot?.externalRefs ?? []),
+    meta: { skipped: true, reason: 'skip-already-applied', decisionReason: decision.reason },
+    ...(persistedResult !== undefined ? { result: persistedResult } : {}),
+  };
+  writePhaseSnapshot(runDir, refreshed);
+
+  // If we have a prior result, return it. Otherwise throw `superseded` so
+  // the caller knows to consult the snapshot / onResume hook (matches the
+  // Phase 2 contract for idempotent short-circuits without a stored value).
+  if (persistedResult !== undefined) {
+    return persistedResult as O;
+  }
+  throw new GuardrailError(
+    `phase ${phase.name} was already completed (skip-already-applied) but ` +
+      `no prior result is persisted — the caller should consult phases/${phase.name}.json or onResume.`,
+    {
+      code: 'superseded',
+      provider: 'run-state',
+      details: {
+        runDir,
+        phaseIdx,
+        priorRefs,
+        readbacks: decision.readbacksConsulted,
+        decision: 'skip-already-applied',
+      },
+    },
+  );
+}
+
+/** JSON round-trip a value to detect serializability. Returns the round-
+ *  tripped value on success, undefined on any failure (circular refs,
+ *  bigint, function, undefined, etc.). Persisting only round-trippable
+ *  values keeps the snapshot file deterministic and prevents subtle
+ *  type-drift between the in-memory value and what gets restored. */
+function jsonRoundTrip(value: unknown): unknown {
+  if (value === undefined) return undefined;
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) return undefined;
+    return JSON.parse(serialized) as unknown;
+  } catch {
+    return undefined;
+  }
 }
 
 // ----------------------------------------------------------------------------

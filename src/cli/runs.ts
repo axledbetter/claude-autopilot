@@ -24,6 +24,7 @@ import * as readline from 'node:readline';
 import { GuardrailError } from '../core/errors.ts';
 import { foldEvents, readEvents, stateToIndexEntry } from '../core/run-state/events.ts';
 import { acquireRunLock } from '../core/run-state/lock.ts';
+import { decideReplay } from '../core/run-state/replay-decision.ts';
 import { readStateSnapshot, statePath, writeStateSnapshot } from '../core/run-state/state.ts';
 import { isValidULID } from '../core/run-state/ulid.ts';
 import {
@@ -889,50 +890,50 @@ export function computeResumeLookup(
 
   const currentName = state.phases[state.currentPhaseIdx]?.name ?? null;
 
-  // Decision per Phase 2's runPhase rules:
-  //   - prior success + idempotent       -> skip-idempotent
-  //   - prior success + side-effects     -> needs-human
-  //   - no prior success                 -> retry (covers fresh attempts and
-  //                                         retries after a failed attempt)
-  if (target.status === 'succeeded') {
-    if (target.idempotent) {
-      return {
-        runId: state.runId,
-        status: state.status,
-        currentPhase: currentName,
-        nextPhase: target.name,
-        decision: 'skip-idempotent',
-        reason: 'phase previously succeeded and is idempotent — replay would short-circuit',
-        externalRefs,
-      };
+  // Phase 6 — delegate to the canonical decideReplay() so the CLI
+  // prediction matches what runPhase will actually do. This is "lookup
+  // mode" — we pass an empty readbacks array, which (per the matrix)
+  // collapses every prior-success-with-side-effects case to needs-human
+  // because we can't perform a live readback from inside the CLI lookup.
+  // That's the right answer: surface the question to the user before
+  // actual execution. The CLI prediction's `skip-idempotent` /
+  // `already-complete` decisions are convenience aliases over decideReplay's
+  // `skip-already-applied` so existing consumers keep their vocabulary.
+  const hasPriorSuccess = target.status === 'succeeded';
+  const decision = decideReplay({
+    phaseName: target.name,
+    hasPriorSuccess,
+    priorAttempts: target.attempts,
+    idempotent: target.idempotent,
+    hasSideEffects: target.hasSideEffects,
+    externalRefs: target.externalRefs,
+    readbacks: [], // pure-state lookup; live readbacks happen inside runPhase
+    forceReplay: false,
+  });
+
+  // Bugbot LOW (PR #91): exhaustive switch — no `default` branch so TypeScript
+  // catches a missing case at compile time if a new ReplayDecisionKind variant
+  // is added. The `never` assignment is the standard pattern (mirrors the
+  // foldEvents switch in events.ts).
+  let mappedDecision: ResumeDecision;
+  switch (decision.decision) {
+    case 'retry':
+      mappedDecision = 'retry';
+      break;
+    case 'needs-human':
+    case 'abort':
+      mappedDecision = 'needs-human';
+      break;
+    case 'skip-already-applied':
+      // Map to the existing CLI vocabulary: idempotent phases keep their
+      // skip-idempotent label; everything else surfaces as already-complete
+      // so existing CLI consumers don't need to learn a new verb.
+      mappedDecision = target.idempotent ? 'skip-idempotent' : 'already-complete';
+      break;
+    default: {
+      const _exhaustive: never = decision.decision;
+      throw new Error(`unreachable ReplayDecisionKind: ${String(_exhaustive)}`);
     }
-    if (target.hasSideEffects) {
-      return {
-        runId: state.runId,
-        status: state.status,
-        currentPhase: currentName,
-        nextPhase: target.name,
-        decision: 'needs-human',
-        reason: 'phase previously succeeded with side effects — replay needs human approval',
-        externalRefs,
-      };
-    }
-    // Bugbot LOW (PR #88): a succeeded phase with idempotent=false AND
-    // hasSideEffects=false used to fall through to the generic
-    // "no prior success — first attempt" reason and a `retry` decision —
-    // factually wrong (the phase already succeeded) and potentially unsafe
-    // once Phase 6+ wires real execution. Treat as already-complete; the
-    // user can pass --force-replay (Phase 4+) to override.
-    return {
-      runId: state.runId,
-      status: state.status,
-      currentPhase: currentName,
-      nextPhase: target.name,
-      decision: 'already-complete',
-      reason:
-        'phase previously succeeded; resume would re-execute. Pass --force-replay to override.',
-      externalRefs,
-    };
   }
 
   return {
@@ -940,11 +941,9 @@ export function computeResumeLookup(
     status: state.status,
     currentPhase: currentName,
     nextPhase: target.name,
-    decision: 'retry',
-    reason: target.status === 'failed'
-      ? 'previous attempt failed — retry safe'
-      : 'no prior success — first attempt',
-    externalRefs,
+    decision: mappedDecision,
+    reason: decision.reason,
+    externalRefs: target.externalRefs.length > 0 ? target.externalRefs : externalRefs,
   };
 }
 

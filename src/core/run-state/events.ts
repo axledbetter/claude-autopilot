@@ -485,6 +485,19 @@ function applyEvent(state: RunState, ev: RunEvent): void {
       state.status = 'paused';
       break;
     }
+    case 'replay.override': {
+      // Phase 6 — purely advisory in the snapshot fold (the override itself
+      // happened at decision time; the subsequent phase.start/.success or
+      // .failed events drive state changes). We capture it on the phase's
+      // meta so `runs show` can surface that an override was applied.
+      const p = getPhase(state, ev.phaseIdx, ev.phase);
+      const meta = (p.meta ?? {}) as Record<string, unknown>;
+      const list = Array.isArray(meta.replayOverrides) ? meta.replayOverrides : [];
+      list.push({ ts: ev.ts, reason: ev.reason, refsConsulted: ev.refsConsulted });
+      meta.replayOverrides = list;
+      p.meta = meta;
+      break;
+    }
     default: {
       // Exhaustiveness check. Adding a new event variant without updating
       // this switch will produce a TS error here at compile time.

@@ -222,9 +222,11 @@ describe('runPhase — idempotency / side-effects gating', () => {
     assert.equal(runCount, 1, 'phase.run must not have been called again');
 
     const { events } = readEvents(dir);
+    // Phase 6 — short-circuit reason renamed from idempotent-replay to
+    // skip-already-applied (the canonical decision verb from decideReplay).
     const warns = events.filter(
       e => e.event === 'run.warning'
-        && (e as { details?: { reason?: string } }).details?.reason === 'idempotent-replay',
+        && (e as { details?: { reason?: string } }).details?.reason === 'skip-already-applied',
     );
     assert.equal(warns.length, 1);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -276,10 +278,10 @@ describe('runPhase — idempotency / side-effects gating', () => {
     assert.equal(runCount, 2);
 
     const { events } = readEvents(dir);
-    const overrides = events.filter(
-      e => e.event === 'run.warning'
-        && (e as { details?: { reason?: string } }).details?.reason === 'force-replay',
-    );
+    // Phase 6 — force-replay now emits a dedicated replay.override event
+    // instead of a generic run.warning. Spec: "a `--force-replay` override
+    // writes an explicit `replay.override` event with user-supplied reason."
+    const overrides = events.filter(e => e.event === 'replay.override');
     assert.equal(overrides.length, 1);
     fs.rmSync(dir, { recursive: true, force: true });
   });
@@ -604,6 +606,189 @@ describe('runPhase — budget enforcement (Phase 4)', () => {
     assert.equal(ev.estimatedHigh, null);
     assert.equal(ev.reserveApplied, 5);
     assert.equal(ev.decision, 'hard-fail');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 6 — readback-backed replay decisions inside runPhase
+// ---------------------------------------------------------------------------
+
+describe('runPhase — Phase 6 readback integration', () => {
+  it('valid github-pr readback → returns the prior result without re-execution', async () => {
+    const dir = tmp();
+    const runId = seedRun(dir, ['pr']);
+    let runCount = 0;
+    const phase: RunPhase<void, { prNumber: number }> = {
+      name: 'pr',
+      idempotent: false,
+      hasSideEffects: true,
+      run: async (_in, ctx) => {
+        runCount += 1;
+        ctx.emitExternalRef({ kind: 'github-pr', id: '99', provider: 'github' });
+        return { prNumber: 99 };
+      },
+    };
+    // First attempt — runs, persists result.
+    const first = await runPhase(phase, undefined, { runDir: dir, runId, writerId, phaseIdx: 0 });
+    assert.equal(runCount, 1);
+    assert.deepEqual(first, { prNumber: 99 });
+
+    // Second attempt with a verifyRefs stub that says the PR is open.
+    const verifyRefs = async () => [{
+      refKind: 'github-pr' as const,
+      refId: '99',
+      existsOnPlatform: true,
+      currentState: 'open' as const,
+    }];
+    const second = await runPhase(phase, undefined, {
+      runDir: dir, runId, writerId, phaseIdx: 0,
+      verifyRefs,
+    });
+    assert.equal(runCount, 1, 'phase.run must NOT have been called again');
+    assert.deepEqual(second, { prNumber: 99 }, 'prior result returned via skip-already-applied');
+
+    // Snapshot reflects skip with skip-already-applied reason.
+    const snap = readPhaseSnapshot(dir, 'pr');
+    assert.equal(snap?.status, 'succeeded');
+    assert.equal((snap?.meta as { reason?: string })?.reason, 'skip-already-applied');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('missing readback (refs but verifyRefs not stubbed and registry empty) → throws superseded with refs in details', async () => {
+    const dir = tmp();
+    const runId = seedRun(dir, ['pr']);
+    const phase: RunPhase<void, void> = {
+      name: 'pr',
+      idempotent: false,
+      hasSideEffects: true,
+      run: async (_in, ctx) => {
+        ctx.emitExternalRef({ kind: 'github-pr', id: '99', provider: 'github' });
+      },
+    };
+    await runPhase(phase, undefined, { runDir: dir, runId, writerId, phaseIdx: 0 });
+
+    // Stub verifyRefs to return an unknown-state readback (fail-closed).
+    const verifyRefs = async () => [{
+      refKind: 'github-pr' as const,
+      refId: '99',
+      existsOnPlatform: false,
+      currentState: 'unknown' as const,
+    }];
+
+    await assert.rejects(
+      runPhase(phase, undefined, { runDir: dir, runId, writerId, phaseIdx: 0, verifyRefs }),
+      (err: unknown) => {
+        if (!(err instanceof GuardrailError)) return false;
+        if (err.code !== 'superseded') return false;
+        const details = err.details as { priorRefs?: unknown[]; readbacks?: unknown[] };
+        return Array.isArray(details.priorRefs) && details.priorRefs.length === 1
+          && Array.isArray(details.readbacks) && details.readbacks.length === 1;
+      },
+    );
+    const { events } = readEvents(dir);
+    assert.ok(events.some(e => e.event === 'phase.needs-human'));
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('forceReplay overrides the refusal → emits replay.override event and re-runs the phase', async () => {
+    const dir = tmp();
+    const runId = seedRun(dir, ['deploy']);
+    let runCount = 0;
+    const phase: RunPhase<void, { id: string }> = {
+      name: 'deploy',
+      idempotent: false,
+      hasSideEffects: true,
+      run: async (_in, ctx) => {
+        runCount += 1;
+        ctx.emitExternalRef({ kind: 'deploy', id: `dpl_${runCount}`, provider: 'vercel' });
+        return { id: `dpl_${runCount}` };
+      },
+    };
+    await runPhase(phase, undefined, { runDir: dir, runId, writerId, phaseIdx: 0 });
+    assert.equal(runCount, 1);
+
+    await runPhase(phase, undefined, {
+      runDir: dir, runId, writerId, phaseIdx: 0, forceReplay: true,
+    });
+    assert.equal(runCount, 2);
+
+    const { events } = readEvents(dir);
+    const overrides = events.filter(e => e.event === 'replay.override');
+    assert.equal(overrides.length, 1);
+    const ov = overrides[0]! as {
+      event: 'replay.override';
+      phase: string;
+      reason: string;
+      refsConsulted: Array<{ kind: string; id: string }>;
+    };
+    assert.equal(ov.phase, 'deploy');
+    assert.match(ov.reason, /forceReplay override/);
+    assert.equal(ov.refsConsulted.length, 1);
+    assert.equal(ov.refsConsulted[0]?.id, 'dpl_1');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('skip-already-applied without prior result throws superseded (legacy behavior preserved)', async () => {
+    const dir = tmp();
+    const runId = seedRun(dir, ['validate']);
+    let runCount = 0;
+    // Idempotent phase that returns undefined — nothing to persist as result.
+    const phase: RunPhase<void, void> = {
+      name: 'validate',
+      idempotent: true,
+      hasSideEffects: false,
+      run: async () => {
+        runCount += 1;
+      },
+    };
+    await runPhase(phase, undefined, { runDir: dir, runId, writerId, phaseIdx: 0 });
+    assert.equal(runCount, 1);
+
+    await assert.rejects(
+      runPhase(phase, undefined, { runDir: dir, runId, writerId, phaseIdx: 0 }),
+      (err: unknown) => err instanceof GuardrailError && err.code === 'superseded',
+    );
+    assert.equal(runCount, 1);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('verifyRefs is NOT called when the prior phase had no externalRefs (no work to verify)', async () => {
+    const dir = tmp();
+    const runId = seedRun(dir, ['deploy']);
+    const phase: RunPhase<void, void> = {
+      name: 'deploy',
+      idempotent: false,
+      hasSideEffects: true,
+      run: async () => { /* emit no refs */ },
+    };
+    await runPhase(phase, undefined, { runDir: dir, runId, writerId, phaseIdx: 0 });
+
+    let verifyCalls = 0;
+    const verifyRefs = async () => {
+      verifyCalls += 1;
+      return [];
+    };
+    await assert.rejects(
+      runPhase(phase, undefined, { runDir: dir, runId, writerId, phaseIdx: 0, verifyRefs }),
+      (err: unknown) => err instanceof GuardrailError && err.code === 'superseded',
+    );
+    assert.equal(verifyCalls, 0, 'no refs to verify, so verifyRefs must be skipped');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('persists the phase output as snapshot.result on success (round-trip-safe values only)', async () => {
+    const dir = tmp();
+    const runId = seedRun(dir, ['plan']);
+    const phase: RunPhase<void, { complex: { nested: number[] } }> = {
+      name: 'plan',
+      idempotent: false,
+      hasSideEffects: false,
+      run: async () => ({ complex: { nested: [1, 2, 3] } }),
+    };
+    await runPhase(phase, undefined, { runDir: dir, runId, writerId, phaseIdx: 0 });
+    const snap = readPhaseSnapshot(dir, 'plan');
+    assert.deepEqual(snap?.result, { complex: { nested: [1, 2, 3] } });
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });

@@ -56,6 +56,15 @@ function fixtureState(opts: {
     status: 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'aborted';
     idempotent?: boolean;
     hasSideEffects?: boolean;
+    attempts?: number;
+    externalRefs?: Array<{
+      kind:
+        | 'github-pr' | 'github-comment' | 'git-remote-push' | 'deploy'
+        | 'migration-version' | 'rollback-target' | 'spec-file' | 'plan-file'
+        | 'sarif-artifact' | 'review-comments';
+      id: string;
+      provider?: string;
+    }>;
   }>;
   currentPhaseIdx?: number;
 }): RunState {
@@ -72,9 +81,14 @@ function fixtureState(opts: {
       idempotent: !!p.idempotent,
       hasSideEffects: !!p.hasSideEffects,
       costUSD: 0,
-      attempts: p.status === 'pending' ? 0 : 1,
+      attempts: p.attempts ?? (p.status === 'pending' ? 0 : 1),
       artifacts: [],
-      externalRefs: [],
+      externalRefs: (p.externalRefs ?? []).map(r => ({
+        kind: r.kind,
+        id: r.id,
+        ...(r.provider ? { provider: r.provider } : {}),
+        observedAt: '2026-05-04T00:00:00Z',
+      })),
     })),
     currentPhaseIdx: opts.currentPhaseIdx ?? 0,
     totalCostUSD: 0,
@@ -444,7 +458,7 @@ describe('runRunResume + computeResumeLookup', () => {
   it('decision="retry" when prior attempt failed (not skipped/needs-human)', () => {
     const state = fixtureState({
       phases: [
-        { name: 'plan', status: 'failed' },
+        { name: 'plan', status: 'failed', attempts: 1 },
         { name: 'impl', status: 'pending' },
       ],
       currentPhaseIdx: 0,
@@ -452,7 +466,25 @@ describe('runRunResume + computeResumeLookup', () => {
     const lookup = computeResumeLookup(state);
     assert.equal(lookup.decision, 'retry');
     assert.equal(lookup.nextPhase, 'plan');
-    assert.match(lookup.reason, /retry safe/);
+    // Phase 6 fold-in (Bugbot LOW PR #91): when there were prior attempts
+    // but no success, decideReplay distinguishes "post-failure retry" from
+    // "first attempt". The user-visible reason must reflect the actual
+    // history so `runs resume` doesn't lie about state awareness.
+    assert.match(lookup.reason, /previous attempt\(s\) failed/);
+    assert.doesNotMatch(lookup.reason, /first attempt/);
+  });
+
+  it('decision="retry" reason still says "first attempt" when there really were no prior attempts', () => {
+    const state = fixtureState({
+      phases: [
+        { name: 'plan', status: 'pending', attempts: 0 },
+        { name: 'impl', status: 'pending' },
+      ],
+      currentPhaseIdx: 0,
+    });
+    const lookup = computeResumeLookup(state);
+    assert.equal(lookup.decision, 'retry');
+    assert.match(lookup.reason, /first attempt/);
   });
 
   it('decision="skip-idempotent" when prior success + idempotent target', () => {
@@ -473,6 +505,10 @@ describe('runRunResume + computeResumeLookup', () => {
 
   it('decision="needs-human" when prior success + side-effects target', () => {
     // Keep a trailing pending phase so the run isn't already-complete.
+    // Phase 6 — without externalRefs the decision is "no externalRefs" /
+    // needs-human; with refs but no readbacks (CLI lookup mode) the
+    // decision is "no live readback" / needs-human. Both surface needs-human;
+    // the reason text differs but always mentions needing human review.
     const state = fixtureState({
       phases: [
         { name: 'deploy', status: 'succeeded', hasSideEffects: true },
@@ -481,7 +517,7 @@ describe('runRunResume + computeResumeLookup', () => {
     });
     const lookup = computeResumeLookup(state, 'deploy');
     assert.equal(lookup.decision, 'needs-human');
-    assert.match(lookup.reason, /human approval/);
+    assert.match(lookup.reason, /human review|human approval/);
   });
 
   it('decision="already-complete" when every phase succeeded', () => {
@@ -512,8 +548,12 @@ describe('runRunResume + computeResumeLookup', () => {
     });
     const lookup = computeResumeLookup(state, 'plan');
     assert.equal(lookup.decision, 'already-complete');
+    // Phase 6 — reason now comes from decideReplay's vocabulary; the
+    // skip-already-applied-because-no-side-effects case mentions exactly
+    // that. Existing CLI consumers see the same `already-complete` decision
+    // verb, but the inner reason changed.
     assert.match(lookup.reason, /previously succeeded/);
-    assert.match(lookup.reason, /--force-replay/);
+    assert.match(lookup.reason, /no side effects|skip-already-applied/);
   });
 
   it('JSON envelope marks lookup-only and includes the v1 schema', async () => {
@@ -545,6 +585,65 @@ describe('runRunResume + computeResumeLookup', () => {
     assert.equal(r.exit, 1);
     assert.match(r.stderr.join('\n'), /not_found/);
     cleanup(cwd);
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 6 — decideReplay-backed CLI lookup
+  // -------------------------------------------------------------------------
+
+  it('Phase 6: prior success + side-effects + persisted refs (lookup mode) → needs-human (no live readback)', () => {
+    const state = fixtureState({
+      phases: [
+        {
+          name: 'pr',
+          status: 'succeeded',
+          hasSideEffects: true,
+          externalRefs: [{ kind: 'github-pr', id: '99', provider: 'github' }],
+        },
+        { name: 'verify', status: 'pending' },
+      ],
+    });
+    const lookup = computeResumeLookup(state, 'pr');
+    assert.equal(lookup.decision, 'needs-human');
+    assert.match(lookup.reason, /no live readback|--force-replay/);
+    assert.equal(lookup.externalRefs.length, 1);
+    assert.equal(lookup.externalRefs[0]?.kind, 'github-pr');
+  });
+
+  it('Phase 6: prior success + side-effects + NO refs → needs-human (no externalRefs)', () => {
+    const state = fixtureState({
+      phases: [
+        { name: 'deploy', status: 'succeeded', hasSideEffects: true },
+        { name: 'verify', status: 'pending' },
+      ],
+    });
+    const lookup = computeResumeLookup(state, 'deploy');
+    assert.equal(lookup.decision, 'needs-human');
+    assert.match(lookup.reason, /no externalRefs/);
+  });
+
+  it('Phase 6: prior success + idempotent → skip-idempotent (CLI vocabulary preserved)', () => {
+    const state = fixtureState({
+      phases: [
+        { name: 'validate', status: 'succeeded', idempotent: true },
+        { name: 'next', status: 'pending' },
+      ],
+    });
+    const lookup = computeResumeLookup(state, 'validate');
+    assert.equal(lookup.decision, 'skip-idempotent');
+    assert.match(lookup.reason, /idempotent/);
+  });
+
+  it('Phase 6: prior success + no side-effects + not idempotent → already-complete (CLI alias for skip-already-applied)', () => {
+    const state = fixtureState({
+      phases: [
+        { name: 'plan', status: 'succeeded' },
+        { name: 'impl', status: 'pending' },
+      ],
+    });
+    const lookup = computeResumeLookup(state, 'plan');
+    assert.equal(lookup.decision, 'already-complete');
+    assert.match(lookup.reason, /no side effects|skip-already-applied/);
   });
 });
 
