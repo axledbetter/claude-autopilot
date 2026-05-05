@@ -903,6 +903,7 @@ export function computeResumeLookup(
   const decision = decideReplay({
     phaseName: target.name,
     hasPriorSuccess,
+    priorAttempts: target.attempts,
     idempotent: target.idempotent,
     hasSideEffects: target.hasSideEffects,
     externalRefs: target.externalRefs,

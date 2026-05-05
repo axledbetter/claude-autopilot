@@ -64,6 +64,24 @@ describe('decideReplay — matrix per spec idempotency table', () => {
     assert.equal(d.decision, 'retry');
   });
 
+  // Bugbot LOW (PR #91 fold-in): "first attempt" wording was lying when a
+  // prior attempt had failed. priorAttempts disambiguates the reason without
+  // changing the decision.
+  it('no prior success but priorAttempts > 0 → retry with "previous attempt failed" wording', () => {
+    const d = decideReplay(baseInput({
+      hasPriorSuccess: false,
+      priorAttempts: 2,
+    }));
+    assert.equal(d.decision, 'retry');
+    assert.match(d.reason, /previous attempt\(s\) failed \(2\) — retry safe/);
+    assert.doesNotMatch(d.reason, /first attempt/);
+  });
+
+  it('no prior success and priorAttempts omitted → defaults to "first attempt" wording (back-compat)', () => {
+    const d = decideReplay(baseInput({ hasPriorSuccess: false }));
+    assert.match(d.reason, /first attempt/);
+  });
+
   it('prior success + idempotent → skip-already-applied', () => {
     const d = decideReplay(baseInput({
       hasPriorSuccess: true,

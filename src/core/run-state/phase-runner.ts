@@ -202,6 +202,7 @@ export async function runPhase<I, O>(
     const decision = decideReplay({
       phaseName: phase.name,
       hasPriorSuccess: true,
+      priorAttempts: priorAttemptCount,
       idempotent: phase.idempotent,
       hasSideEffects: phase.hasSideEffects,
       externalRefs: priorRefs,

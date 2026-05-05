@@ -56,6 +56,7 @@ function fixtureState(opts: {
     status: 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'aborted';
     idempotent?: boolean;
     hasSideEffects?: boolean;
+    attempts?: number;
     externalRefs?: Array<{
       kind:
         | 'github-pr' | 'github-comment' | 'git-remote-push' | 'deploy'
@@ -80,7 +81,7 @@ function fixtureState(opts: {
       idempotent: !!p.idempotent,
       hasSideEffects: !!p.hasSideEffects,
       costUSD: 0,
-      attempts: p.status === 'pending' ? 0 : 1,
+      attempts: p.attempts ?? (p.status === 'pending' ? 0 : 1),
       artifacts: [],
       externalRefs: (p.externalRefs ?? []).map(r => ({
         kind: r.kind,
@@ -457,7 +458,7 @@ describe('runRunResume + computeResumeLookup', () => {
   it('decision="retry" when prior attempt failed (not skipped/needs-human)', () => {
     const state = fixtureState({
       phases: [
-        { name: 'plan', status: 'failed' },
+        { name: 'plan', status: 'failed', attempts: 1 },
         { name: 'impl', status: 'pending' },
       ],
       currentPhaseIdx: 0,
@@ -465,7 +466,24 @@ describe('runRunResume + computeResumeLookup', () => {
     const lookup = computeResumeLookup(state);
     assert.equal(lookup.decision, 'retry');
     assert.equal(lookup.nextPhase, 'plan');
-    // Phase 6 — reason now comes from decideReplay's vocabulary.
+    // Phase 6 fold-in (Bugbot LOW PR #91): when there were prior attempts
+    // but no success, decideReplay distinguishes "post-failure retry" from
+    // "first attempt". The user-visible reason must reflect the actual
+    // history so `runs resume` doesn't lie about state awareness.
+    assert.match(lookup.reason, /previous attempt\(s\) failed/);
+    assert.doesNotMatch(lookup.reason, /first attempt/);
+  });
+
+  it('decision="retry" reason still says "first attempt" when there really were no prior attempts', () => {
+    const state = fixtureState({
+      phases: [
+        { name: 'plan', status: 'pending', attempts: 0 },
+        { name: 'impl', status: 'pending' },
+      ],
+      currentPhaseIdx: 0,
+    });
+    const lookup = computeResumeLookup(state);
+    assert.equal(lookup.decision, 'retry');
     assert.match(lookup.reason, /first attempt/);
   });
 

@@ -50,6 +50,13 @@ export interface ReplayDecisionInput {
   phaseName: string;
   /** True iff prior `phase.success` event exists for this phaseIdx. */
   hasPriorSuccess: boolean;
+  /** Total attempts recorded in state.json for this phaseIdx (failed +
+   *  succeeded). Used only for the `reason` string when there's no prior
+   *  success but priorAttempts > 0 — distinguishes "first attempt" from
+   *  "post-failure retry" so users running `runs resume` get an accurate
+   *  description. No behavior depends on this; it's a presentation field.
+   *  Defaults to 0 when omitted (Bugbot LOW PR #91 fold-in). */
+  priorAttempts?: number;
   /** Mirrors RunPhase.idempotent declared at registration. */
   idempotent: boolean;
   /** Mirrors RunPhase.hasSideEffects declared at registration. */
@@ -97,9 +104,13 @@ export function decideReplay(input: ReplayDecisionInput): ReplayDecision {
 
   // No prior success → fresh attempt or post-failure retry. Always safe.
   if (!input.hasPriorSuccess) {
+    const priorAttempts = input.priorAttempts ?? 0;
+    const reason = priorAttempts > 0
+      ? `${input.phaseName} previous attempt(s) failed (${priorAttempts}) — retry safe`
+      : `${input.phaseName} has no prior success — first attempt`;
     return {
       decision: 'retry',
-      reason: `${input.phaseName} has no prior success — first attempt`,
+      reason,
       refsConsulted,
       readbacksConsulted: [],
     };
