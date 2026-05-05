@@ -1,0 +1,101 @@
+name: Adapter Cert (live)
+
+# Phase 7 of the v6 Run State Engine — live adapter certification suite.
+# Runs the Vercel + Fly + Render cert tests against real provider APIs.
+# See docs/specs/v6-run-state-engine.md and docs/adapters/cert-suite.md
+# for the operator runbook.
+#
+# Today this workflow is mostly a no-op: the secrets aren't configured
+# yet, so every cert test skips cleanly via the harness's env-gating.
+# That's intentional — it lets the workflow merge alongside the suite
+# without breaking CI. Add the GitHub Secrets listed below to turn the
+# suite live.
+#
+# Security note: every step uses only secrets.* and a few static
+# context values (github.workspace, github.run_id) which are not
+# user-controlled. There is no untrusted input in any run: command.
+
+on:
+  schedule:
+    # Nightly at 09:00 UTC = 02:00 PT (off-peak for sandbox accounts).
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+    # Manual trigger so a maintainer can rerun the suite without waiting
+    # for the schedule. No inputs — the suite is self-contained.
+
+# Single concurrency group so a manual rerun aborts an in-flight
+# nightly. Prevents two cert runs hammering the sandbox accounts at
+# the same time.
+concurrency:
+  group: adapter-cert
+  cancel-in-progress: true
+
+jobs:
+  cert:
+    name: Live adapter cert
+    runs-on: ubuntu-latest
+    # 30 minutes is the spec's worst-case for "Render free-tier cold
+    # build + Fly release polling + Vercel deploy". A real run typically
+    # finishes in under 12 minutes.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        # Cheap and useful — if the cert files don't compile, fail
+        # fast before burning sandbox quota.
+        run: npx tsc --noEmit
+
+      - name: Run live cert suite
+        # Live secrets are surfaced as env vars under the names the
+        # harness expects (see tests/adapters/live/_harness.ts and
+        # docs/adapters/cert-suite.md). When a secret is missing the
+        # cert tests skip cleanly — exit code 0 — so this step does
+        # not fail until a secret is added AND the corresponding
+        # provider call breaks.
+        env:
+          # Per-provider credentials. Add these as repo Secrets to
+          # enable nightly runs. Leaving them undefined is the
+          # explicit "skip" path.
+          VERCEL_TOKEN_TEST: ${{ secrets.VERCEL_TOKEN_TEST }}
+          VERCEL_PROJECT_TEST: ${{ secrets.VERCEL_PROJECT_TEST }}
+          FLY_API_TOKEN_TEST: ${{ secrets.FLY_API_TOKEN_TEST }}
+          FLY_APP_TEST: ${{ secrets.FLY_APP_TEST }}
+          FLY_IMAGE_TEST: ${{ secrets.FLY_IMAGE_TEST }}
+          RENDER_API_KEY_TEST: ${{ secrets.RENDER_API_KEY_TEST }}
+          RENDER_SERVICE_TEST: ${{ secrets.RENDER_SERVICE_TEST }}
+          # Direct cert artifacts into a path actions/upload-artifact
+          # can glob without knowing the provider/runId tree.
+          ADAPTER_CERT_ARTIFACT_DIR: ${{ github.workspace }}/artifacts/adapter-cert
+        # The harness's `workflowExitCode` helper is soft-fail
+        # tolerant — a soft-fail logs a warning event but the test
+        # still passes (exit 0). Hard-fails (auth/404/schema) bubble
+        # up via node:test's exit code.
+        run: npm run test:adapters:live
+
+      - name: Upload cert artifacts
+        # `if: always()` so even on hard-fail we keep the events.ndjson
+        # + last 200 log lines for the triage engineer. Per spec:
+        # "All cert runs persist events.ndjson + last 200 log lines as
+        # workflow artifacts so a triage engineer can replay the
+        # failure without re-running the workflow."
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adapter-cert-${{ github.run_id }}
+          path: artifacts/adapter-cert/
+          # Even if there are no artifacts (skip-mode), don't fail.
+          if-no-files-found: ignore
+          # Keep ~30 days. Sandbox cert traces are not sensitive but
+          # they're also not useful long-term.
+          retention-days: 30
