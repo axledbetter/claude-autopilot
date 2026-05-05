@@ -52,6 +52,7 @@
   ],
   "scripts": {
     "test": "node scripts/test-runner.mjs",
+    "test:adapters:live": "node --test --import=tsx tests/adapters/live/vercel.cert.ts tests/adapters/live/fly.cert.ts tests/adapters/live/render.cert.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json && node scripts/post-build-rewrite-imports.mjs",
     "prepublishOnly": "npm run build && npm test",
