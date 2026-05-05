@@ -35,6 +35,7 @@ import { runDeploy, runDeployRollback, runDeployStatus } from './deploy.ts';
 import { findPackageRoot } from './_pkg-root.ts';
 import { GuardrailError } from '../core/errors.ts';
 import { buildHelpText, buildCommandHelpText } from './help-text.ts';
+import { runUnderJsonMode, EXIT_NEEDS_HUMAN } from './json-envelope.ts';
 
 // Format unhandled errors as a one-line user-facing message instead of dumping a
 // Node stack trace. Auth/network failures are by far the most common path here
@@ -249,25 +250,45 @@ function boolFlag(name: string): boolean {
  *
  * Both `migrate doctor` (two-word) and `migrate-doctor` (single-verb alias)
  * resolve to this helper to keep their behavior locked together.
+ *
+ * Phase 5: also handles --json (envelope on stdout, no human banner).
  */
 async function runMigrateDoctorCLI(): Promise<never> {
   const fix = args.includes('--fix');
-  const result = await runMigrateDoctor({ repoRoot: process.cwd(), fix });
-  for (const r of result.results) {
-    const mark = r.result.ok ? '\x1b[32m✓\x1b[0m' : '\x1b[31m✗\x1b[0m';
-    console.log(`${mark} ${r.name}${r.result.message ? ` — ${r.result.message}` : ''}`);
-    if (!r.result.ok && r.result.fixHint) {
-      console.log(`  \x1b[2mhint: ${r.result.fixHint}\x1b[0m`);
-    }
-  }
-  if (result.mutations && result.mutations.length > 0) {
-    console.log(`\n\x1b[1mFixes applied:\x1b[0m`);
-    for (const m of result.mutations) console.log(`  - ${m}`);
-  }
-  if (result.migrationReportPath) {
-    console.log(`\n\x1b[2mMigration report: ${result.migrationReportPath}\x1b[0m`);
-  }
-  process.exit(result.allOk ? 0 : 1);
+  const json = args.includes('--json');
+  let docResult: Awaited<ReturnType<typeof runMigrateDoctor>> | null = null;
+  const code = await runUnderJsonMode(
+    {
+      command: 'migrate-doctor',
+      active: json,
+      payload: () => docResult ? {
+        results: docResult.results,
+        mutations: docResult.mutations ?? [],
+        migrationReportPath: docResult.migrationReportPath,
+        allOk: docResult.allOk,
+      } : {},
+      statusFor: exit => exit === 0 ? 'pass' : 'fail',
+    },
+    async () => {
+      docResult = await runMigrateDoctor({ repoRoot: process.cwd(), fix });
+      for (const r of docResult.results) {
+        const mark = r.result.ok ? '\x1b[32m✓\x1b[0m' : '\x1b[31m✗\x1b[0m';
+        console.log(`${mark} ${r.name}${r.result.message ? ` — ${r.result.message}` : ''}`);
+        if (!r.result.ok && r.result.fixHint) {
+          console.log(`  \x1b[2mhint: ${r.result.fixHint}\x1b[0m`);
+        }
+      }
+      if (docResult.mutations && docResult.mutations.length > 0) {
+        console.log(`\n\x1b[1mFixes applied:\x1b[0m`);
+        for (const m of docResult.mutations) console.log(`  - ${m}`);
+      }
+      if (docResult.migrationReportPath) {
+        console.log(`\n\x1b[2mMigration report: ${docResult.migrationReportPath}\x1b[0m`);
+      }
+      return docResult.allOk ? 0 : 1;
+    },
+  );
+  process.exit(code);
 }
 
 function printUsage(): void {
@@ -285,16 +306,20 @@ switch (subcommand) {
     }
     const dryRun = boolFlag('dry-run');
     const all = boolFlag('all');
+    const json = boolFlag('json');
     // Remaining non-flag args after 'scan' are paths
     const targets = args.slice(1).filter(a => !a.startsWith('--') && a !== ask && a !== focusArg && a !== config);
-    const code = await runScan({
-      configPath: config,
-      targets: targets.length > 0 ? targets : undefined,
-      all,
-      ask,
-      focus: focusArg as 'security' | 'logic' | 'performance' | 'brand' | 'all' | undefined,
-      dryRun,
-    });
+    const code = await runUnderJsonMode(
+      { command: 'scan', active: json },
+      () => runScan({
+        configPath: config,
+        targets: targets.length > 0 ? targets : undefined,
+        all,
+        ask,
+        focus: focusArg as 'security' | 'logic' | 'performance' | 'brand' | 'all' | undefined,
+        dryRun,
+      }),
+    );
     process.exit(code);
     break;
   }
@@ -302,48 +327,73 @@ switch (subcommand) {
   case 'init': {
     // `init` and `setup` are aliases. Keep both supported — no nag banner.
     const force = args.includes('--force');
-    await runSetup({ force });
+    const json = boolFlag('json');
+    const code = await runUnderJsonMode(
+      { command: 'init', active: json },
+      async () => {
+        await runSetup({ force });
 
-    // After the existing init/setup logic, sniff for a migration tool and write
-    // .autopilot/stack.md. Non-interactive: high-confidence single matches are
-    // auto-selected; ambiguity / no-match downgrades to a TODO 'none@1' shape so
-    // we don't block the user. (Interactive prompts come from the autopilot skill,
-    // not the CLI.)
-    try {
-      const result = await initMigrate({
-        repoRoot: process.cwd(),
-        force,
-      });
-      for (const ws of result.workspaces) {
-        const rel = ws.workspace === process.cwd() ? '.' : ws.workspace;
-        console.log(`\x1b[2m[init-migrate] ${ws.action} ${rel}/.autopilot/stack.md (skill: ${ws.skill})\x1b[0m`);
-      }
-    } catch (err) {
-      if (err instanceof NoMigrationToolDetectedError) {
-        // No high-confidence match — fall back to skipMigrate shape so the user
-        // can edit it later. This matches the auto-detection contract documented
-        // in the v5.2.0 CHANGELOG.
+        // After the existing init/setup logic, sniff for a migration tool and write
+        // .autopilot/stack.md. Non-interactive: high-confidence single matches are
+        // auto-selected; ambiguity / no-match downgrades to a TODO 'none@1' shape so
+        // we don't block the user. (Interactive prompts come from the autopilot skill,
+        // not the CLI.)
         try {
-          await initMigrate({
+          const result = await initMigrate({
             repoRoot: process.cwd(),
             force,
-            skipMigrate: true,
           });
-          console.log(`\x1b[33m[init-migrate] No migration tool detected — wrote 'none@1' stack.md (edit .autopilot/stack.md to configure)\x1b[0m`);
-        } catch (fallbackErr) {
-          console.error(`\x1b[31m[init-migrate] failed: ${(fallbackErr as Error).message}\x1b[0m`);
+          for (const ws of result.workspaces) {
+            const rel = ws.workspace === process.cwd() ? '.' : ws.workspace;
+            console.log(`\x1b[2m[init-migrate] ${ws.action} ${rel}/.autopilot/stack.md (skill: ${ws.skill})\x1b[0m`);
+          }
+        } catch (err) {
+          if (err instanceof NoMigrationToolDetectedError) {
+            // No high-confidence match — fall back to skipMigrate shape so the user
+            // can edit it later. This matches the auto-detection contract documented
+            // in the v5.2.0 CHANGELOG.
+            try {
+              await initMigrate({
+                repoRoot: process.cwd(),
+                force,
+                skipMigrate: true,
+              });
+              console.log(`\x1b[33m[init-migrate] No migration tool detected — wrote 'none@1' stack.md (edit .autopilot/stack.md to configure)\x1b[0m`);
+            } catch (fallbackErr) {
+              console.error(`\x1b[31m[init-migrate] failed: ${(fallbackErr as Error).message}\x1b[0m`);
+              return 1;
+            }
+          } else {
+            console.error(`\x1b[31m[init-migrate] failed: ${(err as Error).message}\x1b[0m`);
+            return 1;
+          }
         }
-      } else {
-        console.error(`\x1b[31m[init-migrate] failed: ${(err as Error).message}\x1b[0m`);
-      }
-    }
+        return 0;
+      },
+    );
+    if (json) process.exit(code);
     break;
   }
 
   case 'doctor':
   case 'preflight': {
-    const result = await runDoctor();
-    process.exit(result.blockers > 0 ? 1 : 0);
+    const json = boolFlag('json');
+    let docResult: Awaited<ReturnType<typeof runDoctor>> | null = null;
+    const code = await runUnderJsonMode(
+      {
+        command: subcommand,
+        active: json,
+        payload: () => docResult ? {
+          blockers: docResult.blockers,
+          warnings: docResult.warnings,
+        } : {},
+      },
+      async () => {
+        docResult = await runDoctor();
+        return docResult.blockers > 0 ? 1 : 0;
+      },
+    );
+    process.exit(code);
     break;
   }
 
@@ -408,22 +458,26 @@ switch (subcommand) {
       process.exit(1);
     }
     const newOnly = boolFlag('new-only');
+    const json = boolFlag('json');
 
-    const code = await runCommand({
-      base,
-      configPath: config,
-      files: filesArg ? filesArg.split(',').map(f => f.trim()) : undefined,
-      dryRun,
-      diff,
-      delta,
-      newOnly,
-      failOn: failOnArg as 'critical' | 'warning' | 'note' | 'none' | undefined,
-      inlineComments,
-      postComments,
-      format: formatArg as 'text' | 'sarif' | 'junit' | undefined,
-      outputPath,
-      skipReview: staticOnly,
-    });
+    const code = await runUnderJsonMode(
+      { command: 'run', active: json },
+      () => runCommand({
+        base,
+        configPath: config,
+        files: filesArg ? filesArg.split(',').map(f => f.trim()) : undefined,
+        dryRun,
+        diff,
+        delta,
+        newOnly,
+        failOn: failOnArg as 'critical' | 'warning' | 'note' | 'none' | undefined,
+        inlineComments,
+        postComments,
+        format: formatArg as 'text' | 'sarif' | 'junit' | undefined,
+        outputPath,
+        skipReview: staticOnly,
+      }),
+    );
     process.exit(code);
     break;
   }
@@ -437,16 +491,20 @@ switch (subcommand) {
     const diff = boolFlag('diff');
     const newOnly = boolFlag('new-only');
     const failOnArg = flag('fail-on');
-    const code = await runCi({
-      configPath: config,
-      base,
-      sarifOutput: outputPath,
-      postComments: noPostComments ? false : undefined,
-      inlineComments: noInlineComments ? false : undefined,
-      diff,
-      newOnly,
-      failOn: failOnArg as 'critical' | 'warning' | 'note' | 'none' | undefined,
-    });
+    const json = boolFlag('json');
+    const code = await runUnderJsonMode(
+      { command: 'ci', active: json },
+      () => runCi({
+        configPath: config,
+        base,
+        sarifOutput: outputPath,
+        postComments: noPostComments ? false : undefined,
+        inlineComments: noInlineComments ? false : undefined,
+        diff,
+        newOnly,
+        failOn: failOnArg as 'critical' | 'warning' | 'note' | 'none' | undefined,
+      }),
+    );
     process.exit(code);
     break;
   }
@@ -456,7 +514,11 @@ switch (subcommand) {
     const sub = args[1] ?? 'show';
     const note = flag('note');
     const config = flag('config');
-    const code = await rb(sub, { cwd: process.cwd(), note, baselinePath: config });
+    const json = boolFlag('json');
+    const code = await runUnderJsonMode(
+      { command: `baseline ${sub}`, active: json },
+      () => rb(sub, { cwd: process.cwd(), note, baselinePath: config }),
+    );
     process.exit(code);
     break;
   }
@@ -465,13 +527,17 @@ switch (subcommand) {
     const config = flag('config');
     const noPostComments = boolFlag('no-post-comments');
     const noInlineComments = boolFlag('no-inline-comments');
+    const json = boolFlag('json');
     const prNumber = args.slice(1).find(a => !a.startsWith('--') && /^\d+$/.test(a));
-    const code = await runPr({
-      configPath: config,
-      prNumber,
-      noPostComments,
-      noInlineComments,
-    });
+    const code = await runUnderJsonMode(
+      { command: 'pr', active: json },
+      () => runPr({
+        configPath: config,
+        prNumber,
+        noPostComments,
+        noInlineComments,
+      }),
+    );
     process.exit(code);
     break;
   }
@@ -505,12 +571,16 @@ switch (subcommand) {
     }
     const dryRun = boolFlag('dry-run');
     const noVerify = boolFlag('no-verify');
-    const code = await runFix({
-      configPath: config,
-      severity: severityArg as 'critical' | 'warning' | 'all' | undefined,
-      dryRun,
-      noVerify,
-    });
+    const json = boolFlag('json');
+    const code = await runUnderJsonMode(
+      { command: 'fix', active: json },
+      () => runFix({
+        configPath: config,
+        severity: severityArg as 'critical' | 'warning' | 'all' | undefined,
+        dryRun,
+        noVerify,
+      }),
+    );
     process.exit(code);
     break;
   }
@@ -518,7 +588,11 @@ switch (subcommand) {
   case 'triage': {
     const sub = args[1];
     const rest = args.slice(2);
-    const code = await runTriage(sub, rest);
+    const json = boolFlag('json');
+    const code = await runUnderJsonMode(
+      { command: `triage${sub ? ` ${sub}` : ''}`, active: json },
+      () => runTriage(sub, rest),
+    );
     process.exit(code);
     break;
   }
@@ -528,15 +602,19 @@ switch (subcommand) {
     const base = flag('base');
     const dryRun = boolFlag('dry-run');
     const verify = boolFlag('verify');
+    const json = boolFlag('json');
     const targets = args.slice(1).filter(a => !a.startsWith('--') && a !== config && a !== base);
-    const code = await runTestGen({
-      cwd: process.cwd(),
-      configPath: config,
-      targets: targets.length > 0 ? targets : undefined,
-      base,
-      dryRun,
-      verify,
-    });
+    const code = await runUnderJsonMode(
+      { command: 'test-gen', active: json },
+      () => runTestGen({
+        cwd: process.cwd(),
+        configPath: config,
+        targets: targets.length > 0 ? targets : undefined,
+        base,
+        dryRun,
+        verify,
+      }),
+    );
     process.exit(code);
     break;
   }
@@ -547,12 +625,20 @@ switch (subcommand) {
     const base = baseIdx !== -1 ? args[baseIdx + 1] : undefined;
     const outputIdx = args.indexOf('--output');
     const output = outputIdx !== -1 ? args[outputIdx + 1] : undefined;
-    await runPrDesc({
-      base,
-      post: args.includes('--post'),
-      yes: args.includes('--yes'),
-      output,
-    });
+    const json = boolFlag('json');
+    const code = await runUnderJsonMode(
+      { command: 'pr-desc', active: json },
+      async () => {
+        await runPrDesc({
+          base,
+          post: args.includes('--post'),
+          yes: args.includes('--yes'),
+          output,
+        });
+        return 0;
+      },
+    );
+    if (json) process.exit(code);
     break;
   }
 
@@ -563,7 +649,11 @@ switch (subcommand) {
 
   case 'costs': {
     const { runCosts } = await import('./costs.ts');
-    const code = await runCosts();
+    const json = boolFlag('json');
+    const code = await runUnderJsonMode(
+      { command: 'costs', active: json },
+      () => runCosts(),
+    );
     process.exit(code);
     break;
   }
@@ -571,16 +661,24 @@ switch (subcommand) {
   case 'report': {
     const outputPath = flag('output');
     const trend = boolFlag('trend');
-    const code = await runReport({ output: outputPath, trend });
+    const json = boolFlag('json');
+    const code = await runUnderJsonMode(
+      { command: 'report', active: json },
+      () => runReport({ output: outputPath, trend }),
+    );
     process.exit(code);
     break;
   }
 
   case 'explain': {
     const config = flag('config');
+    const json = boolFlag('json');
     // Target is the first non-flag arg after 'explain'
     const target = args.slice(1).find(a => !a.startsWith('--'));
-    const code = await runExplain({ configPath: config, target });
+    const code = await runUnderJsonMode(
+      { command: 'explain', active: json },
+      () => runExplain({ configPath: config, target }),
+    );
     process.exit(code);
     break;
   }
@@ -596,11 +694,19 @@ switch (subcommand) {
   case 'setup': {
     const force = args.includes('--force');
     const profileArg = flag('profile');
+    const json = boolFlag('json');
     if (profileArg && !['security-strict', 'team', 'solo'].includes(profileArg)) {
       console.error(`\x1b[31m[claude-autopilot] --profile must be "security-strict", "team", or "solo"\x1b[0m`);
       process.exit(1);
     }
-    await runSetup({ force, profile: profileArg as 'security-strict' | 'team' | 'solo' | undefined });
+    const code = await runUnderJsonMode(
+      { command: 'setup', active: json },
+      async () => {
+        await runSetup({ force, profile: profileArg as 'security-strict' | 'team' | 'solo' | undefined });
+        return 0;
+      },
+    );
+    if (json) process.exit(code);
     break;
   }
 
@@ -618,13 +724,17 @@ switch (subcommand) {
     const contextFile = flag('context-file');
     const dryRun = boolFlag('dry-run');
     const noSynthesize = boolFlag('no-synthesize');
-    const code = await runCouncilCmd({
-      prompt,
-      contextFile,
-      configPath: config,
-      dryRun,
-      noSynthesize,
-    });
+    const json = boolFlag('json');
+    const code = await runUnderJsonMode(
+      { command: 'council', active: json },
+      () => runCouncilCmd({
+        prompt,
+        contextFile,
+        configPath: config,
+        dryRun,
+        noSynthesize,
+      }),
+    );
     process.exit(code);
     break;
   }
@@ -652,11 +762,15 @@ switch (subcommand) {
   }
 
   case 'migrate-v4': {
-    const code = await runMigrateV4({
-      cwd: flag('path') ?? process.cwd(),
-      write: boolFlag('write'),
-      undo: boolFlag('undo'),
-    });
+    const json = boolFlag('json');
+    const code = await runUnderJsonMode(
+      { command: 'migrate-v4', active: json },
+      () => runMigrateV4({
+        cwd: flag('path') ?? process.cwd(),
+        write: boolFlag('write'),
+        undo: boolFlag('undo'),
+      }),
+    );
     process.exit(code);
     break;
   }
@@ -675,6 +789,7 @@ switch (subcommand) {
     const envName = flag('env') ?? 'dev';
     const dryRun = boolFlag('dry-run');
     const yesFlag = boolFlag('yes');
+    const json = boolFlag('json');
 
     // Read package version for the runtime handshake.
     const root = findPackageRoot(import.meta.url);
@@ -690,25 +805,50 @@ switch (subcommand) {
       }
     }
 
-    const result = await runMigrateDispatch({
-      repoRoot: process.cwd(),
-      env: envName,
-      yesFlag,
-      nonInteractive: !process.stdin.isTTY,
-      currentRuntimeVersion: runtimeVersion,
-      dryRun,
-    });
+    // Capture migrate result in an outer ref so the wrapper's payload
+    // callback can surface its structured fields in --json mode.
+    let migrateResult: Awaited<ReturnType<typeof runMigrateDispatch>> | null = null;
+    const code = await runUnderJsonMode(
+      {
+        command: 'migrate',
+        active: json,
+        payload: () => migrateResult ? {
+          migrate: {
+            status: migrateResult.status,
+            reasonCode: migrateResult.reasonCode,
+            appliedMigrations: migrateResult.appliedMigrations,
+            nextActions: migrateResult.nextActions,
+          },
+          ...(migrateResult.nextActions.length > 0 ? { nextActions: migrateResult.nextActions } : {}),
+        } : {},
+        statusFor: exit => {
+          if (!migrateResult) return exit === 0 ? 'pass' : 'fail';
+          return migrateResult.status === 'applied' || migrateResult.status === 'skipped' ? 'pass' : 'fail';
+        },
+      },
+      async () => {
+        migrateResult = await runMigrateDispatch({
+          repoRoot: process.cwd(),
+          env: envName,
+          yesFlag,
+          nonInteractive: json || !process.stdin.isTTY,
+          currentRuntimeVersion: runtimeVersion,
+          dryRun,
+        });
 
-    const ok = result.status === 'applied' || result.status === 'skipped';
-    const color = ok ? '\x1b[32m' : '\x1b[31m';
-    console.log(`${color}[migrate] status=${result.status} reason=${result.reasonCode}\x1b[0m`);
-    if (result.appliedMigrations.length > 0) {
-      console.log(`  applied: ${result.appliedMigrations.join(', ')}`);
-    }
-    if (result.nextActions.length > 0) {
-      console.log(`  next: ${result.nextActions.join('; ')}`);
-    }
-    process.exit(ok ? 0 : 1);
+        const ok = migrateResult.status === 'applied' || migrateResult.status === 'skipped';
+        const color = ok ? '\x1b[32m' : '\x1b[31m';
+        console.log(`${color}[migrate] status=${migrateResult.status} reason=${migrateResult.reasonCode}\x1b[0m`);
+        if (migrateResult.appliedMigrations.length > 0) {
+          console.log(`  applied: ${migrateResult.appliedMigrations.join(', ')}`);
+        }
+        if (migrateResult.nextActions.length > 0) {
+          console.log(`  next: ${migrateResult.nextActions.join('; ')}`);
+        }
+        return ok ? 0 : 1;
+      },
+    );
+    process.exit(code);
     break;
   }
 
@@ -737,20 +877,27 @@ switch (subcommand) {
     // non-flag positional after `deploy` selects the verb. The historic
     // `claude-autopilot deploy` (no subverb) keeps calling runDeploy.
     const subverb = args[1] && !args[1].startsWith('--') ? args[1] : undefined;
+    const json = boolFlag('json');
     if (subverb === 'rollback') {
       const to = flag('to');
-      const code = await runDeployRollback({
-        configPath: config,
-        adapterOverride: adapterArg as AdapterName | undefined,
-        to,
-      });
+      const code = await runUnderJsonMode(
+        { command: 'deploy rollback', active: json },
+        () => runDeployRollback({
+          configPath: config,
+          adapterOverride: adapterArg as AdapterName | undefined,
+          to,
+        }),
+      );
       process.exit(code);
     }
     if (subverb === 'status') {
-      const code = await runDeployStatus({
-        configPath: config,
-        adapterOverride: adapterArg as AdapterName | undefined,
-      });
+      const code = await runUnderJsonMode(
+        { command: 'deploy status', active: json },
+        () => runDeployStatus({
+          configPath: config,
+          adapterOverride: adapterArg as AdapterName | undefined,
+        }),
+      );
       process.exit(code);
     }
     if (subverb !== undefined) {
@@ -774,14 +921,17 @@ switch (subcommand) {
       }
       prNum = n;
     }
-    const code = await runDeploy({
-      configPath: config,
-      adapterOverride: adapterArg as AdapterName | undefined,
-      ref,
-      commitSha,
-      watch,
-      pr: prNum,
-    });
+    const code = await runUnderJsonMode(
+      { command: 'deploy', active: json },
+      () => runDeploy({
+        configPath: config,
+        adapterOverride: adapterArg as AdapterName | undefined,
+        ref,
+        commitSha,
+        watch,
+        pr: prNum,
+      }),
+    );
     process.exit(code);
     break;
   }
@@ -793,6 +943,25 @@ switch (subcommand) {
     // primary quickstart, so users WILL land here. Give them clear instructions
     // instead of a generic "Unknown subcommand" rejection. Only reference CLI
     // subcommands that actually route (verified by the welcome regression test).
+    const json = boolFlag('json');
+    if (json) {
+      // --json mode: surface the resume hint via nextActions, not a banner.
+      const code = await runUnderJsonMode(
+        {
+          command: 'brainstorm',
+          active: true,
+          payload: () => ({
+            note: 'brainstorm is a Claude Code skill, not a CLI subcommand',
+            nextActions: [
+              'Invoke /brainstorm from Claude Code for interactive spec writing',
+              'Then /autopilot to run the full pipeline from an approved spec',
+            ],
+          }),
+        },
+        async () => 0,
+      );
+      process.exit(code);
+    }
     console.log(`
 \x1b[1m[brainstorm]\x1b[0m The pipeline entry point is a Claude Code skill, not a CLI subcommand.
 
