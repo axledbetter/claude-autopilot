@@ -2,6 +2,7 @@ import { GuardrailError } from '../../core/errors.ts';
 import { classifyError } from '../review-engine/prompt-builder.ts';
 import type { CouncilAdapter, CouncilConsultResult } from './types.ts';
 import { loadOpenAI } from '../sdk-loader.ts';
+import { getModelPricing } from '../pricing.ts';
 
 const SYSTEM_PROMPT = `You are a technical advisor reviewing a software design decision. Evaluate the provided context and question critically. Be direct and specific. Surface tradeoffs, risks, and your recommendation.`;
 const MAX_OUTPUT_TOKENS = 2048;
@@ -19,11 +20,13 @@ function isResponsesOnlyModel(model: string): boolean {
   return /codex|^o[1-9]|^gpt-5\.3-/i.test(model);
 }
 
-// Per-million-token rates for gpt-5.5 (override via env for other models).
-// Mirrors the review-engine codex adapter's pricing.
-// gpt-5.5 pricing (2026-04-23 release): $5.00 input / $30.00 output per 1M.
-const COST_PER_M_INPUT = Number(process.env.CODEX_COST_INPUT_PER_M ?? 5.0);
-const COST_PER_M_OUTPUT = Number(process.env.CODEX_COST_OUTPUT_PER_M ?? 30.0);
+// Per-million-token rates. Bugbot LOW PR #93: wired to read from the
+// canonical MODEL_PRICING table (no longer dead code). Resolution order:
+// env override → MODEL_PRICING entry for the council's default
+// (gpt-5.5) → numeric fallback. Mirrors the review-engine codex adapter.
+const _pricing = getModelPricing(process.env.CODEX_MODEL ?? 'gpt-5.5');
+const COST_PER_M_INPUT = Number(process.env.CODEX_COST_INPUT_PER_M ?? _pricing?.inputPer1M ?? 5.0);
+const COST_PER_M_OUTPUT = Number(process.env.CODEX_COST_OUTPUT_PER_M ?? _pricing?.outputPer1M ?? 30.0);
 
 export function makeOpenAICouncilAdapter(model: string, label: string): CouncilAdapter {
   return {
