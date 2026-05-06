@@ -210,12 +210,13 @@ export async function runPlan(options: PlanCommandOptions = {}): Promise<number>
 async function executePlanPhase(input: PlanInput): Promise<PlanOutput> {
   const { specPath, outputPath } = input;
 
-  // Read spec content if provided — allows the stub to record what spec
-  // it was pointed at. The planning content itself is owned by the skill.
-  let specContent: string | null = null;
-  if (specPath && fs.existsSync(specPath)) {
-    specContent = fs.readFileSync(specPath, 'utf8');
-  }
+  // Track whether the referenced spec file exists so the stub can record
+  // a "(file not found)" annotation when the user pointed at a missing
+  // path. We don't need to read the content — the planning content itself
+  // is owned by the Claude Code skill, not the engine-wrap shell.
+  // (Bugbot LOW PR #98: prior version did `readFileSync` whose result
+  // was unused — only its nullness was checked.)
+  const specExists = !!(specPath && fs.existsSync(specPath));
 
   // Ensure output directory exists, then write the plan-file stub.
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -225,7 +226,7 @@ async function executePlanPhase(input: PlanInput): Promise<PlanOutput> {
     `Generated: ${new Date().toISOString()}`,
     '',
     specPath
-      ? `Spec: ${specPath}${specContent === null ? ' (file not found)' : ''}`
+      ? `Spec: ${specPath}${specExists ? '' : ' (file not found)'}`
       : 'Spec: (none provided)',
     '',
     '<!--',
