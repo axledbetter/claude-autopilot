@@ -2,11 +2,8 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { loadConfig } from '../core/config/loader.ts';
 import type { GuardrailConfig } from '../core/config/types.ts';
-import { resolveEngineEnabled, type ResolveEngineResult } from '../core/run-state/resolve-engine.ts';
-import { createRun } from '../core/run-state/runs.ts';
-import { runPhase, type RunPhase } from '../core/run-state/phase-runner.ts';
-import { appendEvent, replayState } from '../core/run-state/events.ts';
-import { writeStateSnapshot } from '../core/run-state/state.ts';
+import { type RunPhase } from '../core/run-state/phase-runner.ts';
+import { runPhaseWithLifecycle } from '../core/run-state/run-phase-with-lifecycle.ts';
 
 const C = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
@@ -73,30 +70,21 @@ export async function runReview(options: ReviewCommandOptions = {}): Promise<num
     if (loaded) config = loaded;
   }
 
-  // v6.0.4 — engine resolution. CLI > env > config > default.
-  //
-  // INTENTIONAL DEVIATION FROM THE SPEC TABLE: the v6 spec
-  // (docs/specs/v6-run-state-engine.md) lists `review` with
+  // INTENTIONAL DEVIATION FROM THE SPEC TABLE (preserved in v6.0.6):
+  // the v6 spec (docs/specs/v6-run-state-engine.md) lists `review` with
   // externalRefs `review-comments`, implying the phase posts review
   // comments to a GitHub PR (which would make `hasSideEffects: true`).
   // The implementation here does NOT post anywhere — it writes a review
   // log to a local file under .guardrail-cache/reviews/ and stops.
   // Posting per-line comments to a PR is owned by `claude-autopilot pr`
   // (which already has `--inline-comments` / `--post-comments`); the
-  // `review` verb in v6.0.4 is the engine-wrap shell for the LLM-driven
-  // code review skills (`/review`, `/review-2pass`,
-  // `pr-review-toolkit:review-pr`) so pipeline runs can checkpoint a
-  // `review` phase entry. Therefore `idempotent: true,
-  // hasSideEffects: false` is correct for the wrapped behavior. If a
-  // future PR adds platform-side comment posting to this verb, both
-  // declarations will need to flip and the readback rules in the
-  // wrapping recipe will need to plumb a `review-comments` externalRef.
-  const engineResolved: ResolveEngineResult = resolveEngineEnabled({
-    ...(options.cliEngine !== undefined ? { cliEngine: options.cliEngine } : {}),
-    ...(options.envEngine !== undefined ? { envValue: options.envEngine } : {}),
-    ...(typeof config.engine?.enabled === 'boolean' ? { configEnabled: config.engine.enabled } : {}),
-  });
-
+  // `review` verb is the engine-wrap shell for the LLM-driven code
+  // review skills (`/review`, `/review-2pass`, `pr-review-toolkit:review-pr`)
+  // so pipeline runs can checkpoint a `review` phase entry. Therefore
+  // `idempotent: true, hasSideEffects: false` is correct for the wrapped
+  // behavior. If a future PR adds platform-side comment posting to this
+  // verb, both declarations will need to flip and the readback rules in
+  // the wrapping recipe will need to plumb a `review-comments` externalRef.
   const context = options.context ?? null;
   const outputPath = options.outputPath
     ? path.resolve(cwd, options.outputPath)
@@ -121,76 +109,21 @@ export async function runReview(options: ReviewCommandOptions = {}): Promise<num
     run: async input => executeReviewPhase(input),
   };
 
+  // v6.0.6 — lifecycle wiring lives in `runPhaseWithLifecycle`.
   let output: ReviewOutput;
-  if (engineResolved.enabled) {
-    // v6.0.4 — wire review through the Run State Engine. Same shape as
-    // scan / costs / fix / plan: createRun → runPhase → run.complete +
-    // state.json refresh + best-effort lock release in finally.
-    const created = await createRun({
+  try {
+    const result = await runPhaseWithLifecycle<ReviewInput, ReviewOutput>({
       cwd,
-      phases: ['review'],
-      config: {
-        engine: { enabled: true, source: engineResolved.source },
-        ...(engineResolved.invalidEnvValue !== undefined
-          ? { invalidEnvValue: engineResolved.invalidEnvValue }
-          : {}),
-      },
+      phase,
+      input: reviewInput,
+      config,
+      cliEngine: options.cliEngine,
+      envEngine: options.envEngine,
+      runEngineOff: () => executeReviewPhase(reviewInput),
     });
-    if (engineResolved.invalidEnvValue !== undefined) {
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.warning',
-          message: `invalid CLAUDE_AUTOPILOT_ENGINE=${JSON.stringify(engineResolved.invalidEnvValue)} ignored`,
-          details: { resolution: engineResolved },
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-    }
-    const runStartedAt = Date.now();
-    try {
-      output = await runPhase<ReviewInput, ReviewOutput>(phase, reviewInput, {
-        runDir: created.runDir,
-        runId: created.runId,
-        writerId: created.lock.writerId,
-        phaseIdx: 0,
-      });
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.complete',
-          status: 'success',
-          totalCostUSD: 0,
-          durationMs: Date.now() - runStartedAt,
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-      writeStateSnapshot(created.runDir, replayState(created.runDir));
-    } catch (err) {
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.complete',
-          status: 'failed',
-          totalCostUSD: 0,
-          durationMs: Date.now() - runStartedAt,
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-      writeStateSnapshot(created.runDir, replayState(created.runDir));
-      console.error(fmt('red', `[review] engine: phase failed — ${err instanceof Error ? err.message : String(err)}`));
-      console.error(fmt('dim', `  inspect: claude-autopilot runs show ${created.runId} --events`));
-      await created.lock.release();
-      return 1;
-    } finally {
-      await created.lock.release().catch(() => { /* ignore */ });
-    }
-  } else {
-    // Engine off — legacy stateless path. This is the v6.0.4 baseline; the
-    // `review` CLI verb is new in v6.0.4 (review previously lived only as
-    // Claude Code skills). Calling without --engine still writes the log
-    // stub so the same-input → same-output guarantee holds.
-    output = await executeReviewPhase(reviewInput);
+    output = result.output;
+  } catch {
+    return 1;
   }
 
   return renderReviewOutput(output, reviewInput);
