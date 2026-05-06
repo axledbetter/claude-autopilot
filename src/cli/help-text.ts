@@ -34,6 +34,8 @@ export const HELP_GROUPS: HelpGroup[] = [
       { verb: 'setup', summary: 'Auto-detect stack, write config, install pre-push hook' },
       { verb: 'brainstorm', summary: 'Pipeline entry point (Claude Code skill — see /brainstorm)' },
       { verb: 'spec', summary: 'Spec-writing pointer (Claude Code skill — see /brainstorm)' },
+      { verb: 'plan', summary: 'Pipeline plan phase (engine-wrap shell — see superpowers:writing-plans skill)' },
+      { verb: 'review', summary: 'Pipeline review phase (engine-wrap shell — see /review, /review-2pass)' },
       { verb: 'pr', summary: 'Review a specific PR by number (auto-detects if on PR branch)' },
       { verb: 'pr-desc', summary: 'Generate a PR title / summary / test plan from the current diff' },
     ],
@@ -160,6 +162,18 @@ export const HELP_OPTIONS: Record<string, string> = {
   Note: spec is primarily a Claude Code skill (entered via /brainstorm). The
         CLI verb is an advisory pointer; engine-on still produces a run-state
         snapshot (state.json + events.ndjson) for pipeline introspection.`,
+  plan: `Options (plan):
+  --spec <path>        Spec file the planner should read (optional)
+  --output <path>      Where to write the plan markdown (default: .guardrail-cache/plans/<ts>-plan.md)
+  --config <path>      Path to config file
+  --engine             Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
+  --no-engine          Force the legacy stateless code path (overrides config / env)`,
+  review: `Options (review):
+  --context <text>     Optional context note injected into the review log
+  --output <path>      Where to write the review log (default: .guardrail-cache/reviews/<ts>-review.md)
+  --config <path>      Path to config file
+  --engine             Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
+  --no-engine          Force the legacy stateless code path (overrides config / env)`,
   watch: `Options (watch):
   --config <path>      Path to config file (default: ./guardrail.config.yaml)
   --debounce <ms>      Debounce delay in ms (default: 300)`,
@@ -249,7 +263,7 @@ export const GLOBAL_FLAGS_BLOCK = `Global flags:
   --engine               Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
   --no-engine            Force the legacy stateless code path (overrides config / env)
                          Precedence: CLI > env (CLAUDE_AUTOPILOT_ENGINE) > config (engine.enabled) > built-in default
-                         v6.0.1: wired for \`scan\`. v6.0.2: wired for \`fix\` and \`costs\`. v6.0.3: wired for \`brainstorm\` and \`spec\`. Other phases land in subsequent v6.0.x releases.`;
+                         v6.0.1: wired for \`scan\`. v6.0.2: wired for \`fix\` and \`costs\`. v6.0.3: wired for \`brainstorm\` and \`spec\`. v6.0.4: wired for \`plan\` and \`review\`. Other phases land in subsequent v6.0.x releases.`;
 
 /** Build the full two-level help text. Returned as a string so tests can assert against it without spawning. */
 export function buildHelpText(): string {

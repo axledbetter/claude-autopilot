@@ -2,6 +2,64 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## v6.0.4 — Engine wire-up Part D (2026-05-06)
+
+**The headline.** v6.0.3 wrapped `brainstorm` and `spec`. v6.0.4 continues
+the mechanical wrap pattern from the recipe at
+[`docs/v6/wrapping-pipeline-phases.md`](docs/v6/wrapping-pipeline-phases.md)
+with two more single-shot verbs:
+
+- **`plan`** ([#98](https://github.com/axledbetter/claude-autopilot/pull/98)) —
+  new CLI verb. Engine-wrap shell for the plan pipeline phase. Writes a
+  plan markdown stub under `.guardrail-cache/plans/`; the actual
+  LLM-driven planning content is owned by the Claude Code
+  superpowers:writing-plans skill. Declared `idempotent: true,
+  hasSideEffects: false` (local file write only; no provider calls, no
+  git push, no PR comment).
+- **`review`** ([#98](https://github.com/axledbetter/claude-autopilot/pull/98)) —
+  new CLI verb. Engine-wrap shell for the review pipeline phase. Writes
+  a review log stub under `.guardrail-cache/reviews/`; the actual
+  LLM-driven review content is owned by the Claude Code review skills
+  (`/review`, `/review-2pass`, `pr-review-toolkit:review-pr`). Declared
+  `idempotent: true, hasSideEffects: false`.
+
+**Documented deviation from the spec table.** The v6 spec
+([docs/specs/v6-run-state-engine.md](docs/specs/v6-run-state-engine.md))
+lists `review` with externalRefs `review-comments`, implying PR-side
+comment posting (which would force `hasSideEffects: true`). The v6.0.4
+`review` verb does **not** post anywhere — PR-side comment posting
+lives in `claude-autopilot pr --inline-comments` /
+`--post-comments` (a separate verb). If a future PR adds platform-side
+comment posting to this verb, both declarations will need to flip and
+the readback rules will need to plumb a `review-comments` externalRef.
+Documented inline in `src/cli/review.ts`.
+
+**Backward-compat — `review` grouping prefix preserved.**
+`claude-autopilot review` (no args) still prints the alpha.2 prefix
+help banner per the V16 v4-compat test. Flat-verb invocation requires
+at least one flag, e.g. `claude-autopilot review --engine`.
+`claude-autopilot help review` continues to surface the flat-verb
+Options block via `buildCommandHelpText`.
+
+Engine-off code paths are unchanged for both verbs.
+
+### Test count
+
+After v6.0.3 baseline: 1378 → 1390 (+12). +6 cases for
+`plan-engine-smoke.test.ts`, +6 cases for `review-engine-smoke.test.ts`.
+Both mirror `costs-engine-smoke.test.ts`: engine off → no run dir;
+engine on → state.json + events.ndjson with the right lifecycle
+(`run.start` → `phase.start` → `phase.success` → `run.complete`);
+env-resolved; CLI override beats env. Typecheck clean.
+
+### Deliberately deferred
+
+- Wrapping the remaining pipeline phases (`implement`, `migrate`,
+  `validate`, `pr`). Side-effecting phases (`implement`, `migrate`,
+  `pr`) need careful externalRef plumbing per the recipe's "side
+  effects" gate; wrap them last.
+- Flipping the v6.0 built-in default to ON. v6.1 territory.
+
 ## v6.0.3 — Wrap brainstorm + spec through runPhase (2026-05-05)
 
 **The headline.** v6.0.3 continues the mechanical phase-wrap pattern from
@@ -57,7 +115,6 @@ env-resolved; CLI override beats env. Typecheck clean.
   CLI verbs. The Claude Code skill remains the user-facing entry point;
   the CLI wraps exist so the engine has a place to record run-state for
   future multi-phase orchestration.
-- Flipping the v6.0 built-in default to ON. v6.1 territory.
 
 ## v6.0.2 — Engine wire-up Part B (2026-05-06)
 
