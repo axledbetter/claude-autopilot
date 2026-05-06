@@ -2,7 +2,7 @@
 
 **Audience:** maintainers wiring v5.x pipeline phases through `runPhase` one PR at a time.
 
-**Status as of v6.0.2 (Part B):** THREE phases wrapped — `scan` (v6.0.1), plus `costs` and `fix` (both v6.0.2). Subsequent v6.0.x point releases wrap the rest using this recipe; aim for one or two phases per PR so blast radius stays small and bugbot can catch regressions phase-by-phase.
+**Status as of v6.0.3:** FIVE phases wrapped — `scan` (v6.0.1), `costs` and `fix` (v6.0.2), `brainstorm` and `spec` (v6.0.3). Subsequent v6.0.x point releases wrap the rest using this recipe; aim for one or two phases per PR so blast radius stays small and bugbot can catch regressions phase-by-phase.
 
 ---
 
@@ -16,7 +16,8 @@ Tracked in `docs/specs/v6-run-state-engine.md` "Idempotency rules + external ope
 
 | Phase | `idempotent` | `hasSideEffects` | externalRef kinds | Status |
 |---|---|---|---|---|
-| `brainstorm` | no | no | `spec-file` | NOT WRAPPED |
+| `brainstorm` | yes (v6.0.3 — see deviation note) | no | (none in v6.0.3; `spec-file` if/when the CLI verb grows a real LLM body) | **WRAPPED in v6.0.3** |
+| `spec` | yes (v6.0.3 — see deviation note) | no | (none in v6.0.3; `spec-file` if/when the CLI verb grows a real LLM body) | **WRAPPED in v6.0.3** |
 | `plan` | no | no | `plan-file` | NOT WRAPPED |
 | `implement` | partial | yes | `git-remote-push` | NOT WRAPPED |
 | `migrate` | no | yes | `migration-version` (per env) | NOT WRAPPED |
@@ -26,6 +27,19 @@ Tracked in `docs/specs/v6-run-state-engine.md` "Idempotency rules + external ope
 | `scan` | yes | no | (none in v6.0.1) | **WRAPPED in v6.0.1 (worked example below)** |
 | `fix` | yes (v6.0.2) | no (v6.0.2) | (none in v6.0.2; `git-remote-push` if/when `--push` is added) | **WRAPPED in v6.0.2** |
 | `costs` | yes | no | (none) | **WRAPPED in v6.0.2** |
+
+> **Deviation note for `brainstorm` and `spec` (v6.0.3).** The
+> [v6 spec table](../specs/v6-run-state-engine.md) declares both phases
+> `idempotent: no` because the LLM dialogue produces new content each time. The
+> wraps in v6.0.3 declare `idempotent: true` because the CLI verbs themselves
+> are advisory pointers at the Claude Code skill — they don't run the LLM, they
+> print a static message and exit. With no LLM call and no externalRefs, "safe
+> to retry" trivially holds; the engine's idempotency check is "safe to replay,"
+> not "produces byte-identical output." Once the CLI verbs grow a real LLM body
+> (a future v6.x lift), the declaration may flip to `idempotent: false` and an
+> `externalRefs: [{ kind: 'spec-file', id: '<slug>' }]` ledger entry will land
+> on every successful run. See `src/cli/brainstorm.ts` and `src/cli/spec.ts`
+> top-of-file comments for the per-phase rationale.
 
 Read-only phases (`scan`, `validate`, `review`, `costs`) are the safest first wraps because they have no provider-side side effects and the engine's idempotency rules collapse to "retry freely." Side-effecting phases (`pr`, `migrate`, `implement`, `fix`, `deploy`) need careful externalRef plumbing; wrap them last.
 

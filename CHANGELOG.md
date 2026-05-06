@@ -2,6 +2,63 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## v6.0.3 — Wrap brainstorm + spec through runPhase (2026-05-05)
+
+**The headline.** v6.0.3 continues the mechanical phase-wrap pattern from
+the recipe at
+[`docs/v6/wrapping-pipeline-phases.md`](docs/v6/wrapping-pipeline-phases.md)
+with two more pipeline verbs:
+
+- **`brainstorm`** — the pipeline entry point. Implemented primarily as
+  a Claude Code skill (`/brainstorm` → `superpowers:brainstorming`); the
+  CLI verb is an advisory shim pointing the user there. The wrap declares
+  `idempotent: true, hasSideEffects: false`. Engine-off path is
+  byte-for-byte identical to v6.0.2 (the same advisory banner). Engine-on
+  path creates a run dir + emits `run.start` / `phase.start` /
+  `phase.success` / `run.complete`. `--json` envelope shape is preserved
+  for back-compat with the WS7 welcome regression guard and
+  `json-channel-discipline.test.ts`.
+- **`spec`** — same shape as brainstorm. New top-level subcommand (it
+  was previously absent from `SUBCOMMANDS`); the CLI verb is an advisory
+  shim pointing at the autopilot/brainstorm Claude Code flow. Same wrap
+  flags + same engine lifecycle.
+
+**Documented deviation from the spec table.** The
+[v6 spec table](docs/specs/v6-run-state-engine.md) declares both
+`brainstorm` and `spec` `idempotent: no` because the LLM dialogue
+produces new content each invocation. v6.0.3 declares `idempotent: true`
+because the CLI verbs themselves are static advisory prints with no LLM
+call and no externalRefs to reconcile — the engine's idempotency check
+is "safe to retry without reconciliation," not "produces byte-identical
+output." Justified inline at the top of `src/cli/brainstorm.ts` and
+`src/cli/spec.ts` plus a deviation block in the recipe. Once the CLI
+verbs grow real LLM bodies (a future v6.x lift), the declaration may
+flip and a `spec-file` externalRef will land on every successful run.
+
+Engine-off code paths are unchanged for both verbs; existing tests pass
+without modification.
+
+### Test count
+
+1367 → 1378 (+11). +5 cases for `brainstorm-engine-smoke.test.ts`, +5
+cases for `spec-engine-smoke.test.ts`, +1 case for `spec` joining
+`MIGRATED_VERBS` in `json-channel-discipline.test.ts`. Both new smoke
+files mirror `costs-engine-smoke.test.ts`: engine off → no run dir;
+engine on → state.json + events.ndjson with the right lifecycle
+(`run.start` → `phase.start` → `phase.success` → `run.complete`);
+env-resolved; CLI override beats env. Typecheck clean.
+
+### Deliberately deferred
+
+- Wrapping the six remaining pipeline phases (`plan`, `implement`,
+  `migrate`, `validate`, `pr`, `review`). One or two per release across
+  v6.0.4+. A parallel agent works `plan` + `review` for v6.0.4.
+- Promoting `brainstorm`/`spec` from advisory shims to full LLM-bearing
+  CLI verbs. The Claude Code skill remains the user-facing entry point;
+  the CLI wraps exist so the engine has a place to record run-state for
+  future multi-phase orchestration.
+- Flipping the v6.0 built-in default to ON. v6.1 territory.
+
 ## v6.0.2 — Engine wire-up Part B (2026-05-06)
 
 **The headline.** v6.0.1 wrapped the first pipeline phase (`scan`) through

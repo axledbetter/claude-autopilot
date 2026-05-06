@@ -38,14 +38,14 @@ If you don't opt into the engine, your v5.x workflow runs unchanged on v6. No mi
 
 Three ways, in **precedence order** (highest wins):
 
-1. **CLI flag** — `--engine` / `--no-engine` per invocation. ✅ **Wired in v6.0.1 — currently honored by `scan`, `costs`, `fix`.** Other phases land in subsequent v6.0.x releases per [`wrapping-pipeline-phases.md`](./wrapping-pipeline-phases.md).
-2. **Env var** — `CLAUDE_AUTOPILOT_ENGINE=on|off|true|false|1|0|yes|no` (case-insensitive). ✅ **Wired in v6.0.1 — currently honored by `scan`, `costs`, `fix`.**
-3. **Config** — `engine.enabled: true` under `guardrail.config.yaml`. ✅ **Wired in v6.0.1 — currently honored by `scan`, `costs`, `fix`.**
+1. **CLI flag** — `--engine` / `--no-engine` per invocation. ✅ **Wired in v6.0.1 — currently honored by `scan`, `costs`, `fix`, `brainstorm`, `spec`.** Other phases land in subsequent v6.0.x releases per [`wrapping-pipeline-phases.md`](./wrapping-pipeline-phases.md).
+2. **Env var** — `CLAUDE_AUTOPILOT_ENGINE=on|off|true|false|1|0|yes|no` (case-insensitive). ✅ **Wired in v6.0.1 — currently honored by `scan`, `costs`, `fix`, `brainstorm`, `spec`.**
+3. **Config** — `engine.enabled: true` under `guardrail.config.yaml`. ✅ **Wired in v6.0.1 — currently honored by `scan`, `costs`, `fix`, `brainstorm`, `spec`.**
 4. **Built-in default** — v6.0: **off**. v6.1+: **on**.
 
-> **What works today (v6.0.2):** the three knobs above are wired and resolve via the documented precedence (CLI > env > config > default) for `scan` (v6.0.1), plus `costs` and `fix` (v6.0.2). The engine modules ship and are exercised by `runs list / show / gc / delete / doctor` and `run resume <id>` (lookup). The `--json` channel discipline is live across every CLI verb. Budget enforcement is live for any phase that runs through `runPhase` with a `BudgetConfig`.
+> **What works today (v6.0.3):** the three knobs above are wired and resolve via the documented precedence (CLI > env > config > default) for `scan` (v6.0.1), `costs` and `fix` (v6.0.2), and `brainstorm` and `spec` (v6.0.3). The engine modules ship and are exercised by `runs list / show / gc / delete / doctor` and `run resume <id>` (lookup). The `--json` channel discipline is live across every CLI verb. Budget enforcement is live for any phase that runs through `runPhase` with a `BudgetConfig`.
 >
-> **What lands in v6.0.x point releases:** automatic wrapping of the remaining pipeline phases (`brainstorm`, `plan`, `implement`, `migrate`, `validate`, `pr`, `review`) through `runPhase` so the same three knobs activate the engine for those verbs too. Each release wraps one or two phases following the recipe in [`docs/v6/wrapping-pipeline-phases.md`](./wrapping-pipeline-phases.md). Until a phase is wrapped, passing `--engine` to it is a no-op (the dispatcher accepts the flag but the verb's internals don't observe it).
+> **What lands in v6.0.x point releases:** automatic wrapping of the remaining pipeline phases (`plan`, `implement`, `migrate`, `validate`, `pr`, `review`) through `runPhase` so the same three knobs activate the engine for those verbs too. Each release wraps one or two phases following the recipe in [`docs/v6/wrapping-pipeline-phases.md`](./wrapping-pipeline-phases.md). Until a phase is wrapped, passing `--engine` to it is a no-op (the dispatcher accepts the flag but the verb's internals don't observe it).
 >
 > The migration guide describes the **target shape** of v6 so you can plan against it. The reconciliation column in `docs/specs/v6-run-state-engine.md` tracks what landed when.
 

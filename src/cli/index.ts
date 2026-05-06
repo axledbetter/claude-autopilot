@@ -179,7 +179,7 @@ These are aliases for the flat subcommands; they still work without the 'advance
 // gc, delete, doctor) are dispatched inside its case block. The singular
 // `run resume` form is handled BEFORE the default `run` -> review dispatch
 // kicks in (see disambiguation block just below).
-const SUBCOMMANDS = ['init', 'run', 'runs', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'migrate', 'migrate-doctor', 'deploy', 'brainstorm', 'internal', 'help', '--help', '-h'] as const;
+const SUBCOMMANDS = ['init', 'run', 'runs', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'migrate', 'migrate-doctor', 'deploy', 'brainstorm', 'spec', 'internal', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity', 'prompt', 'context-file', 'path', 'adapter', 'ref', 'sha'];
 
 // Bare invocation — no subcommand, no flags → show welcome guide
@@ -983,15 +983,22 @@ switch (subcommand) {
   }
 
   case 'brainstorm': {
-    // `brainstorm` is the front of the pipeline and is implemented as a Claude
-    // Code skill (superpowers:brainstorming → autopilot), not a standalone CLI.
-    // The welcome screen advertises `claude-autopilot brainstorm "..."` as the
-    // primary quickstart, so users WILL land here. Give them clear instructions
-    // instead of a generic "Unknown subcommand" rejection. Only reference CLI
-    // subcommands that actually route (verified by the welcome regression test).
+    // v6.0.3 — `brainstorm` is wrapped through `runPhase`. Engine-off path
+    // is byte-for-byte identical to v6.0.2 (advisory print pointing at the
+    // Claude Code skill); engine-on path creates a run dir + emits
+    // run.start/phase.start/phase.success/run.complete events. See
+    // src/cli/brainstorm.ts for the deviation rationale on
+    // `idempotent: true` vs. the spec table's `idempotent: no`.
+    const { runBrainstorm } = await import('./brainstorm.ts');
     const json = boolFlag('json');
+    const config = flag('config');
+    const cliEngine = parseEngineCliFlag();
     if (json) {
       // --json mode: surface the resume hint via nextActions, not a banner.
+      // Mirror the v6.0.2 envelope shape so existing consumers (the
+      // json-channel-discipline test, MCP wrappers) don't break. The phase
+      // body itself runs in silent mode — engine-on still produces
+      // run-state artifacts; engine-off short-circuits to 0.
       const code = await runUnderJsonMode(
         {
           command: 'brainstorm',
@@ -1004,28 +1011,62 @@ switch (subcommand) {
             ],
           }),
         },
-        async () => 0,
+        () => runBrainstorm({
+          ...(config !== undefined ? { configPath: config } : {}),
+          ...(cliEngine !== undefined ? { cliEngine } : {}),
+          envEngine: process.env.CLAUDE_AUTOPILOT_ENGINE,
+          __silent: true,
+        }),
       );
       process.exit(code);
     }
-    console.log(`
-\x1b[1m[brainstorm]\x1b[0m The pipeline entry point is a Claude Code skill, not a CLI subcommand.
+    const code = await runBrainstorm({
+      ...(config !== undefined ? { configPath: config } : {}),
+      ...(cliEngine !== undefined ? { cliEngine } : {}),
+      envEngine: process.env.CLAUDE_AUTOPILOT_ENGINE,
+    });
+    process.exit(code);
+    break;
+  }
 
-Invoke it from Claude Code:
-
-  \x1b[36m/brainstorm\x1b[0m                         Interactive spec writing
-  \x1b[36m/autopilot\x1b[0m                          Full pipeline from an approved spec
-  \x1b[36m/migrate\x1b[0m                            Database migration phase (stack-dependent)
-
-From the terminal, the CLI subset exposes only the individual review-phase subcommands:
-
-  \x1b[36mclaude-autopilot run --base main\x1b[0m    Just the review phase
-  \x1b[36mclaude-autopilot doctor\x1b[0m             Check prerequisites (incl. superpowers plugin)
-  \x1b[36mclaude-autopilot migrate-v4\x1b[0m         Codemod for v4 → v5 repo migration (not a pipeline phase)
-
-Full pipeline docs: https://github.com/axledbetter/claude-autopilot#the-pipeline-phase-by-phase
-`);
-    process.exit(0);
+  case 'spec': {
+    // v6.0.3 — `spec` is wrapped through `runPhase`. Same shape as
+    // brainstorm: engine-off prints an advisory pointing at the Claude
+    // Code skill; engine-on creates a run dir + emits lifecycle events.
+    // Like brainstorm, the deviation from the spec table's
+    // `idempotent: no` is justified inline at the top of src/cli/spec.ts.
+    const { runSpec } = await import('./spec.ts');
+    const json = boolFlag('json');
+    const config = flag('config');
+    const cliEngine = parseEngineCliFlag();
+    if (json) {
+      const code = await runUnderJsonMode(
+        {
+          command: 'spec',
+          active: true,
+          payload: () => ({
+            note: 'spec is a Claude Code skill, not a CLI subcommand',
+            nextActions: [
+              'Approve a brainstorm output, then invoke /autopilot from Claude Code',
+              'The autopilot skill writes the implementation plan + executes the pipeline',
+            ],
+          }),
+        },
+        () => runSpec({
+          ...(config !== undefined ? { configPath: config } : {}),
+          ...(cliEngine !== undefined ? { cliEngine } : {}),
+          envEngine: process.env.CLAUDE_AUTOPILOT_ENGINE,
+          __silent: true,
+        }),
+      );
+      process.exit(code);
+    }
+    const code = await runSpec({
+      ...(config !== undefined ? { configPath: config } : {}),
+      ...(cliEngine !== undefined ? { cliEngine } : {}),
+      envEngine: process.env.CLAUDE_AUTOPILOT_ENGINE,
+    });
+    process.exit(code);
     break;
   }
 
