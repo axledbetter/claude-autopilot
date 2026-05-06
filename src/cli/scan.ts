@@ -13,7 +13,8 @@ import { detectLLMKey, LLM_KEY_HINTS } from '../core/detect/llm-key.ts';
 import { resolveEngineEnabled, type ResolveEngineResult } from '../core/run-state/resolve-engine.ts';
 import { createRun } from '../core/run-state/runs.ts';
 import { runPhase, type RunPhase } from '../core/run-state/phase-runner.ts';
-import { appendEvent } from '../core/run-state/events.ts';
+import { appendEvent, replayState } from '../core/run-state/events.ts';
+import { writeStateSnapshot } from '../core/run-state/state.ts';
 
 const C = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
@@ -76,6 +77,15 @@ export interface ScanCommandOptions {
    */
   cliEngine?: boolean;
   envEngine?: string;
+  /**
+   * Test-only seam — injects a pre-built ReviewEngine so tests can exercise
+   * the engine-wrap path without hitting `loadAdapter()` (and therefore
+   * without needing an LLM API key in the environment). Production callers
+   * MUST NOT pass this; the CLI dispatcher does not expose a flag that sets
+   * it. Underscore-prefixed to make the test-seam intent obvious in code
+   * search.
+   */
+  __testReviewEngine?: ReviewEngine;
 }
 
 /**
@@ -175,26 +185,31 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
   }
 
   // Build review engine
-  if (!detectLLMKey().hasKey) {
-    console.error(fmt('red', '[scan] No LLM API key — set one of:'));
-    for (const { name, url, note } of LLM_KEY_HINTS) {
-      const suffix = note ? `  (${note})` : '';
-      console.error(fmt('dim', `         ${name.padEnd(18)} ${url}${suffix}`));
-    }
-    return 1;
-  }
-  const engineRef = typeof config.reviewEngine === 'string' ? config.reviewEngine
-    : (config.reviewEngine?.adapter ?? 'auto');
   let engine: ReviewEngine;
-  try {
-    engine = await loadAdapter<ReviewEngine>({
-      point: 'review-engine',
-      ref: engineRef,
-      options: typeof config.reviewEngine === 'object' ? config.reviewEngine.options as Record<string, unknown> : undefined,
-    });
-  } catch (err) {
-    console.error(fmt('red', `[scan] Could not load review engine: ${err instanceof Error ? err.message : String(err)}`));
-    return 1;
+  if (options.__testReviewEngine) {
+    // Test-only fast path — skip the LLM key check and the adapter loader.
+    engine = options.__testReviewEngine;
+  } else {
+    if (!detectLLMKey().hasKey) {
+      console.error(fmt('red', '[scan] No LLM API key — set one of:'));
+      for (const { name, url, note } of LLM_KEY_HINTS) {
+        const suffix = note ? `  (${note})` : '';
+        console.error(fmt('dim', `         ${name.padEnd(18)} ${url}${suffix}`));
+      }
+      return 1;
+    }
+    const engineRef = typeof config.reviewEngine === 'string' ? config.reviewEngine
+      : (config.reviewEngine?.adapter ?? 'auto');
+    try {
+      engine = await loadAdapter<ReviewEngine>({
+        point: 'review-engine',
+        ref: engineRef,
+        options: typeof config.reviewEngine === 'object' ? config.reviewEngine.options as Record<string, unknown> : undefined,
+      });
+    } catch (err) {
+      console.error(fmt('red', `[scan] Could not load review engine: ${err instanceof Error ? err.message : String(err)}`));
+      return 1;
+    }
   }
 
   const focusLabel = options.focus && options.focus !== 'all' ? options.focus : null;
@@ -293,6 +308,12 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
         },
         { writerId: created.lock.writerId, runId: created.runId },
       );
+      // Refresh state.json from the replayed events. The events.ndjson is
+      // the source of truth; state.json is a derived snapshot that we MUST
+      // rewrite after run.complete so `runs show` / `runs list` reflect the
+      // terminal status without needing to replay on every read. (The runs
+      // CLI doctor verb does the same rewrite when it detects drift.)
+      writeStateSnapshot(created.runDir, replayState(created.runDir));
     } catch (err) {
       // Engine-on: write run.complete with failed status, then surface the
       // error to the legacy text-mode handler which prints + exits 1.
@@ -306,6 +327,7 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
         },
         { writerId: created.lock.writerId, runId: created.runId },
       );
+      writeStateSnapshot(created.runDir, replayState(created.runDir));
       console.error(fmt('red', `[scan] engine: phase failed — ${err instanceof Error ? err.message : String(err)}`));
       console.error(fmt('dim', `  inspect: claude-autopilot runs show ${created.runId} --events`));
       await created.lock.release();
