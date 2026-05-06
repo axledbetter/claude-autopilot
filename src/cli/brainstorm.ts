@@ -34,11 +34,8 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { loadConfig } from '../core/config/loader.ts';
 import type { GuardrailConfig } from '../core/config/types.ts';
-import { resolveEngineEnabled, type ResolveEngineResult } from '../core/run-state/resolve-engine.ts';
-import { createRun } from '../core/run-state/runs.ts';
-import { runPhase, type RunPhase } from '../core/run-state/phase-runner.ts';
-import { appendEvent, replayState } from '../core/run-state/events.ts';
-import { writeStateSnapshot } from '../core/run-state/state.ts';
+import { type RunPhase } from '../core/run-state/phase-runner.ts';
+import { runPhaseWithLifecycle } from '../core/run-state/run-phase-with-lifecycle.ts';
 
 const C = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
@@ -104,15 +101,6 @@ export async function runBrainstorm(options: BrainstormCommandOptions = {}): Pro
     if (loaded) config = loaded;
   }
 
-  // v6.0.3 — engine resolution. CLI > env > config > default. Resolved
-  // BEFORE the legacy advisory print so engine-on still creates a run dir
-  // + emits lifecycle events. Matches scan/costs/fix.
-  const engineResolved: ResolveEngineResult = resolveEngineEnabled({
-    ...(options.cliEngine !== undefined ? { cliEngine: options.cliEngine } : {}),
-    ...(options.envEngine !== undefined ? { envValue: options.envEngine } : {}),
-    ...(typeof config.engine?.enabled === 'boolean' ? { configEnabled: config.engine.enabled } : {}),
-  });
-
   const brainstormInput: BrainstormInput = { cwd, silent: options.__silent === true };
 
   // The wrapped phase body. Pure: reads no files, makes no provider calls.
@@ -130,74 +118,24 @@ export async function runBrainstorm(options: BrainstormCommandOptions = {}): Pro
     run: async input => executeBrainstormPhase(input),
   };
 
+  // v6.0.6 — lifecycle wiring lives in `runPhaseWithLifecycle`. The helper
+  // owns the engine-on/engine-off branch and the failure banner.
   let output: BrainstormOutput;
-  if (engineResolved.enabled) {
-    // v6.0.3 — wire brainstorm through the Run State Engine. Same shape as
-    // scan/costs/fix: createRun → runPhase → run.complete + state.json
-    // refresh + best-effort lock release in finally.
-    const created = await createRun({
+  try {
+    const result = await runPhaseWithLifecycle<BrainstormInput, BrainstormOutput>({
       cwd,
-      phases: ['brainstorm'],
-      config: {
-        engine: { enabled: true, source: engineResolved.source },
-        ...(engineResolved.invalidEnvValue !== undefined
-          ? { invalidEnvValue: engineResolved.invalidEnvValue }
-          : {}),
-      },
+      phase,
+      input: brainstormInput,
+      config,
+      cliEngine: options.cliEngine,
+      envEngine: options.envEngine,
+      runEngineOff: () => executeBrainstormPhase(brainstormInput),
     });
-    if (engineResolved.invalidEnvValue !== undefined) {
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.warning',
-          message: `invalid CLAUDE_AUTOPILOT_ENGINE=${JSON.stringify(engineResolved.invalidEnvValue)} ignored`,
-          details: { resolution: engineResolved },
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-    }
-    const runStartedAt = Date.now();
-    try {
-      output = await runPhase<BrainstormInput, BrainstormOutput>(phase, brainstormInput, {
-        runDir: created.runDir,
-        runId: created.runId,
-        writerId: created.lock.writerId,
-        phaseIdx: 0,
-      });
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.complete',
-          status: 'success',
-          totalCostUSD: 0,
-          durationMs: Date.now() - runStartedAt,
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-      writeStateSnapshot(created.runDir, replayState(created.runDir));
-    } catch (err) {
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.complete',
-          status: 'failed',
-          totalCostUSD: 0,
-          durationMs: Date.now() - runStartedAt,
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-      writeStateSnapshot(created.runDir, replayState(created.runDir));
-      console.error(fmt('red', `[brainstorm] engine: phase failed — ${err instanceof Error ? err.message : String(err)}`));
-      console.error(fmt('dim', `  inspect: claude-autopilot runs show ${created.runId} --events`));
-      await created.lock.release();
-      return 1;
-    } finally {
-      await created.lock.release().catch(() => { /* ignore */ });
-    }
-  } else {
-    // Engine off — legacy stateless path. Behavior is byte-for-byte
-    // identical to v6.0.2 so existing CI / scripts are unaffected.
-    output = await executeBrainstormPhase(brainstormInput);
+    output = result.output;
+  } catch {
+    // Helper already printed the failure banner + emitted run.complete
+    // failed + refreshed state.json + released the lock.
+    return 1;
   }
 
   return renderBrainstormOutput(output, brainstormInput);
