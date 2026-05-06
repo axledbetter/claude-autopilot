@@ -246,6 +246,34 @@ function boolFlag(name: string): boolean {
 }
 
 /**
+ * Parse the `--engine` / `--no-engine` flag pair into a tri-state.
+ *
+ * Returns:
+ *   - true  if `--engine` was passed
+ *   - false if `--no-engine` was passed
+ *   - undefined if neither was passed
+ *
+ * If BOTH are passed, exits 1 with `invalid_config` — the spec is explicit
+ * that this is single-version-supported, you can't ask for both at once.
+ */
+function parseEngineCliFlag(): boolean | undefined {
+  const on = args.includes('--engine');
+  const off = args.includes('--no-engine');
+  if (on && off) {
+    console.error(
+      `\x1b[31m[claude-autopilot] invalid_config: --engine and --no-engine cannot both be passed\x1b[0m`,
+    );
+    console.error(
+      `\x1b[2m  hint: pass exactly one. Precedence: CLI > env > config > default.\x1b[0m`,
+    );
+    process.exit(1);
+  }
+  if (on) return true;
+  if (off) return false;
+  return undefined;
+}
+
+/**
  * Run the migrate-doctor with shared CLI formatting and exit handling.
  *
  * Both `migrate doctor` (two-word) and `migrate-doctor` (single-verb alias)
@@ -307,6 +335,9 @@ switch (subcommand) {
     const dryRun = boolFlag('dry-run');
     const all = boolFlag('all');
     const json = boolFlag('json');
+    // v6.0.1 — engine knob. CLI flag wins; env / config / default resolved
+    // inside runScan once it's loaded the config file.
+    const cliEngine = parseEngineCliFlag();
     // Remaining non-flag args after 'scan' are paths
     const targets = args.slice(1).filter(a => !a.startsWith('--') && a !== ask && a !== focusArg && a !== config);
     const code = await runUnderJsonMode(
@@ -318,6 +349,8 @@ switch (subcommand) {
         ask,
         focus: focusArg as 'security' | 'logic' | 'performance' | 'brand' | 'all' | undefined,
         dryRun,
+        ...(cliEngine !== undefined ? { cliEngine } : {}),
+        envEngine: process.env.CLAUDE_AUTOPILOT_ENGINE,
       }),
     );
     process.exit(code);

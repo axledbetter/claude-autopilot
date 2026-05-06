@@ -93,6 +93,17 @@ export interface GuardrailConfig {
   cache?: Record<string, unknown>;
   persistence?: Record<string, unknown>;
   concurrency?: Record<string, unknown>;
+  /**
+   * Run State Engine (v6) configuration. v6.0 ships the engine OFF by default
+   * to preserve v5.x behavior; v6.1+ flips the default to ON per
+   * `docs/specs/v6.1-default-flip.md`. The `engine.enabled` knob is the
+   * lowest-priority opt-in — env (`CLAUDE_AUTOPILOT_ENGINE`) and CLI flags
+   * (`--engine` / `--no-engine`) override it. See
+   * `src/core/run-state/resolve-engine.ts` for the precedence resolver.
+   */
+  engine?: {
+    enabled?: boolean;
+  };
   council?: {
     models: Array<{ adapter: string; model: string; label: string }>;
     synthesizer: { adapter: string; model: string; label: string };

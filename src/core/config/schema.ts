@@ -152,6 +152,13 @@ export const GUARDRAIL_CONFIG_SCHEMA = {
     cache: { type: 'object' },
     persistence: { type: 'object' },
     concurrency: { type: 'object' },
+    engine: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        enabled: { type: 'boolean' },
+      },
+    },
     council: {
       type: 'object',
       required: ['models', 'synthesizer'],
