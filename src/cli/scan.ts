@@ -10,11 +10,9 @@ import { saveCachedFindings } from '../core/persist/findings-cache.ts';
 import { appendCostLog } from '../core/persist/cost-log.ts';
 import type { GuardrailConfig } from '../core/config/types.ts';
 import { detectLLMKey, LLM_KEY_HINTS } from '../core/detect/llm-key.ts';
-import { resolveEngineEnabled, type ResolveEngineResult } from '../core/run-state/resolve-engine.ts';
-import { createRun } from '../core/run-state/runs.ts';
-import { runPhase, type RunPhase } from '../core/run-state/phase-runner.ts';
-import { appendEvent, replayState } from '../core/run-state/events.ts';
-import { writeStateSnapshot } from '../core/run-state/state.ts';
+import { resolveEngineEnabled } from '../core/run-state/resolve-engine.ts';
+import { type RunPhase } from '../core/run-state/phase-runner.ts';
+import { runPhaseWithLifecycle } from '../core/run-state/run-phase-with-lifecycle.ts';
 
 const C = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
@@ -139,17 +137,6 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
     if (loaded) config = loaded;
   }
 
-  // v6.0.1 — engine resolution. CLI > env > config > default (default v6.0:
-  // off). The CLI dispatcher passes cliEngine + envEngine through; the
-  // config layer comes from the YAML we just loaded. We resolve here, BEFORE
-  // collecting files / deciding whether to dry-run, so the resolution is
-  // always deterministic from the same inputs.
-  const engineResolved: ResolveEngineResult = resolveEngineEnabled({
-    ...(options.cliEngine !== undefined ? { cliEngine: options.cliEngine } : {}),
-    ...(options.envEngine !== undefined ? { envValue: options.envEngine } : {}),
-    ...(typeof config.engine?.enabled === 'boolean' ? { configEnabled: config.engine.enabled } : {}),
-  });
-
   // Collect files
   let files: string[];
   if (options.all) {
@@ -220,8 +207,17 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
   console.log(fmt('bold', `[scan]`) + fmt('dim', ` ${files.length} file(s) — ${scopeDesc}`));
   if (options.ask) console.log(fmt('dim', `  question: ${options.ask}`));
   if (focusLabel) console.log(fmt('dim', `  focus: ${focusLabel}`));
-  if (engineResolved.enabled) {
-    console.log(fmt('dim', `  engine: on (${engineResolved.source})`));
+  // Pre-flight resolution just for the banner; the helper re-resolves
+  // internally with identical precedence so the engine path stays
+  // deterministic. Keeping this inline preserves the legacy "engine: on
+  // (<source>)" banner that scan emitted before v6.0.6.
+  const engineBanner = resolveEngineEnabled({
+    ...(options.cliEngine !== undefined ? { cliEngine: options.cliEngine } : {}),
+    ...(options.envEngine !== undefined ? { envValue: options.envEngine } : {}),
+    ...(typeof config.engine?.enabled === 'boolean' ? { configEnabled: config.engine.enabled } : {}),
+  });
+  if (engineBanner.enabled) {
+    console.log(fmt('dim', `  engine: on (${engineBanner.source})`));
   }
   console.log('');
 
@@ -256,92 +252,27 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
     run: executeScanPhase,
   };
 
+  // v6.0.6 — lifecycle wiring (createRun → runPhase → run.complete + state
+  // snapshot + lock release) lives in `runPhaseWithLifecycle`. The helper
+  // owns the engine-on/engine-off branch and the failure banner; the caller
+  // just supplies the phase, the input, and the engine-off escape hatch.
   let output: ScanOutput;
-  if (engineResolved.enabled) {
-    // v6.0.1 — wire scan through the Run State Engine. Creates a run dir at
-    // .guardrail-cache/runs/<ulid>/ with state.json + events.ndjson, runs the
-    // phase via runPhase (which emits phase.start / phase.success / phase.cost),
-    // and emits run.complete on the way out.
-    const created = await createRun({
+  try {
+    const result = await runPhaseWithLifecycle<ScanInput, ScanOutput>({
       cwd,
-      phases: ['scan'],
-      config: {
-        engine: { enabled: true, source: engineResolved.source },
-        ...(engineResolved.invalidEnvValue !== undefined
-          ? { invalidEnvValue: engineResolved.invalidEnvValue }
-          : {}),
-      },
+      phase,
+      input: scanInput,
+      config,
+      cliEngine: options.cliEngine,
+      envEngine: options.envEngine,
+      runEngineOff: () => executeScanPhase(scanInput),
     });
-    if (engineResolved.invalidEnvValue !== undefined) {
-      // Surface the invalid env value as a typed warning so observers
-      // (`runs show <id> --events`) can attribute the fallthrough.
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.warning',
-          message: `invalid CLAUDE_AUTOPILOT_ENGINE=${JSON.stringify(engineResolved.invalidEnvValue)} ignored`,
-          details: { resolution: engineResolved },
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-    }
-    const runStartedAt = Date.now();
-    try {
-      output = await runPhase<ScanInput, ScanOutput>(phase, scanInput, {
-        runDir: created.runDir,
-        runId: created.runId,
-        writerId: created.lock.writerId,
-        phaseIdx: 0,
-      });
-      // Final lifecycle event — run.complete. The runner doesn't emit this
-      // on its own; it's the caller's responsibility (multi-phase pipelines
-      // emit it after the LAST phase, single-phase wrappers like this emit
-      // after the only phase).
-      const totalCostUSD = output.costUSD ?? 0;
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.complete',
-          status: 'success',
-          totalCostUSD,
-          durationMs: Date.now() - runStartedAt,
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-      // Refresh state.json from the replayed events. The events.ndjson is
-      // the source of truth; state.json is a derived snapshot that we MUST
-      // rewrite after run.complete so `runs show` / `runs list` reflect the
-      // terminal status without needing to replay on every read. (The runs
-      // CLI doctor verb does the same rewrite when it detects drift.)
-      writeStateSnapshot(created.runDir, replayState(created.runDir));
-    } catch (err) {
-      // Engine-on: write run.complete with failed status, then surface the
-      // error to the legacy text-mode handler which prints + exits 1.
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.complete',
-          status: 'failed',
-          totalCostUSD: 0,
-          durationMs: Date.now() - runStartedAt,
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-      writeStateSnapshot(created.runDir, replayState(created.runDir));
-      console.error(fmt('red', `[scan] engine: phase failed — ${err instanceof Error ? err.message : String(err)}`));
-      console.error(fmt('dim', `  inspect: claude-autopilot runs show ${created.runId} --events`));
-      await created.lock.release();
-      return 1;
-    } finally {
-      // Best-effort lock release — the wrapper sometimes runs to completion
-      // before the catch block runs, in which case the catch's release is
-      // skipped. Doing it here in finally is safe (release is idempotent).
-      await created.lock.release().catch(() => { /* ignore */ });
-    }
-  } else {
-    // Engine off — legacy stateless path. Behavior is byte-for-byte identical
-    // to v6.0 so existing CI / scripts are unaffected.
-    output = await executeScanPhase(scanInput);
+    output = result.output;
+  } catch {
+    // Helper already printed the failure banner + emitted run.complete
+    // failed + refreshed state.json + released the lock. Surface the
+    // legacy non-zero exit so existing CI / scripts are unaffected.
+    return 1;
   }
 
   return renderScanOutput(output, scanInput);
