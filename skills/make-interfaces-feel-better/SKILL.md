@@ -5,7 +5,7 @@ description: Craft-and-feel polish for an interface that already works correctly
 
 # Make interfaces feel better — the craft layer
 
-This skill is for the pass where the interface already *works* and is already *simple*, but still feels mediocre. You are tuning emotion, not structure. If the user hasn't had the basics fixed yet, recommend `/ui-ux-pro-max` and `/simplify` first; great feel on top of a broken layout is lipstick.
+This skill is for the pass where the interface already *works* and is already *simple*, but still feels mediocre. You are tuning emotion, not structure. If the user hasn't had the basics fixed yet, recommend `/ui-ux-pro-max` and `/simplify-ui` first; great feel on top of a broken layout is lipstick.
 
 ## The diagnostic
 
@@ -99,6 +99,6 @@ If you catch yourself adding:
 
 ## Interactions
 
-- Runs best on a screen that already passed `/ui-ux-pro-max` and `/simplify`.
+- Runs best on a screen that already passed `/ui-ux-pro-max` and `/simplify-ui`.
 - Can safely coexist with `/ui` for a combined sweep.
 - If the user wants a redesign, escalate to `frontend-design:frontend-design`.

@@ -19,7 +19,7 @@ If the request needs any of the "won't" items, stop and route:
 - New screen / no concept yet → `frontend-design:frontend-design`
 - Subtraction-only ("just cut, don't polish") → `/simplify-ui`
 - Correctness audit only ("what would a senior designer catch?") → `/ui-ux-pro-max`
-- Craft/feel only ("feels off, doesn't lack soul") → `/make-interfaces-feel-better`
+- Craft/feel only ("feels off, lacks soul") → `/make-interfaces-feel-better`
 
 ## 1. Audit — look at it, don't guess
 

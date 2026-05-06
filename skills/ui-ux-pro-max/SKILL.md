@@ -85,6 +85,6 @@ After the list, stop. Wait for the user to pick which to fix. Do not batch every
 
 ## Known interactions
 
-- Pair with `/simplify` after this audit: its job is to cut what yours identifies as low-value.
+- Pair with `/simplify-ui` after this audit: its job is to cut what yours identifies as low-value.
 - Pair with `/make-interfaces-feel-better` after the structural fixes land: its job is the craft layer above correctness.
 - If your audit reveals the screen needs a redesign, not a polish, escalate to `frontend-design:frontend-design`.
