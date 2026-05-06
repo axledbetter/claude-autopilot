@@ -115,6 +115,21 @@ const REVIEW_VERBS = new Set(['run', 'scan', 'ci', 'fix', 'baseline', 'explain',
 // `detector` is a library used by setup/run, not a CLI subcommand — leave it out.
 const ADVANCED_VERBS = new Set(['lsp', 'mcp', 'worker', 'autoregress', 'test-gen', 'hook', 'ignore']);
 if (args[0] === 'review') {
+  // v6.0.4 — `review` is BOTH a grouping prefix (legacy alpha.2) AND a flat
+  // verb (the new engine-wrapped `runReview`). Disambiguate based on args[1]:
+  //
+  //   - missing                  → grouping-prefix help banner (legacy V16)
+  //   - --help / -h              → grouping-prefix help banner (legacy)
+  //   - in REVIEW_VERBS          → grouping prefix (shift, route to flat handler)
+  //   - other flag (`--engine`,
+  //     `--config`, etc.)        → flat-verb invocation; let `case 'review':` handle it
+  //   - anything else            → reject with legacy "not a review-phase verb"
+  //
+  // The "missing → prefix help" branch preserves the V16 v4-compat test
+  // (`claude-autopilot review` alone prints the review-phase verb list);
+  // users who want the v6 flat-verb behavior must pass at least one flag
+  // (e.g. `--engine`, `--config`, `--context`). `help review` continues to
+  // surface the flat-verb Options block via buildCommandHelpText.
   const sub = args[1];
   if (!sub || sub === '--help' || sub === '-h') {
     console.log(`
@@ -132,16 +147,23 @@ Review-phase verbs:
 
 These are aliases for the flat subcommands — \`claude-autopilot run\` and
 \`claude-autopilot review run\` are equivalent.
+
+The v6 \`review\` phase verb (engine-wrap shell) is invoked with any flag
+present, e.g. \`claude-autopilot review --engine\`. See
+\`claude-autopilot help review\` for its options.
 `);
     process.exit(0);
   }
-  if (!REVIEW_VERBS.has(sub)) {
+  if (sub.startsWith('--')) {
+    // Flat-verb invocation — fall through; do not shift.
+  } else if (!REVIEW_VERBS.has(sub)) {
     console.error(`\x1b[31m[claude-autopilot] "${sub}" is not a review-phase verb.\x1b[0m`);
     console.error(`\x1b[2m  Valid: ${[...REVIEW_VERBS].join(', ')}\x1b[0m`);
     console.error(`\x1b[2m  Did you mean: claude-autopilot ${sub} ...?\x1b[0m`);
     process.exit(1);
+  } else {
+    args.shift(); // drop 'review', leave the flat subcommand at args[0]
   }
-  args.shift(); // drop 'review', leave the flat subcommand at args[0]
 }
 if (args[0] === 'advanced') {
   const sub = args[1];
@@ -179,8 +201,8 @@ These are aliases for the flat subcommands; they still work without the 'advance
 // gc, delete, doctor) are dispatched inside its case block. The singular
 // `run resume` form is handled BEFORE the default `run` -> review dispatch
 // kicks in (see disambiguation block just below).
-const SUBCOMMANDS = ['init', 'run', 'runs', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'migrate', 'migrate-doctor', 'deploy', 'brainstorm', 'spec', 'internal', 'help', '--help', '-h'] as const;
-const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity', 'prompt', 'context-file', 'path', 'adapter', 'ref', 'sha'];
+const SUBCOMMANDS = ['init', 'run', 'runs', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'migrate', 'migrate-doctor', 'deploy', 'brainstorm', 'spec', 'plan', 'review', 'internal', 'help', '--help', '-h'] as const;
+const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity', 'prompt', 'context-file', 'path', 'adapter', 'ref', 'sha', 'spec', 'context'];
 
 // Bare invocation — no subcommand, no flags → show welcome guide
 if (args.length === 0) {
@@ -696,6 +718,60 @@ switch (subcommand) {
       { command: 'costs', active: json },
       () => runCosts({
         ...(config !== undefined ? { configPath: config } : {}),
+        ...(cliEngine !== undefined ? { cliEngine } : {}),
+        envEngine: process.env.CLAUDE_AUTOPILOT_ENGINE,
+      }),
+    );
+    process.exit(code);
+    break;
+  }
+
+  case 'plan': {
+    // v6.0.4 — engine-wrap shell for the `plan` pipeline phase. The actual
+    // LLM-driven planning content is produced by the Claude Code
+    // superpowers:writing-plans skill; this CLI verb provides a
+    // checkpointable phase shell so v6 pipeline runs can record a `plan`
+    // entry. Mirrors the costs/scan/fix dispatcher shape.
+    const { runPlan } = await import('./plan.ts');
+    const json = boolFlag('json');
+    const config = flag('config');
+    const specPath = flag('spec');
+    const outputPath = flag('output');
+    const cliEngine = parseEngineCliFlag();
+    const code = await runUnderJsonMode(
+      { command: 'plan', active: json },
+      () => runPlan({
+        ...(config !== undefined ? { configPath: config } : {}),
+        ...(specPath !== undefined ? { specPath } : {}),
+        ...(outputPath !== undefined ? { outputPath } : {}),
+        ...(cliEngine !== undefined ? { cliEngine } : {}),
+        envEngine: process.env.CLAUDE_AUTOPILOT_ENGINE,
+      }),
+    );
+    process.exit(code);
+    break;
+  }
+
+  case 'review': {
+    // v6.0.4 — engine-wrap shell for the `review` pipeline phase. The actual
+    // LLM-driven review content is produced by the Claude Code review skills
+    // (`/review`, `/review-2pass`, `pr-review-toolkit:review-pr`). PR-side
+    // comment posting lives in `claude-autopilot pr --inline-comments` /
+    // `--post-comments`; this verb does not post anywhere. See the long
+    // deviation note in src/cli/review.ts for the idempotent / hasSideEffects
+    // declaration rationale.
+    const { runReview } = await import('./review.ts');
+    const json = boolFlag('json');
+    const config = flag('config');
+    const context = flag('context');
+    const outputPath = flag('output');
+    const cliEngine = parseEngineCliFlag();
+    const code = await runUnderJsonMode(
+      { command: 'review', active: json },
+      () => runReview({
+        ...(config !== undefined ? { configPath: config } : {}),
+        ...(context !== undefined ? { context } : {}),
+        ...(outputPath !== undefined ? { outputPath } : {}),
         ...(cliEngine !== undefined ? { cliEngine } : {}),
         envEngine: process.env.CLAUDE_AUTOPILOT_ENGINE,
       }),
