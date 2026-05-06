@@ -2,6 +2,87 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## v6.0.1 — Engine wire-up Part A (2026-05-05)
+
+**The headline.** v6.0 shipped the engine modules but left the user-facing
+knobs un-wired. This release lights up the three knobs (`--engine` /
+`--no-engine` CLI flag, `CLAUDE_AUTOPILOT_ENGINE` env var,
+`engine.enabled` config key) with explicit precedence (CLI > env > config
+> built-in default) and wraps the **first** pipeline phase — `scan` —
+through `runPhase`. Every other pipeline phase still bypasses the engine;
+those land one or two per PR across subsequent v6.0.x releases following
+the recipe at [`docs/v6/wrapping-pipeline-phases.md`](docs/v6/wrapping-pipeline-phases.md).
+
+The engine still ships **OFF** by default in v6.0.x. The default flip to
+**ON** lands in v6.1 per [`docs/specs/v6.1-default-flip.md`](docs/specs/v6.1-default-flip.md).
+
+### What landed (PR #95)
+
+- **`resolveEngineEnabled()` precedence resolver.** Pure / no-IO function
+  in `src/core/run-state/resolve-engine.ts`. Inputs:
+  `{cliEngine?, envValue?, configEnabled?, builtInDefault?}`. Outputs:
+  `{enabled, source, reason, invalidEnvValue?}`. Accepts case-insensitive
+  env values `on/off/true/false/1/0/yes/no` (plus whitespace tolerance);
+  invalid values fall through to the next-lowest precedence layer and
+  surface the raw string in `invalidEnvValue` so the caller can emit a
+  `run.warning`. **+45 unit tests** covering every precedence layer, every
+  accepted env form, the conflict rules, and the invalid-env fallthrough.
+- **CLI flag parsing in `src/cli/index.ts`.** New `parseEngineCliFlag()`
+  helper rejects the conflict case (both `--engine` AND `--no-engine`)
+  with `invalid_config` exit 1. Wired into the `scan` case to pass
+  `cliEngine` + `envEngine` (from `process.env.CLAUDE_AUTOPILOT_ENGINE`)
+  through to `runScan`.
+- **Config schema** (`src/core/config/types.ts` + `schema.ts`). New
+  optional `engine.enabled: boolean` knob; schema rejects unknown
+  sub-keys (`additionalProperties: false`).
+- **Help text** (`src/cli/help-text.ts`). New `GLOBAL_FLAGS_BLOCK`
+  documents `--json` / `--engine` / `--no-engine` + the precedence
+  matrix + scope (scan only in v6.0.1; rest follows the recipe). Per-verb
+  `scan` Options block adds the new flags so `claude-autopilot help scan`
+  is self-contained.
+- **`scan` pilot phase wrapping** (`src/cli/scan.ts`). Refactored the
+  LLM-call-and-finding-processing portion into `executeScanPhase(input)`
+  → `ScanOutput` (pure, no console output, no exit-code logic). Defined
+  `RunPhase<ScanInput, ScanOutput>` with `name: 'scan'`,
+  `idempotent: true`, `hasSideEffects: false`. Engine-on path:
+  `createRun()` → `runPhase()` → `run.complete` event +
+  `replayState`/`writeStateSnapshot` refresh + best-effort lock release
+  in `finally`. Engine-off path: `executeScanPhase(input)` directly,
+  byte-for-byte unchanged from v6.0. Rendering extracted into
+  `renderScanOutput()` so the engine path's idempotency isn't coupled
+  to console output. Test seam (`__testReviewEngine`) lets the smoke test
+  inject a fake without an LLM key.
+- **End-to-end smoke test** (`tests/cli/scan-engine-smoke.test.ts`).
+  Drives `runScan` with the engine on against a tmp project; asserts
+  `state.status === 'success'`, single `scan` phase with the right
+  `idempotent` / `hasSideEffects` flags, monotonic seq numbers, and the
+  full lifecycle (`run.start` → `phase.start` → `phase.success` →
+  `run.complete`). Five cases including engine-off (no run dir),
+  env-resolved, CLI override, and invalid-env-fallthrough warning.
+- **Wrapping recipe doc** (`docs/v6/wrapping-pipeline-phases.md`).
+  Six-step recipe + phase-status table + idempotency decision tree +
+  worked example (scan) + a checklist subsequent v6.0.x PRs follow when
+  wrapping the remaining ten pipeline phases (`brainstorm`, `plan`,
+  `implement`, `migrate`, `validate`, `pr`, `review`, `fix`, `costs`).
+- **Migration guide** (`docs/v6/migration-guide.md`). "What works today"
+  list updated — three knobs move from "wiring pending" to "wired (limited
+  to scan)". Other phases still tracked under "wiring pending."
+- **Spec reconciliation** (`docs/specs/v6-run-state-engine.md`). New "What
+  was actually built (v6.0.1 — Part A)" block.
+
+### Test count
+
+1306 → 1356 (+50). Typecheck clean. Existing 1306 tests continue to pass
+unchanged — the engine-off code path for `scan` is byte-for-byte
+identical to v6.0.
+
+### Deliberately deferred
+
+- Wrapping of any other pipeline phase. Lands one or two per PR across
+  v6.0.2+ following the recipe.
+- Flipping the v6.0 built-in default to ON. v6.1 territory.
+- Removing `--no-engine`. v7 territory.
+
 ## v6.0 — Run State Engine (2026-05-05)
 
 **The headline.** Autopilot moves from a stateless command-stream to a
