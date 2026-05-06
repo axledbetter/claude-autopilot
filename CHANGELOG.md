@@ -2,6 +2,62 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## v6.0.5 — Engine wire-up Part E (2026-05-06)
+
+**The headline.** v6.0.4 wrapped `plan` and `review`. v6.0.5 continues the
+mechanical wrap pattern from the recipe at
+[`docs/v6/wrapping-pipeline-phases.md`](docs/v6/wrapping-pipeline-phases.md)
+with one more single-shot, read-only verb:
+
+- **`validate`** — new CLI verb. Engine-wrap shell for the validate
+  pipeline phase. Writes a validate log stub under
+  `.guardrail-cache/validate/`; the actual validation work (static
+  checks, auto-fix, tests, Codex review with auto-fix, bugbot triage) is
+  owned by the Claude Code `/validate` skill. Declared `idempotent: true,
+  hasSideEffects: false` (local file write only; no provider calls, no
+  git push, no PR comment, no SARIF upload).
+
+**Documented deviation from the spec table.** The v6 spec
+([docs/specs/v6-run-state-engine.md](docs/specs/v6-run-state-engine.md),
+line 161) lists `validate` with externalRefs `sarif-artifact`. The
+v6.0.5 wrap matches the `idempotent: true, hasSideEffects: false`
+declaration but does **not** plumb a `sarif-artifact` externalRef — the
+v6.0.5 `validate` CLI verb does not emit a SARIF artifact. SARIF
+emission lives in `claude-autopilot run --format sarif --output <path>`
+(a separate verb). The SARIF reference is local-only file output (no
+remote upload), so the engine doesn't need a readback rule for it on
+resume — `idempotent: true` covers replay safety. If a future PR adds
+SARIF emission directly to this verb, the wrap can add a
+`ctx.emitExternalRef({ kind: 'sarif-artifact', ... })` call after the
+file write lands. Documented inline in `src/cli/validate.ts` and in the
+wrapping recipe's deviation note.
+
+The engine-off code path is byte-for-byte unchanged; the `validate`
+verb is brand new in v6.0.5 (validation previously lived only as a
+Claude Code skill).
+
+### Test count
+
+After v6.0.4 baseline: 1390 → 1396 (+6). +6 cases for
+`validate-engine-smoke.test.ts`, mirroring the
+`review-engine-smoke.test.ts` shape: engine off → no run dir + log
+written; engine off (cliEngine: false); engine on → state.json +
+events.ndjson with the right lifecycle (`run.start` →
+`phase.start` → `phase.success` → `run.complete`); engine on with
+explicit `--context`; env-resolved; CLI override beats env. Typecheck
+clean.
+
+### Deliberately deferred
+
+- Wrapping the remaining pipeline phases (`implement`, `migrate`,
+  `pr`). Side-effecting phases need careful externalRef plumbing per
+  the recipe's "side effects" gate; wrap them last.
+- Adding SARIF emission directly to the `validate` verb. Lives in
+  `claude-autopilot run --format sarif` (separate verb).
+- Extracting a shared `runPhaseWithLifecycle` helper across the eight
+  wrapped verbs. Separate refactor PR — out of scope for v6.0.5.
+- Flipping the v6.0 built-in default to ON. v6.1 territory.
+
 ## v6.0.4 — Engine wire-up Part D (2026-05-06)
 
 **The headline.** v6.0.3 wrapped `brainstorm` and `spec`. v6.0.4 continues
