@@ -80,6 +80,34 @@ claude-autopilot brainstorm "add rate limiting to the public API"
 claude-autopilot run --pr 123
 ```
 
+## Run State Engine (v6)
+
+Persistent state for autopilot runs. Resume after crashes, enforce hard budget caps, and surface typed JSON events for CI consumers — all opt-in, all on disk.
+
+```yaml
+# guardrail.config.yaml
+engine:
+  enabled: true              # opt-in; default flips to true in v6.1
+budgets:
+  perRunUSD: 10              # hard stop; mandatory runtime guard
+  perPhaseUSD: 5
+```
+
+```bash
+claude-autopilot scan --all                  # any command — engine writes a per-run dir
+claude-autopilot runs list                   # newest-first, with status / cost / lastPhase
+claude-autopilot runs show 01HZK7P3D8Q9V…    # state snapshot + optional event tail
+claude-autopilot run resume 01HZK7P3D8Q9V…   # lookup-only in v6.0; live execution in v6.1+
+claude-autopilot runs gc --older-than-days 7 # retire completed runs
+```
+
+Every state transition appends a typed event to `.guardrail-cache/runs/<ulid>/events.ndjson`; every CLI verb supports `--json` with strict stdout-envelope / stderr-NDJSON channel discipline. Side-effect phase replay consults persisted `externalRefs` plus a live provider read-back so resume is safe by construction.
+
+**v6.0 ships with the engine OFF by default.** Opt in per project via the config block above. Default flips to ON in v6.1 after a stabilization period; `--no-engine` is the one-version escape hatch (removed in v7).
+
+→ [`docs/v6/quickstart.md`](docs/v6/quickstart.md) — five-minute setup
+→ [`docs/v6/migration-guide.md`](docs/v6/migration-guide.md) — full v5.x → v6 walkthrough with precedence matrix, per-phase idempotency rules, and troubleshooting
+
 ## The pipeline, phase by phase
 
 Each phase is a Claude Code skill (`.claude/skills/<name>/SKILL.md`). You can invoke any phase directly (`/brainstorm`, `/plan`, `/migrate`, `/validate`) without running the full pipeline. You can also rewire the pipeline by editing the `autopilot` skill.
