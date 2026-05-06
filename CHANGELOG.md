@@ -1,6 +1,14 @@
 ## Unreleased
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
+- **Bundled UI polish skills** — ships `/ui`, `/simplify-ui`, `/ui-ux-pro-max`,
+  `/make-interfaces-feel-better` so consumers get them via `npm install` instead
+  of needing user-level skill installs. `/ui` runs the chained pass (audit →
+  simplify → align → polish); the other three are individual lenses. Auto-
+  discovered via the existing `skills/` directory in the package `files`
+  allowlist. Pairs with the design context loader
+  (`src/core/ui/design-context-loader.ts`) — both gate on the same
+  `hasFrontendFiles()` predicate so they only fire when frontend files change.
 
 ## v6.0.5 — Engine wire-up Part E (2026-05-06)
 
