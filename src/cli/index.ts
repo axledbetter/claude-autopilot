@@ -201,7 +201,7 @@ These are aliases for the flat subcommands; they still work without the 'advance
 // gc, delete, doctor) are dispatched inside its case block. The singular
 // `run resume` form is handled BEFORE the default `run` -> review dispatch
 // kicks in (see disambiguation block just below).
-const SUBCOMMANDS = ['init', 'run', 'runs', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'migrate', 'migrate-doctor', 'deploy', 'brainstorm', 'spec', 'plan', 'review', 'internal', 'help', '--help', '-h'] as const;
+const SUBCOMMANDS = ['init', 'run', 'runs', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'migrate', 'migrate-doctor', 'deploy', 'brainstorm', 'spec', 'plan', 'review', 'validate', 'internal', 'help', '--help', '-h'] as const;
 const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity', 'prompt', 'context-file', 'path', 'adapter', 'ref', 'sha', 'spec', 'context'];
 
 // Bare invocation — no subcommand, no flags → show welcome guide
@@ -769,6 +769,35 @@ switch (subcommand) {
     const code = await runUnderJsonMode(
       { command: 'review', active: json },
       () => runReview({
+        ...(config !== undefined ? { configPath: config } : {}),
+        ...(context !== undefined ? { context } : {}),
+        ...(outputPath !== undefined ? { outputPath } : {}),
+        ...(cliEngine !== undefined ? { cliEngine } : {}),
+        envEngine: process.env.CLAUDE_AUTOPILOT_ENGINE,
+      }),
+    );
+    process.exit(code);
+    break;
+  }
+
+  case 'validate': {
+    // v6.0.5 — engine-wrap shell for the `validate` pipeline phase. The
+    // actual validation pipeline (static checks, auto-fix, tests, Codex
+    // review with auto-fix, bugbot triage) lives in the Claude Code
+    // `/validate` skill; this verb provides a checkpointable phase shell so
+    // v6 pipeline runs can record a `validate` entry. Mirrors the
+    // plan / review dispatcher shape. See the long deviation note in
+    // src/cli/validate.ts for the externalRefs / sarif-artifact
+    // declaration rationale.
+    const { runValidate } = await import('./validate.ts');
+    const json = boolFlag('json');
+    const config = flag('config');
+    const context = flag('context');
+    const outputPath = flag('output');
+    const cliEngine = parseEngineCliFlag();
+    const code = await runUnderJsonMode(
+      { command: 'validate', active: json },
+      () => runValidate({
         ...(config !== undefined ? { configPath: config } : {}),
         ...(context !== undefined ? { context } : {}),
         ...(outputPath !== undefined ? { outputPath } : {}),
