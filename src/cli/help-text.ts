@@ -123,7 +123,9 @@ export const HELP_OPTIONS: Record<string, string> = {
   --ask <question>     Targeted question to inject into the LLM review prompt
   --focus <type>       security | logic | performance (default: all)
   --dry-run            List files that would be scanned without running
-  --config <path>      Path to config file`,
+  --config <path>      Path to config file
+  --engine             Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
+  --no-engine          Force the legacy stateless code path (overrides config / env)`,
   pr: `Options (pr):
   <number>                   PR number to review (optional if on a PR branch)
   --no-post-comments         Skip posting/updating PR summary comment
@@ -212,6 +214,18 @@ function padVerb(verb: string): string {
   return verb.length >= WIDTH ? verb + ' ' : verb + ' '.repeat(WIDTH - verb.length);
 }
 
+/**
+ * Global flags advertised in --help. These work across most verbs (per-verb
+ * support varies; v6.0.1 wires them into `scan` first, additional verbs land
+ * in subsequent v6.0.x point releases per docs/v6/wrapping-pipeline-phases.md).
+ */
+export const GLOBAL_FLAGS_BLOCK = `Global flags:
+  --json                 Emit a structured JSON envelope on stdout (most verbs)
+  --engine               Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
+  --no-engine            Force the legacy stateless code path (overrides config / env)
+                         Precedence: CLI > env (CLAUDE_AUTOPILOT_ENGINE) > config (engine.enabled) > built-in default
+                         v6.0.1: wired for \`scan\`. Other phases land in subsequent v6.0.x releases.`;
+
 /** Build the full two-level help text. Returned as a string so tests can assert against it without spawning. */
 export function buildHelpText(): string {
   const lines: string[] = [];
@@ -225,6 +239,8 @@ export function buildHelpText(): string {
     }
     lines.push('');
   }
+  lines.push(GLOBAL_FLAGS_BLOCK);
+  lines.push('');
   for (const group of HELP_GROUPS) {
     for (const v of group.verbs) {
       const block = HELP_OPTIONS[v.verb];

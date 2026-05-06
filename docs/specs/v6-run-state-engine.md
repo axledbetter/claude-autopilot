@@ -349,6 +349,33 @@ Phase 8 shipped as a single PR against master ([#94](https://github.com/axledbet
 
 After this PR merges, **v6 is feature-complete.** The engine is queryable, observable, and budget-bounded. v6.0.x point releases will wire the `engine.enabled` config knob and progressively wrap the existing pipeline phases through `runPhase` — those lifts are mechanical and don't change the Phase 1-7 architecture.
 
+## What was actually built (v6.0.1 — Part A)
+
+v6.0.1 lights up the user-facing knobs that v6.0 deferred and wraps the **first** pipeline phase (`scan`) through `runPhase` as a worked example. Subsequent v6.0.x releases wrap the rest, one or two per PR, following the recipe in `docs/v6/wrapping-pipeline-phases.md`.
+
+| File | Role |
+|---|---|
+| `src/core/run-state/resolve-engine.ts` | pure precedence resolver — `(cliEngine?, envValue?, configEnabled?, builtInDefault?)` → `{enabled, source, reason, invalidEnvValue?}`; accepts `on/off/true/false/1/0/yes/no` (case-insensitive); invalid env values fall through and surface in `invalidEnvValue` for the caller's `run.warning` |
+| `tests/run-state/resolve-engine.test.ts` | 45 unit tests — every accepted env form, every precedence layer, the conflict rules, the invalid-env fallthrough, the full sweep |
+| `src/cli/index.ts` | `parseEngineCliFlag()` rejects `--engine` + `--no-engine` conflict with `invalid_config` exit 1; `scan` case passes `cliEngine` + `envEngine` (from `process.env.CLAUDE_AUTOPILOT_ENGINE`) through |
+| `src/cli/help-text.ts` | new `GLOBAL_FLAGS_BLOCK` documents `--json` / `--engine` / `--no-engine` + the precedence matrix; per-verb `scan` Options block adds the new flags |
+| `src/core/config/types.ts` + `schema.ts` | new optional `engine.enabled: boolean` knob; schema rejects unknown sub-keys |
+| `src/cli/scan.ts` | refactored body into `executeScanPhase(input)` → `ScanOutput` (pure phase body, no console / exit code logic); defined `RunPhase<ScanInput, ScanOutput>` with `name: 'scan'`, `idempotent: true`, `hasSideEffects: false`; engine-on path: `createRun()` → `runPhase()` → `run.complete` event + state.json refresh + best-effort lock release in finally; engine-off path: byte-for-byte unchanged. Test seam (`__testReviewEngine`) for the smoke test |
+| `tests/cli/scan-engine-smoke.test.ts` | end-to-end 5-case smoke — engine off (no run dir), engine on (`status: 'success'`, single phase, lifecycle events, monotonic seq), env-resolved, CLI override beats env, invalid-env fallthrough surfaces a `run.warning` |
+| `docs/v6/wrapping-pipeline-phases.md` | six-step recipe + phase-status table + idempotency decision tree + worked example (scan) + checklist subsequent v6.0.x PRs follow when wrapping the remaining ten pipeline phases |
+| `docs/v6/migration-guide.md` | "What works today" updated — three knobs move from "wiring pending" to "wired (limited to scan)" |
+| `CHANGELOG.md` | new `v6.0.1` section bundling the wire-up + the wrap |
+
+**Test delta:** 1306 → 1356 (+50). Typecheck clean. Existing 1306 tests pass unchanged — the engine-off path for `scan` is byte-for-byte identical to v6.0.
+
+**Deviations from the original Part A spec line.** None. The brief named these knobs explicitly, the precedence matrix is implemented as documented, and the wrapping recipe captures the pattern subsequent releases reproduce.
+
+**Not done in v6.0.1 — explicit non-goals:**
+- Wrapping any other pipeline phase. Each future v6.0.x release wraps one or two phases following the recipe.
+- Flipping the v6.0 built-in default to ON. v6.1 territory per `docs/specs/v6.1-default-flip.md`.
+- Removing `--no-engine`. v7 territory.
+- Multi-phase pipeline orchestration (e.g. autopilot → brainstorm → spec → plan → ...). The v6.0.x lifts wrap each phase as a single-phase run; multi-phase orchestration is a separate v6.x lift after every phase is individually wrapped.
+
 ---
 
-*Drafted 2026-05-04 against v5.6 master. Codex-reviewed (twice) and refined: the framing of "Run State Engine" as the unifying subsystem comes from the first review; persistence-protocol atomicity, external-operation-ledger for replay safety, strict `--json` channel discipline, copy-not-symlink artifacts, mandatory budget runtime guard, index.json as pure cache, flake-control for live adapter cert, and the precedence matrix all come from the second review of this spec. Phase 7 reconciled 2026-05-05 after the implementation PR landed. Phase 8 reconciled 2026-05-05 — v6 feature-complete.*
+*Drafted 2026-05-04 against v5.6 master. Codex-reviewed (twice) and refined: the framing of "Run State Engine" as the unifying subsystem comes from the first review; persistence-protocol atomicity, external-operation-ledger for replay safety, strict `--json` channel discipline, copy-not-symlink artifacts, mandatory budget runtime guard, index.json as pure cache, flake-control for live adapter cert, and the precedence matrix all come from the second review of this spec. Phase 7 reconciled 2026-05-05 after the implementation PR landed. Phase 8 reconciled 2026-05-05 — v6 feature-complete. v6.0.1 (Part A) reconciled 2026-05-05 — engine knobs wired + scan pilot wrapped.*
