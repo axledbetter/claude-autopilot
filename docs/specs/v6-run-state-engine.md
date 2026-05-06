@@ -401,6 +401,33 @@ v6.0.2 continues the mechanical wrap pattern with two more single-shot verbs: `c
 - Flipping the v6.0 built-in default to ON. v6.1 territory.
 - Multi-phase orchestration. Same v6.x lift as before — comes after every phase is individually wrapped.
 
+## What was actually built (v6.0.3)
+
+v6.0.3 continues the mechanical wrap pattern with two more pipeline verbs: `brainstorm` and `spec`. Both are advisory CLI shims pointing at the Claude Code skills that implement the actual LLM dialogue. The recipe in `docs/v6/wrapping-pipeline-phases.md` is unchanged; the per-PR deltas are `RunPhase` definitions + `createRun → runPhase → run.complete` plumbing + smoke tests.
+
+| File | Role |
+|---|---|
+| `src/cli/brainstorm.ts` | new — `executeBrainstormPhase(input)` → `BrainstormOutput` (pure advisory, no provider, no console output); `RunPhase<BrainstormInput, BrainstormOutput>` with `name: 'brainstorm'`, `idempotent: true`, `hasSideEffects: false`; engine-on path: `createRun()` → `runPhase()` → `run.complete` event + state.json refresh + best-effort lock release in finally; engine-off path renders the legacy advisory banner pointing at `/brainstorm`. **Documented deviation from the spec table:** the row at `docs/specs/v6-run-state-engine.md` declares `brainstorm` `idempotent: no` because re-running produces new LLM content; v6.0.3 declares `idempotent: true` because the CLI verb itself is a static advisory print with no LLM call and no externalRefs to reconcile. Once the CLI verb grows a real LLM body, the declaration may flip. Justified inline at the top of `src/cli/brainstorm.ts`. |
+| `src/cli/spec.ts` | new — same shape as brainstorm. `executeSpecPhase(input)` → `SpecOutput`; `RunPhase<SpecInput, SpecOutput>` with `name: 'spec'`, `idempotent: true`, `hasSideEffects: false`; engine-off path renders an advisory pointing at the autopilot/brainstorm Claude Code flow. Same documented deviation as brainstorm. |
+| `src/cli/index.ts` | `brainstorm` case rewritten to dispatch through `runBrainstorm()` (preserves the v6.0.2 `--json` envelope shape for back-compat with `json-channel-discipline.test.ts` and the WS7 welcome regression guard); new `spec` case mirrors brainstorm. SUBCOMMANDS gains `'spec'`. |
+| `src/cli/help-text.ts` | adds `spec` to the Pipeline group; per-verb Options blocks for `brainstorm` and `spec` document `--engine` / `--no-engine` / `--config` / `--json`; GLOBAL_FLAGS_BLOCK breadcrumb cites v6.0.1 + v6.0.2 + v6.0.3. |
+| `tests/cli/brainstorm-engine-smoke.test.ts` | new — end-to-end 5-case smoke mirroring `costs-engine-smoke.test.ts`. Engine off → no run dir; engine on → state.json (with `idempotent: true`, `hasSideEffects: false`) + events.ndjson (`run.start` → `phase.start` → `phase.success` → `run.complete`); env-resolved; CLI override beats env. |
+| `tests/cli/spec-engine-smoke.test.ts` | new — end-to-end 5-case smoke. Same shape as brainstorm. |
+| `tests/cli/json-channel-discipline.test.ts` | adds `'spec'` to `MIGRATED_VERBS` so the channel-discipline regression test covers it (brainstorm was already in the list). |
+| `docs/v6/wrapping-pipeline-phases.md` | phase-status table moves `brainstorm` + `spec` to "WRAPPED in v6.0.3"; new deviation note explains the `idempotent: true` choice. |
+| `docs/v6/migration-guide.md` | "What works today" updated — three knobs now honored by `scan`, `costs`, `fix`, `brainstorm`, `spec`. |
+| `CHANGELOG.md` | new `v6.0.3` section bundling both wraps + the deviation note + test count delta. |
+
+**Test delta:** 1367 → 1378 (+11 from new smoke tests; +1 from `MIGRATED_VERBS` adding `spec`, but two of the +12 land in the same describe block). Net `npm test` count after the wrap: 1378 (10 brainstorm/spec smoke cases + 1 channel-discipline case for `spec`). Typecheck clean. Existing 1367 tests pass unchanged — the engine-off paths for `brainstorm` (renderer output identical to v6.0.2 banner) and `spec` (newly added) honor the JSON-envelope contract enforced by `json-channel-discipline.test.ts`.
+
+**Deviations from the recipe.** One explicit, documented per-phase: declaring `idempotent: true` for both verbs even though the v6 spec table says `idempotent: no`. Justified inline in both `src/cli/brainstorm.ts` and `src/cli/spec.ts` plus a deviation block in the recipe. Engine semantics are "safe to retry without reconciliation," which trivially holds for advisory CLI shims with no externalRefs. All other recipe steps (JSON-serializable I/O, engine-off byte-for-byte for the printed banner, CLI dispatcher pass-through, help text, smoke test) are mechanical mirrors of the costs/fix patterns.
+
+**Not done in v6.0.3 — explicit non-goals:**
+- Wrapping `plan`, `implement`, `migrate`, `validate`, `pr`, `review`. Continues across v6.0.4+ following the recipe (a parallel agent works on `plan` + `review` for v6.0.4).
+- Promoting brainstorm/spec from advisory shims to full LLM-bearing CLI verbs. The Claude Code skill remains the user-facing entry point; the CLI wraps exist so the engine has a place to record run-state for future multi-phase orchestration.
+- Flipping the v6.0 built-in default to ON. v6.1 territory.
+- Multi-phase orchestration.
+
 ---
 
-*Drafted 2026-05-04 against v5.6 master. Codex-reviewed (twice) and refined: the framing of "Run State Engine" as the unifying subsystem comes from the first review; persistence-protocol atomicity, external-operation-ledger for replay safety, strict `--json` channel discipline, copy-not-symlink artifacts, mandatory budget runtime guard, index.json as pure cache, flake-control for live adapter cert, and the precedence matrix all come from the second review of this spec. Phase 7 reconciled 2026-05-05 after the implementation PR landed. Phase 8 reconciled 2026-05-05 — v6 feature-complete. v6.0.1 (Part A) reconciled 2026-05-05 — engine knobs wired + scan pilot wrapped. v6.0.2 (Part B) reconciled 2026-05-06 — costs + fix wrapped following the recipe (with one documented deviation for interactive verbs).*
+*Drafted 2026-05-04 against v5.6 master. Codex-reviewed (twice) and refined: the framing of "Run State Engine" as the unifying subsystem comes from the first review; persistence-protocol atomicity, external-operation-ledger for replay safety, strict `--json` channel discipline, copy-not-symlink artifacts, mandatory budget runtime guard, index.json as pure cache, flake-control for live adapter cert, and the precedence matrix all come from the second review of this spec. Phase 7 reconciled 2026-05-05 after the implementation PR landed. Phase 8 reconciled 2026-05-05 — v6 feature-complete. v6.0.1 (Part A) reconciled 2026-05-05 — engine knobs wired + scan pilot wrapped. v6.0.2 (Part B) reconciled 2026-05-06 — costs + fix wrapped following the recipe (with one documented deviation for interactive verbs). v6.0.3 reconciled 2026-05-05 — brainstorm + spec wrapped (with one documented deviation for advisory CLI shims declaring idempotent: true).*
