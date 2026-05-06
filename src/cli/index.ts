@@ -605,6 +605,9 @@ switch (subcommand) {
     const dryRun = boolFlag('dry-run');
     const noVerify = boolFlag('no-verify');
     const json = boolFlag('json');
+    // v6.0.2 — engine knob. CLI flag wins; env / config / default resolved
+    // inside runFix once it's loaded the config file.
+    const cliEngine = parseEngineCliFlag();
     const code = await runUnderJsonMode(
       { command: 'fix', active: json },
       () => runFix({
@@ -612,6 +615,8 @@ switch (subcommand) {
         severity: severityArg as 'critical' | 'warning' | 'all' | undefined,
         dryRun,
         noVerify,
+        ...(cliEngine !== undefined ? { cliEngine } : {}),
+        envEngine: process.env.CLAUDE_AUTOPILOT_ENGINE,
       }),
     );
     process.exit(code);
@@ -683,9 +688,17 @@ switch (subcommand) {
   case 'costs': {
     const { runCosts } = await import('./costs.ts');
     const json = boolFlag('json');
+    const config = flag('config');
+    // v6.0.2 — engine knob. CLI flag wins; env / config / default resolved
+    // inside runCosts once it's loaded the config file.
+    const cliEngine = parseEngineCliFlag();
     const code = await runUnderJsonMode(
       { command: 'costs', active: json },
-      () => runCosts(),
+      () => runCosts({
+        ...(config !== undefined ? { configPath: config } : {}),
+        ...(cliEngine !== undefined ? { cliEngine } : {}),
+        envEngine: process.env.CLAUDE_AUTOPILOT_ENGINE,
+      }),
     );
     process.exit(code);
     break;

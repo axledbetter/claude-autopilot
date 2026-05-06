@@ -376,6 +376,31 @@ v6.0.1 lights up the user-facing knobs that v6.0 deferred and wraps the **first*
 - Removing `--no-engine`. v7 territory.
 - Multi-phase pipeline orchestration (e.g. autopilot → brainstorm → spec → plan → ...). The v6.0.x lifts wrap each phase as a single-phase run; multi-phase orchestration is a separate v6.x lift after every phase is individually wrapped.
 
+## What was actually built (v6.0.2 — Part B)
+
+v6.0.2 continues the mechanical wrap pattern with two more single-shot verbs: `costs` and `fix`. The recipe in `docs/v6/wrapping-pipeline-phases.md` is unchanged; the per-PR deltas are `RunPhase` definitions + `createRun → runPhase → run.complete` plumbing + smoke tests.
+
+| File | Role |
+|---|---|
+| `src/cli/costs.ts` | refactored body into `executeCostsPhase(input)` → `CostsOutput` (pure read of `.guardrail-cache/costs.jsonl`, no console output, no exit-code logic); `RunPhase<CostsInput, CostsOutput>` with `name: 'costs'`, `idempotent: true`, `hasSideEffects: false`; engine-on path: `createRun()` → `runPhase()` → `run.complete` event + state.json refresh + best-effort lock release in finally; engine-off path: byte-for-byte unchanged. Back-compat preserved for the bare-string `runCosts(cwd)` shape used by `tests/costs.test.ts` and the MCP handlers. |
+| `src/cli/fix.ts` | refactored body into `executeFixPhase(input)` → `FixOutput { results, dryRun }`; `RunPhase<FixInput, FixOutput>` with `name: 'fix'`, `idempotent: true`, `hasSideEffects: false`; engine-on path: same shape as costs. **Documented deviation from recipe:** the phase body emits per-finding console output and reads a [y/n/q] confirmation via `readline`. Pure phase bodies are the recipe default, but interactive verbs are an explicit exception (same precedent as scan keeping its LLM call inside `executeScanPhase`). Summary line + exit-code logic stays in `renderFixOutput` so engine-path idempotency isn't coupled to the final stdout shape. Test seam (`__testReviewEngine`) added. |
+| `src/cli/index.ts` | `costs` and `fix` cases pass `cliEngine` + `envEngine` through; `costs` gains `--config` so the engine resolver can consult config |
+| `src/cli/help-text.ts` | per-verb Options block for `costs` + `fix` documents `--engine` / `--no-engine`; GLOBAL_FLAGS_BLOCK breadcrumb cites v6.0.1 + v6.0.2 |
+| `tests/cli/costs-engine-smoke.test.ts` | end-to-end 6-case smoke — engine off (string-arg + options-form), engine on, env-resolved, CLI override beats env, engine-on with empty ledger still succeeds |
+| `tests/cli/fix-engine-smoke.test.ts` | end-to-end 5-case smoke — engine off + dry-run (short-circuit before engine route), engine off (cliEngine: false) with apply loop, engine on, env-resolved, CLI override beats env. Uses `__testReviewEngine` to feed CANNOT_FIX so the apply loop never reaches readline or file writes |
+| `docs/v6/wrapping-pipeline-phases.md` | phase-status table moves `costs` + `fix` to "WRAPPED in v6.0.2"; new "Note on interactive verbs" section at the bottom documents the readline-inside-phase-body exception |
+| `docs/v6/migration-guide.md` | "What works today" updated — three knobs now honored by `scan`, `costs`, `fix` |
+| `CHANGELOG.md` | new `v6.0.2` section bundling both wraps + the deviation note + test count delta |
+
+**Test delta:** 1356 → 1367 (+11). Typecheck clean. Existing 1356 tests pass unchanged — the engine-off paths for `costs` and `fix` are byte-for-byte identical to v6.0.1.
+
+**Deviations from the recipe.** One explicit, documented: `fix`'s phase body emits per-finding console output and uses readline. Justified inline above `executeFixPhase` and in the "Note on interactive verbs" section of the wrapping recipe. All other recipe steps (`RunPhase` flags, JSON-serializable I/O, engine-off byte-for-byte, CLI dispatcher pass-through, help text, smoke test) are mechanical mirrors of the scan pattern.
+
+**Not done in v6.0.2 — explicit non-goals:**
+- Wrapping `brainstorm`, `plan`, `implement`, `migrate`, `validate`, `pr`, `review`. Continues across v6.0.3+ following the recipe.
+- Flipping the v6.0 built-in default to ON. v6.1 territory.
+- Multi-phase orchestration. Same v6.x lift as before — comes after every phase is individually wrapped.
+
 ---
 
-*Drafted 2026-05-04 against v5.6 master. Codex-reviewed (twice) and refined: the framing of "Run State Engine" as the unifying subsystem comes from the first review; persistence-protocol atomicity, external-operation-ledger for replay safety, strict `--json` channel discipline, copy-not-symlink artifacts, mandatory budget runtime guard, index.json as pure cache, flake-control for live adapter cert, and the precedence matrix all come from the second review of this spec. Phase 7 reconciled 2026-05-05 after the implementation PR landed. Phase 8 reconciled 2026-05-05 — v6 feature-complete. v6.0.1 (Part A) reconciled 2026-05-05 — engine knobs wired + scan pilot wrapped.*
+*Drafted 2026-05-04 against v5.6 master. Codex-reviewed (twice) and refined: the framing of "Run State Engine" as the unifying subsystem comes from the first review; persistence-protocol atomicity, external-operation-ledger for replay safety, strict `--json` channel discipline, copy-not-symlink artifacts, mandatory budget runtime guard, index.json as pure cache, flake-control for live adapter cert, and the precedence matrix all come from the second review of this spec. Phase 7 reconciled 2026-05-05 after the implementation PR landed. Phase 8 reconciled 2026-05-05 — v6 feature-complete. v6.0.1 (Part A) reconciled 2026-05-05 — engine knobs wired + scan pilot wrapped. v6.0.2 (Part B) reconciled 2026-05-06 — costs + fix wrapped following the recipe (with one documented deviation for interactive verbs).*

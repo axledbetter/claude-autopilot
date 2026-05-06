@@ -2,7 +2,7 @@
 
 **Audience:** maintainers wiring v5.x pipeline phases through `runPhase` one PR at a time.
 
-**Status as of v6.0.1 (Part A):** ONE phase wrapped — `scan`. Subsequent v6.0.x point releases wrap the rest using this recipe; aim for one or two phases per PR so blast radius stays small and bugbot can catch regressions phase-by-phase.
+**Status as of v6.0.2 (Part B):** THREE phases wrapped — `scan` (v6.0.1), plus `costs` and `fix` (both v6.0.2). Subsequent v6.0.x point releases wrap the rest using this recipe; aim for one or two phases per PR so blast radius stays small and bugbot can catch regressions phase-by-phase.
 
 ---
 
@@ -24,8 +24,8 @@ Tracked in `docs/specs/v6-run-state-engine.md` "Idempotency rules + external ope
 | `pr` | no | yes | `github-pr` | NOT WRAPPED |
 | `review` | yes | no | `review-comments` | NOT WRAPPED |
 | `scan` | yes | no | (none in v6.0.1) | **WRAPPED in v6.0.1 (worked example below)** |
-| `fix` | partial | yes | `git-remote-push` | NOT WRAPPED |
-| `costs` | yes | no | (none) | NOT WRAPPED |
+| `fix` | yes (v6.0.2) | no (v6.0.2) | (none in v6.0.2; `git-remote-push` if/when `--push` is added) | **WRAPPED in v6.0.2** |
+| `costs` | yes | no | (none) | **WRAPPED in v6.0.2** |
 
 Read-only phases (`scan`, `validate`, `review`, `costs`) are the safest first wraps because they have no provider-side side effects and the engine's idempotency rules collapse to "retry freely." Side-effecting phases (`pr`, `migrate`, `implement`, `fix`, `deploy`) need careful externalRef plumbing; wrap them last.
 
@@ -298,3 +298,9 @@ That's a separate v6.x lift and not in scope for v6.0.x phase-wrapping. v6.0.x j
 - **The runner contract:** `src/core/run-state/phase-runner.ts` (top of file)
 - **Idempotency matrix:** `docs/v6/migration-guide.md#idempotency--replay-rules`
 - **Spec:** `docs/specs/v6-run-state-engine.md` "Phase contract", "Run lifecycle"
+
+---
+
+## Note on interactive verbs
+
+The recipe above describes phase bodies as pure functions with no console output and no exit-code logic — that's the right default for read-only / batch verbs (`scan`, `costs`, `validate`, `review`). Some verbs are intrinsically interactive: `fix` shows the user a per-finding diff and reads a [y/n/q] decision via `readline`. For those, **emitting console output and using readline inside the phase body is intentional and accepted.** The summary line + exit-code logic still lives in a separate render function so the engine path's idempotency isn't coupled to the final stdout shape, but the apply loop itself stays in the phase body. See `src/cli/fix.ts`'s `executeFixPhase` for the canonical example. The same precedent already exists in scan (the LLM call lives inside `executeScanPhase`, not in the outer scope).

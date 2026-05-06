@@ -2,6 +2,54 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## v6.0.2 — Engine wire-up Part B (2026-05-06)
+
+**The headline.** v6.0.1 wrapped the first pipeline phase (`scan`) through
+`runPhase`. v6.0.2 continues the mechanical wrap pattern from the recipe at
+[`docs/v6/wrapping-pipeline-phases.md`](docs/v6/wrapping-pipeline-phases.md)
+with two more single-shot verbs:
+
+- **`costs`** ([#96](https://github.com/axledbetter/claude-autopilot/pull/96)) —
+  pure read-only summary of the local cost ledger. The cleanest possible
+  wrap: `idempotent: true, hasSideEffects: false`, no provider, no LLM,
+  no file writes. CLI dispatcher passes `cliEngine` + `envEngine` through;
+  `--config` flag also wired since the engine resolver consults config.
+- **`fix`** ([#96](https://github.com/axledbetter/claude-autopilot/pull/96)) —
+  applies LLM-generated patches to local files. Declared
+  `idempotent: true` (same finding + same file content → same patch) and
+  `hasSideEffects: false` (no remote / git push / PR creation in the
+  existing flow — purely local file edits, which the recipe defines as
+  platform-side-effect-free). If/when fix grows a `--push` mode it will
+  flip to `hasSideEffects: true` with a `git-remote-push` externalRef.
+
+**Documented deviation from the recipe.** Both wraps follow the recipe
+mechanically. `fix` adds one explicit deviation: its phase body emits
+per-finding console output and reads a [y/n/q] confirmation via
+`readline`. Pure side-effect-free phase bodies are the recipe default,
+but interactive verbs are an explicit exception (same precedent as
+`scan` keeping its LLM call inside `executeScanPhase`). The summary line
++ exit-code logic still lives in `renderFixOutput` so the engine path's
+idempotency isn't coupled to the final stdout shape. See the new "Note
+on interactive verbs" section at the bottom of the wrapping recipe.
+
+Engine-off code paths are byte-for-byte unchanged for both verbs;
+existing tests pass without modification.
+
+### Test count
+
+1356 → 1367 (+11). +6 cases for `costs-engine-smoke.test.ts`, +5 cases
+for `fix-engine-smoke.test.ts`. Both mirror `scan-engine-smoke.test.ts`:
+engine off → no run dir; engine on → state.json + events.ndjson with
+the right lifecycle (`run.start` → `phase.start` → `phase.success` →
+`run.complete`); env-resolved; CLI override beats env. Typecheck clean.
+
+### Deliberately deferred
+
+- Wrapping the seven remaining pipeline phases (`brainstorm`, `plan`,
+  `implement`, `migrate`, `validate`, `pr`, `review`). One or two per
+  release across v6.0.3+.
+- Flipping the v6.0 built-in default to ON. v6.1 territory.
+
 ## v6.0.1 — Engine wire-up Part A (2026-05-05)
 
 **The headline.** v6.0 shipped the engine modules but left the user-facing
