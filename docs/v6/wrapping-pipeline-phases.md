@@ -2,7 +2,7 @@
 
 **Audience:** maintainers wiring v5.x pipeline phases through `runPhase` one PR at a time.
 
-**Status as of v6.0.3:** FIVE phases wrapped — `scan` (v6.0.1), `costs` and `fix` (v6.0.2), `brainstorm` and `spec` (v6.0.3). Subsequent v6.0.x point releases wrap the rest using this recipe; aim for one or two phases per PR so blast radius stays small and bugbot can catch regressions phase-by-phase.
+**Status as of v6.0.4:** SEVEN phases wrapped — `scan` (v6.0.1), `costs` and `fix` (v6.0.2), `brainstorm` and `spec` (v6.0.3), plus `plan` and `review` (v6.0.4). Subsequent v6.0.x point releases wrap the rest using this recipe; aim for one or two phases per PR so blast radius stays small and bugbot can catch regressions phase-by-phase.
 
 ---
 
@@ -18,15 +18,15 @@ Tracked in `docs/specs/v6-run-state-engine.md` "Idempotency rules + external ope
 |---|---|---|---|---|
 | `brainstorm` | yes (v6.0.3 — see deviation note) | no | (none in v6.0.3; `spec-file` if/when the CLI verb grows a real LLM body) | **WRAPPED in v6.0.3** |
 | `spec` | yes (v6.0.3 — see deviation note) | no | (none in v6.0.3; `spec-file` if/when the CLI verb grows a real LLM body) | **WRAPPED in v6.0.3** |
-| `plan` | no | no | `plan-file` | NOT WRAPPED |
 | `implement` | partial | yes | `git-remote-push` | NOT WRAPPED |
 | `migrate` | no | yes | `migration-version` (per env) | NOT WRAPPED |
 | `validate` | yes | no | `sarif-artifact` | NOT WRAPPED |
 | `pr` | no | yes | `github-pr` | NOT WRAPPED |
-| `review` | yes | no | `review-comments` | NOT WRAPPED |
 | `scan` | yes | no | (none in v6.0.1) | **WRAPPED in v6.0.1 (worked example below)** |
 | `fix` | yes (v6.0.2) | no (v6.0.2) | (none in v6.0.2; `git-remote-push` if/when `--push` is added) | **WRAPPED in v6.0.2** |
 | `costs` | yes | no | (none) | **WRAPPED in v6.0.2** |
+| `plan` | yes (v6.0.4) | no (v6.0.4) | (none in v6.0.4; `plan-file` if/when the verb writes durable plan artifacts that need replay) | **WRAPPED in v6.0.4** |
+| `review` | yes (v6.0.4) | no (v6.0.4) | (none in v6.0.4 — see deviation note) | **WRAPPED in v6.0.4** |
 
 > **Deviation note for `brainstorm` and `spec` (v6.0.3).** The
 > [v6 spec table](../specs/v6-run-state-engine.md) declares both phases
@@ -41,7 +41,9 @@ Tracked in `docs/specs/v6-run-state-engine.md` "Idempotency rules + external ope
 > on every successful run. See `src/cli/brainstorm.ts` and `src/cli/spec.ts`
 > top-of-file comments for the per-phase rationale.
 
-Read-only phases (`scan`, `validate`, `review`, `costs`) are the safest first wraps because they have no provider-side side effects and the engine's idempotency rules collapse to "retry freely." Side-effecting phases (`pr`, `migrate`, `implement`, `fix`, `deploy`) need careful externalRef plumbing; wrap them last.
+> **Deviation note for `review` (v6.0.4).** The spec table elsewhere in this repo (`docs/specs/v6-run-state-engine.md`) lists `review` with `idempotent: yes, hasSideEffects: no, externalRefs: review-comments`, which assumes the verb posts review comments to GitHub PRs. The v6.0.4 `review` CLI verb does **not** post anywhere — PR-side comment posting lives in `claude-autopilot pr --inline-comments` / `--post-comments` (a separate verb). The wrapped behavior is local-file-only (writes a review log stub under `.guardrail-cache/reviews/`), so `hasSideEffects: false` is correct for v6.0.4. If a future PR adds platform-side comment posting to this verb, both declarations will flip and a `review-comments` externalRef readback rule will need to land in the recipe.
+
+Read-only phases (`scan`, `validate`, `review`, `costs`, `plan`) are the safest first wraps because they have no provider-side side effects and the engine's idempotency rules collapse to "retry freely." Side-effecting phases (`pr`, `migrate`, `implement`, `fix`, `deploy`) need careful externalRef plumbing; wrap them last.
 
 ---
 

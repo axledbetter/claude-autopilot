@@ -430,4 +430,32 @@ v6.0.3 continues the mechanical wrap pattern with two more pipeline verbs: `brai
 
 ---
 
-*Drafted 2026-05-04 against v5.6 master. Codex-reviewed (twice) and refined: the framing of "Run State Engine" as the unifying subsystem comes from the first review; persistence-protocol atomicity, external-operation-ledger for replay safety, strict `--json` channel discipline, copy-not-symlink artifacts, mandatory budget runtime guard, index.json as pure cache, flake-control for live adapter cert, and the precedence matrix all come from the second review of this spec. Phase 7 reconciled 2026-05-05 after the implementation PR landed. Phase 8 reconciled 2026-05-05 — v6 feature-complete. v6.0.1 (Part A) reconciled 2026-05-05 — engine knobs wired + scan pilot wrapped. v6.0.2 (Part B) reconciled 2026-05-06 — costs + fix wrapped following the recipe (with one documented deviation for interactive verbs). v6.0.3 reconciled 2026-05-05 — brainstorm + spec wrapped (with one documented deviation for advisory CLI shims declaring idempotent: true).*
+## What was actually built (v6.0.4 — Part D)
+
+v6.0.4 continues the mechanical wrap pattern with two more single-shot verbs: `plan` and `review`. Both are **new CLI verbs** in v6.0.4 — neither existed as a flat verb in v6.0.3 (planning lived only in the Claude Code superpowers:writing-plans skill; review lived in the `/review` and `pr-review-toolkit:review-pr` skills). The CLI verbs are engine-wrap shells whose phase body writes a markdown stub under `.guardrail-cache/plans/` or `.guardrail-cache/reviews/` so v6 pipeline runs can checkpoint these phases deterministically.
+
+| File | Role |
+|---|---|
+| `src/cli/plan.ts` (new) | `executePlanPhase(input)` → `PlanOutput { planFilePath, specProvided, specPath }` (pure write of plan markdown stub, no console output); `RunPhase<PlanInput, PlanOutput>` with `name: 'plan'`, `idempotent: true`, `hasSideEffects: false`; engine-on path: same shape as scan / costs / fix |
+| `src/cli/review.ts` (new) | `executeReviewPhase(input)` → `ReviewOutput { reviewLogPath, context }`; `RunPhase<ReviewInput, ReviewOutput>` with `name: 'review'`, `idempotent: true`, `hasSideEffects: false`. **Documented deviation from spec table:** the table at line 163 lists `review` with externalRefs `review-comments` (implying PR-side comment posting); the v6.0.4 verb does not post anywhere — comment posting lives in `claude-autopilot pr --inline-comments` / `--post-comments`. If a future PR adds platform-side posting, both declarations will flip and a `review-comments` externalRef readback rule will need to land in the recipe |
+| `src/cli/index.ts` | dispatcher cases for `plan` + `review` pass `cliEngine` + `envEngine` through; `--spec`, `--context`, `--output`, `--config` flags wired; the `review` grouping prefix from alpha.2 is preserved (V16 v4-compat) — flat-verb invocation requires at least one flag (e.g. `claude-autopilot review --engine`) |
+| `src/cli/help-text.ts` | HELP_GROUPS gains `plan` + `review` in the Pipeline group; per-verb Options blocks document `--engine` / `--no-engine` + the verb-specific knobs; GLOBAL_FLAGS_BLOCK breadcrumb cites v6.0.4 |
+| `tests/cli/plan-engine-smoke.test.ts` (new) | 6-case smoke — engine off + plan-file written, engine off (cliEngine: false), engine on lifecycle, engine-on with explicit `--spec`, env-resolved, CLI override beats env |
+| `tests/cli/review-engine-smoke.test.ts` (new) | 6-case smoke — engine off + review-log written, engine off (cliEngine: false), engine on lifecycle, engine-on with explicit `--context`, env-resolved, CLI override beats env |
+| `docs/v6/wrapping-pipeline-phases.md` | phase-status table flips `plan` + `review` to "WRAPPED in v6.0.4"; deviation note for `review` documented inline |
+| `docs/v6/migration-guide.md` | "What works today" updated — three knobs now honored by `scan`, `costs`, `fix`, `brainstorm`, `spec`, `plan`, `review` |
+| `CHANGELOG.md` | new `v6.0.4` section bundling both wraps + the deviation note + test count delta |
+
+**Test delta:** 1378 → 1390 (+12). Typecheck clean. Existing 1378 tests pass unchanged — the `review` grouping-prefix tweak preserves V16 (`review` alone still prints prefix help).
+
+**Deviations from the recipe.** One: `review`'s declared `hasSideEffects: false` deviates from the spec table elsewhere in this file (line 163 lists `externalRefs: review-comments`). The v6.0.4 verb does not post review comments; PR comment posting is owned by `claude-autopilot pr`. Documented inline in `src/cli/review.ts` and in the wrapping recipe's table. All other recipe steps (`RunPhase` flags, JSON-serializable I/O, engine-off byte-for-byte, CLI dispatcher pass-through, help text, smoke test) are mechanical mirrors of the costs/scan pattern.
+
+**Not done in v6.0.4 — explicit non-goals:**
+- Wrapping `implement`, `migrate`, `validate`, `pr`. Continues across v6.0.5+ following the recipe. Side-effecting phases (`implement`, `migrate`, `pr`) need careful externalRef plumbing.
+- Adding LLM-driven content to the new `plan` and `review` verbs. The LLM-driven content lives in Claude Code skills; the CLI verbs are engine-wrap shells only.
+- Adding PR-side comment posting to `review`. Lives in `claude-autopilot pr` (separate verb).
+- Flipping the v6.0 built-in default to ON. v6.1 territory.
+
+---
+
+*Drafted 2026-05-04 against v5.6 master. Codex-reviewed (twice) and refined: the framing of "Run State Engine" as the unifying subsystem comes from the first review; persistence-protocol atomicity, external-operation-ledger for replay safety, strict `--json` channel discipline, copy-not-symlink artifacts, mandatory budget runtime guard, index.json as pure cache, flake-control for live adapter cert, and the precedence matrix all come from the second review of this spec. Phase 7 reconciled 2026-05-05 after the implementation PR landed. Phase 8 reconciled 2026-05-05 — v6 feature-complete. v6.0.1 (Part A) reconciled 2026-05-05 — engine knobs wired + scan pilot wrapped. v6.0.2 (Part B) reconciled 2026-05-06 — costs + fix wrapped following the recipe (with one documented deviation for interactive verbs). v6.0.3 reconciled 2026-05-05 — brainstorm + spec wrapped (with one documented deviation for advisory CLI shims declaring idempotent: true). v6.0.4 (Part D) reconciled 2026-05-06 — plan + review wrapped (with one documented deviation: review's hasSideEffects: false deviates from the spec table at line 163 because the v6.0.4 verb does not post PR comments).*
