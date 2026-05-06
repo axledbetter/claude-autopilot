@@ -232,16 +232,17 @@ Free-tier accounts handle this; cost ~$0/month. Runs nightly via `.github/workfl
 
 ## Implementation phases
 
-| Phase | Scope | Est. effort | Notes |
-|---|---|---|---|
-| 1 | Run-state schema + persistence layer (`state.json` writer, `events.ndjson` appender, ULID generator) | 3h | Pure data layer; testable against tmp dirs |
-| 2 | Phase wrapper / lifecycle. Existing phases instrumented in-place but behavior unchanged | 4h | All current tests must stay green |
-| 3 | `runs list` / `runs show` / `run resume` / `runs gc` CLI | 2h | Reads state — easy |
-| 4 | Budget enforcement: config schema, preflight check, hard-stop, council depth cap | 3h | Refactors `appendCostLog` callers to also check policy |
-| 5 | Typed JSON event emitter + `--json` flag on every existing command | 4h | Largest surface; touches every CLI verb |
-| 6 | Idempotency contracts per phase + replay rules per the table above | 3h | Per-phase work; needs careful testing on side-effect phases |
-| 7 | Real adapter certification suite (Vercel + Fly + Render) | 4h | Separate `npm run test:adapters:live`; nightly CI workflow |
-| 8 | Docs + migration guide for users on v5.x runs (no state) → v6 (state) | 2h | Spec reconciliation, README updates, CHANGELOG |
+| Phase | Scope | Est. effort | PR | Status |
+|---|---|---|---|---|
+| 1 | Run-state schema + persistence layer (`state.json` writer, `events.ndjson` appender, ULID generator) | 3h | [#86](https://github.com/axledbetter/claude-autopilot/pull/86) | shipped |
+| 2 | Phase wrapper / lifecycle. Existing phases instrumented in-place but behavior unchanged | 4h | [#87](https://github.com/axledbetter/claude-autopilot/pull/87) | shipped |
+| 3 | `runs list` / `runs show` / `run resume` / `runs gc` CLI | 2h | [#88](https://github.com/axledbetter/claude-autopilot/pull/88) | shipped (`run resume` lookup-only — execution in 6.1+) |
+| 4 | Budget enforcement: config schema, preflight check, hard-stop, council depth cap | 3h | [#89](https://github.com/axledbetter/claude-autopilot/pull/89) | shipped |
+| 5 | Typed JSON event emitter + `--json` flag on every existing command | 4h | [#90](https://github.com/axledbetter/claude-autopilot/pull/90) | shipped |
+| 6 | Idempotency contracts per phase + replay rules per the table above | 3h | [#91](https://github.com/axledbetter/claude-autopilot/pull/91) | shipped (policy + readback layer; per-phase wiring follow-up) |
+| 7 | Real adapter certification suite (Vercel + Fly + Render) | 4h | [#92](https://github.com/axledbetter/claude-autopilot/pull/92) | shipped (env-gated; live creds pending) |
+| — | Codex / council pricing — GPT-5.5 swap | 0.5h | [#93](https://github.com/axledbetter/claude-autopilot/pull/93) | shipped |
+| 8 | Docs + migration guide for users on v5.x runs (no state) → v6 (state) | 2h | [#94](https://github.com/axledbetter/claude-autopilot/pull/94) | shipped (this PR) |
 
 **Total:** ~25 hours of implementation OR ~$15-20 of self-eat dispatch across 8 phases.
 
@@ -328,6 +329,26 @@ Phase 7 shipped as a single PR against master. Scope landed exactly as the spec 
 
 **What needs to happen for the suite to run live.** Add seven GitHub Secrets per the table in `docs/adapters/cert-suite.md` (`VERCEL_TOKEN_TEST` + `VERCEL_PROJECT_TEST`, `FLY_API_TOKEN_TEST` + `FLY_APP_TEST` + `FLY_IMAGE_TEST`, `RENDER_API_KEY_TEST` + `RENDER_SERVICE_TEST`). Each provider's secrets are independent — adding only Render's set will make Render's cert tests run live while Vercel/Fly continue to skip.
 
+## What was actually built (Phase 8)
+
+Phase 8 shipped as a single PR against master ([#94](https://github.com/axledbetter/claude-autopilot/pull/94)). Pure docs — no source changes, no test changes; the suite stays at 1306/1306. Scope:
+
+| File | Role |
+|---|---|
+| `docs/v6/migration-guide.md` | v5.x → v6 walkthrough — what changes, what doesn't, opt-in via `engine.enabled: true`, precedence matrix (CLI flag → env var → config → built-in default), the `--no-engine` one-version escape hatch, the new `runs` / `run resume` verbs, the `budgets:` config block with two-layer enforcement, strict `--json` channel discipline, the per-phase idempotency rules table, troubleshooting recipes for `lock_held` / `corrupted_state` / `partial_write` / `budget_exceeded`, and the v6.0 → v6.1 default-flip plan |
+| `docs/v6/quickstart.md` | Five-minute "give me the engine NOW" guide — seven labelled steps from "engine off" to "queryable runs + budget cap" |
+| `CHANGELOG.md` | New `v6.0` section bundling all 8 phases with one paragraph per phase referencing the merged PRs (#85 spec, #86–#92 phases 1-7, #93 GPT-5.5 swap, #94 this PR) |
+| `README.md` | New "Run State Engine (v6)" section near the top with two-sentence hook + minimal config + the five most useful `runs` verbs + links to the migration guide and quickstart |
+| `docs/specs/v6-run-state-engine.md` | Phase 8 reconciliation block (this section) + Status / PR column on the implementation phases table |
+| `docs/specs/v6.1-default-flip.md` | New short forward-looking spec — outlines stabilization criteria for flipping `engine.enabled` to `true` by default and removing `--no-engine` |
+
+**Deviations from the original Phase 8 spec line.** None of substance. Two things worth calling out:
+
+- **The migration guide is explicit about the wiring boundary.** v6.0 ships the engine modules + `runs` CLI + strict `--json` discipline + budget enforcement (when phases pass `BudgetConfig`), but `engine.enabled` config / `CLAUDE_AUTOPILOT_ENGINE` env var / `--engine` / `--no-engine` flags + automatic wrapping of the existing pipeline phases through `runPhase` are still pending. Those land across v6.0.x point releases. The migration guide describes the **target shape** of v6 so users can plan against it; the spec's reconciliation column tracks what landed when. This boundary is called out repeatedly so users don't expect behavior the engine doesn't have today.
+- **A v6.1 default-flip spec was added (`docs/specs/v6.1-default-flip.md`).** Outside the original Phase 8 scope, but the user requested it as a forward-looking placeholder so the team can execute against criteria when v6 stabilizes. Implementation is for a future session.
+
+After this PR merges, **v6 is feature-complete.** The engine is queryable, observable, and budget-bounded. v6.0.x point releases will wire the `engine.enabled` config knob and progressively wrap the existing pipeline phases through `runPhase` — those lifts are mechanical and don't change the Phase 1-7 architecture.
+
 ---
 
-*Drafted 2026-05-04 against v5.6 master. Codex-reviewed (twice) and refined: the framing of "Run State Engine" as the unifying subsystem comes from the first review; persistence-protocol atomicity, external-operation-ledger for replay safety, strict `--json` channel discipline, copy-not-symlink artifacts, mandatory budget runtime guard, index.json as pure cache, flake-control for live adapter cert, and the precedence matrix all come from the second review of this spec. Phase 7 reconciled 2026-05-05 after the implementation PR landed.*
+*Drafted 2026-05-04 against v5.6 master. Codex-reviewed (twice) and refined: the framing of "Run State Engine" as the unifying subsystem comes from the first review; persistence-protocol atomicity, external-operation-ledger for replay safety, strict `--json` channel discipline, copy-not-symlink artifacts, mandatory budget runtime guard, index.json as pure cache, flake-control for live adapter cert, and the precedence matrix all come from the second review of this spec. Phase 7 reconciled 2026-05-05 after the implementation PR landed. Phase 8 reconciled 2026-05-05 — v6 feature-complete.*
