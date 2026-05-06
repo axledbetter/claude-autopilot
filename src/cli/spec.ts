@@ -30,11 +30,8 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { loadConfig } from '../core/config/loader.ts';
 import type { GuardrailConfig } from '../core/config/types.ts';
-import { resolveEngineEnabled, type ResolveEngineResult } from '../core/run-state/resolve-engine.ts';
-import { createRun } from '../core/run-state/runs.ts';
-import { runPhase, type RunPhase } from '../core/run-state/phase-runner.ts';
-import { appendEvent, replayState } from '../core/run-state/events.ts';
-import { writeStateSnapshot } from '../core/run-state/state.ts';
+import { type RunPhase } from '../core/run-state/phase-runner.ts';
+import { runPhaseWithLifecycle } from '../core/run-state/run-phase-with-lifecycle.ts';
 
 const C = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
@@ -90,12 +87,6 @@ export async function runSpec(options: SpecCommandOptions = {}): Promise<number>
     if (loaded) config = loaded;
   }
 
-  const engineResolved: ResolveEngineResult = resolveEngineEnabled({
-    ...(options.cliEngine !== undefined ? { cliEngine: options.cliEngine } : {}),
-    ...(options.envEngine !== undefined ? { envValue: options.envEngine } : {}),
-    ...(typeof config.engine?.enabled === 'boolean' ? { configEnabled: config.engine.enabled } : {}),
-  });
-
   const specInput: SpecInput = { cwd, silent: options.__silent === true };
 
   const phase: RunPhase<SpecInput, SpecOutput> = {
@@ -111,69 +102,21 @@ export async function runSpec(options: SpecCommandOptions = {}): Promise<number>
     run: async input => executeSpecPhase(input),
   };
 
+  // v6.0.6 — lifecycle wiring lives in `runPhaseWithLifecycle`.
   let output: SpecOutput;
-  if (engineResolved.enabled) {
-    const created = await createRun({
+  try {
+    const result = await runPhaseWithLifecycle<SpecInput, SpecOutput>({
       cwd,
-      phases: ['spec'],
-      config: {
-        engine: { enabled: true, source: engineResolved.source },
-        ...(engineResolved.invalidEnvValue !== undefined
-          ? { invalidEnvValue: engineResolved.invalidEnvValue }
-          : {}),
-      },
+      phase,
+      input: specInput,
+      config,
+      cliEngine: options.cliEngine,
+      envEngine: options.envEngine,
+      runEngineOff: () => executeSpecPhase(specInput),
     });
-    if (engineResolved.invalidEnvValue !== undefined) {
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.warning',
-          message: `invalid CLAUDE_AUTOPILOT_ENGINE=${JSON.stringify(engineResolved.invalidEnvValue)} ignored`,
-          details: { resolution: engineResolved },
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-    }
-    const runStartedAt = Date.now();
-    try {
-      output = await runPhase<SpecInput, SpecOutput>(phase, specInput, {
-        runDir: created.runDir,
-        runId: created.runId,
-        writerId: created.lock.writerId,
-        phaseIdx: 0,
-      });
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.complete',
-          status: 'success',
-          totalCostUSD: 0,
-          durationMs: Date.now() - runStartedAt,
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-      writeStateSnapshot(created.runDir, replayState(created.runDir));
-    } catch (err) {
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.complete',
-          status: 'failed',
-          totalCostUSD: 0,
-          durationMs: Date.now() - runStartedAt,
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-      writeStateSnapshot(created.runDir, replayState(created.runDir));
-      console.error(fmt('red', `[spec] engine: phase failed — ${err instanceof Error ? err.message : String(err)}`));
-      console.error(fmt('dim', `  inspect: claude-autopilot runs show ${created.runId} --events`));
-      await created.lock.release();
-      return 1;
-    } finally {
-      await created.lock.release().catch(() => { /* ignore */ });
-    }
-  } else {
-    output = await executeSpecPhase(specInput);
+    output = result.output;
+  } catch {
+    return 1;
   }
 
   return renderSpecOutput(output, specInput);

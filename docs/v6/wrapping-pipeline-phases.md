@@ -2,7 +2,7 @@
 
 **Audience:** maintainers wiring v5.x pipeline phases through `runPhase` one PR at a time.
 
-**Status as of v6.0.5:** EIGHT phases wrapped — `scan` (v6.0.1), `costs` and `fix` (v6.0.2), `brainstorm` and `spec` (v6.0.3), `plan` and `review` (v6.0.4), plus `validate` (v6.0.5). Subsequent v6.0.x point releases wrap the rest using this recipe; aim for one or two phases per PR so blast radius stays small and bugbot can catch regressions phase-by-phase.
+**Status as of v6.0.6:** EIGHT phases wrapped — `scan` (v6.0.1), `costs` and `fix` (v6.0.2), `brainstorm` and `spec` (v6.0.3), `plan` and `review` (v6.0.4), plus `validate` (v6.0.5). v6.0.6 extracted the lifecycle boilerplate into `runPhaseWithLifecycle` — the recipe below now points at the helper instead of the raw `createRun` / `runPhase` / `appendEvent` / `writeStateSnapshot` calls each verb used to wire by hand. Subsequent v6.0.x point releases wrap the rest using this recipe; aim for one or two phases per PR so blast radius stays small and bugbot can catch regressions phase-by-phase.
 
 ---
 
@@ -96,15 +96,13 @@ Use the table above. When in doubt:
 
 If a phase is "partial" (`implement`, `fix`, `bugbot`), set `idempotent: false, hasSideEffects: true` and add an `onResume` handler that consults the persisted `externalRefs`.
 
-### 3. Conditional `runPhase` route
+### 3. Wire the lifecycle via `runPhaseWithLifecycle`
 
-Wrap the existing entry point so the engine-off path is byte-for-byte unchanged:
+**v6.0.6+:** the lifecycle scaffolding (`createRun → runPhase → run.complete + state.json refresh + lock release`) lives in a single helper. Callers no longer hand-roll the engine-on/off branch:
 
 ```ts
-import { resolveEngineEnabled } from '../core/run-state/resolve-engine.ts';
-import { createRun } from '../core/run-state/runs.ts';
-import { appendEvent, replayState } from '../core/run-state/events.ts';
-import { writeStateSnapshot } from '../core/run-state/state.ts';
+import { type RunPhase } from '../core/run-state/phase-runner.ts';
+import { runPhaseWithLifecycle } from '../core/run-state/run-phase-with-lifecycle.ts';
 
 export async function run<Verb>(opts: {
   // ... existing options ...
@@ -112,64 +110,62 @@ export async function run<Verb>(opts: {
   envEngine?: string;
 }) {
   const config = await loadConfig(...);
-  const engineResolved = resolveEngineEnabled({
-    ...(opts.cliEngine !== undefined ? { cliEngine: opts.cliEngine } : {}),
-    ...(opts.envEngine !== undefined ? { envValue: opts.envEngine } : {}),
-    ...(typeof config.engine?.enabled === 'boolean'
-      ? { configEnabled: config.engine.enabled } : {}),
-  });
 
   // ... preflight (file collection, key checks, adapter loading) ...
 
   const phase: RunPhase<MyPhaseInput, MyPhaseOutput> = { /* step 1 */ };
+
   let output: MyPhaseOutput;
-  if (engineResolved.enabled) {
-    const created = await createRun({
-      cwd, phases: ['<verb>'],
-      config: { engine: { enabled: true, source: engineResolved.source } },
+  try {
+    const result = await runPhaseWithLifecycle<MyPhaseInput, MyPhaseOutput>({
+      cwd,
+      phase,
+      input,
+      config,
+      cliEngine: opts.cliEngine,
+      envEngine: opts.envEngine,
+      // Engine-off escape hatch — the helper does NOT call phase.run for
+      // you on engine-off, so callers have full control over the legacy
+      // path. Most verbs just delegate to the same async function the
+      // phase body wraps:
+      runEngineOff: () => executeMyPhase(input),
     });
-    if (engineResolved.invalidEnvValue !== undefined) {
-      appendEvent(created.runDir, {
-        event: 'run.warning',
-        message: `invalid CLAUDE_AUTOPILOT_ENGINE=${JSON.stringify(engineResolved.invalidEnvValue)} ignored`,
-        details: { resolution: engineResolved },
-      }, { writerId: created.lock.writerId, runId: created.runId });
-    }
-    const startedAt = Date.now();
-    try {
-      output = await runPhase(phase, input, {
-        runDir: created.runDir,
-        runId: created.runId,
-        writerId: created.lock.writerId,
-        phaseIdx: 0,
-      });
-      appendEvent(created.runDir, {
-        event: 'run.complete',
-        status: 'success',
-        totalCostUSD: output.costUSD ?? 0,
-        durationMs: Date.now() - startedAt,
-      }, { writerId: created.lock.writerId, runId: created.runId });
-      writeStateSnapshot(created.runDir, replayState(created.runDir));
-    } catch (err) {
-      appendEvent(created.runDir, {
-        event: 'run.complete',
-        status: 'failed',
-        totalCostUSD: 0,
-        durationMs: Date.now() - startedAt,
-      }, { writerId: created.lock.writerId, runId: created.runId });
-      writeStateSnapshot(created.runDir, replayState(created.runDir));
-      await created.lock.release();
-      throw err;
-    } finally {
-      await created.lock.release().catch(() => { /* ignore */ });
-    }
-  } else {
-    output = await phase.run(input, /* synthetic ctx — see below */);
+    output = result.output;
+  } catch {
+    // Helper already printed the legacy [<phase>] engine: phase failed
+    // banner + emitted run.complete failed + refreshed state.json +
+    // released the lock. Surface the legacy non-zero exit.
+    return 1;
   }
 
   // Existing rendering / exit-code logic against `output`.
 }
 ```
+
+What the helper handles for you:
+
+- Engine resolution (CLI > env > config > default), including the
+  `run.warning` for invalid env values
+- `createRun` for engine-on; calls `runEngineOff()` for engine-off
+- `runPhase` invocation
+- `run.complete` event (`status: 'success'` with `totalCostUSD` extracted
+  from `output.costUSD` when the phase exposes one, else 0; or
+  `status: 'failed'` on throw)
+- `state.json` refresh from replayed events
+- Best-effort lock release in `finally`
+- The legacy `[<phase>] engine: phase failed — <msg>` + `inspect:` hint
+  to stderr on failure, then re-throws so the caller can `return 1`
+
+What the helper does NOT do:
+
+- Print success banners — rendering stays in the caller
+- Loaded-config plumbing — caller passes the config in
+- ExternalRefs — those happen via `ctx.emitExternalRef()` from inside
+  `phase.run`, which the underlying `runPhase()` handles unchanged
+
+**Pre-v6.0.6 inline pattern** (still works — `runPhase` is unchanged):
+
+If you have a reason to bypass the helper (sub-phase orchestration, custom run.complete totalCostUSD computation, etc.), the raw API is available — see `src/core/run-state/phase-runner.ts` for `runPhase` and `src/core/run-state/runs.ts` for `createRun`. The helper just bundles the common shape.
 
 ### 4. Add `--engine` / `--no-engine` plumbing in `src/cli/index.ts`
 
@@ -216,7 +212,7 @@ The smoke test in `tests/cli/scan-engine-smoke.test.ts` is the canonical templat
 
 ---
 
-## Worked example: `scan` (v6.0.1)
+## Worked example: `scan` (v6.0.1, helper-migrated v6.0.6)
 
 **Why scan first:**
 - Single-shot verb (no sub-phases)
@@ -224,15 +220,16 @@ The smoke test in `tests/cli/scan-engine-smoke.test.ts` is the canonical templat
 - Cleanly separable preflight (file collection) vs phase body (LLM call + finding processing)
 - Already had a JSON-serializable result shape
 
-**What changed in `src/cli/scan.ts`:**
+**What `src/cli/scan.ts` looks like today (v6.0.6):**
 
-1. Added `cliEngine` + `envEngine` + `__testReviewEngine` to `ScanCommandOptions`
-2. Resolved engine via `resolveEngineEnabled` after config load
-3. Defined `ScanInput` + `ScanOutput` (JSON-serializable shape of the phase boundary)
-4. Extracted the LLM-call-and-processing portion into `executeScanPhase(input)` — pure function, no console output, no exit-code logic
-5. Defined `RunPhase<ScanInput, ScanOutput>` with `name: 'scan'`, `idempotent: true`, `hasSideEffects: false`, `run: executeScanPhase`
-6. Added a `if (engineResolved.enabled)` branch that does `createRun → runPhase → run.complete` plus the state.json refresh; the else branch calls `executeScanPhase` directly
-7. Extracted the rendering (banner + finding tables + cost line) into `renderScanOutput(output, input)` so the engine path's idempotency isn't coupled to console output
+1. `cliEngine` + `envEngine` + `__testReviewEngine` on `ScanCommandOptions`
+2. `ScanInput` + `ScanOutput` (JSON-serializable shape of the phase boundary)
+3. Phase body extracted into `executeScanPhase(input)` — pure function, no console output, no exit-code logic
+4. `RunPhase<ScanInput, ScanOutput>` with `name: 'scan'`, `idempotent: true`, `hasSideEffects: false`, `run: executeScanPhase`
+5. Single call to `runPhaseWithLifecycle({ cwd, phase, input, config, cliEngine, envEngine, runEngineOff: () => executeScanPhase(scanInput) })` wrapped in a try/catch that returns 1 on failure
+6. Rendering (banner + finding tables + cost line) lives in `renderScanOutput(output, input)` so the engine path's idempotency isn't coupled to console output
+
+**Banner deviation.** Scan prints a `engine: on (<source>)` line in its preflight banner (the only verb that does). The helper re-resolves engine state internally with identical precedence, so scan keeps a small inline `resolveEngineEnabled` call JUST for the banner — see the `engineBanner` block in `src/cli/scan.ts`. Other verbs don't print the source so they don't need this.
 
 **What did NOT change:**
 - The engine-off code path is byte-for-byte unchanged. No run dir, no events, no lifecycle work, identical stdout / stderr / exit code from v5.x.

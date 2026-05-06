@@ -9,11 +9,8 @@ import type { ReviewEngine } from '../adapters/review-engine/types.ts';
 import type { Finding } from '../core/findings/types.ts';
 import type { GuardrailConfig } from '../core/config/types.ts';
 import { generateFix, buildUnifiedDiff } from '../core/fix/generator.ts';
-import { resolveEngineEnabled, type ResolveEngineResult } from '../core/run-state/resolve-engine.ts';
-import { createRun } from '../core/run-state/runs.ts';
-import { runPhase, type RunPhase } from '../core/run-state/phase-runner.ts';
-import { appendEvent, replayState } from '../core/run-state/events.ts';
-import { writeStateSnapshot } from '../core/run-state/state.ts';
+import { type RunPhase } from '../core/run-state/phase-runner.ts';
+import { runPhaseWithLifecycle } from '../core/run-state/run-phase-with-lifecycle.ts';
 
 const C = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
@@ -185,17 +182,6 @@ export async function runFix(options: FixCommandOptions = {}): Promise<number> {
     return 1;
   }
 
-  // v6.0.2 — engine resolution. CLI > env > config > default. Resolved
-  // here (after config load + engine adapter load) so engine-on still
-  // creates a run dir + emits lifecycle events even when the apply loop
-  // produces zero diffs. Matches scan/costs's behavior of always producing a
-  // run dir when `--engine` is requested.
-  const engineResolved: ResolveEngineResult = resolveEngineEnabled({
-    ...(options.cliEngine !== undefined ? { cliEngine: options.cliEngine } : {}),
-    ...(options.envEngine !== undefined ? { envValue: options.envEngine } : {}),
-    ...(typeof loadedConfig?.engine?.enabled === 'boolean' ? { configEnabled: loadedConfig.engine.enabled } : {}),
-  });
-
   const testCommand = loadedConfig?.testCommand ?? null;
   const shouldVerify = !options.noVerify && !!testCommand;
   if (shouldVerify) {
@@ -238,76 +224,32 @@ export async function runFix(options: FixCommandOptions = {}): Promise<number> {
     run: async input => executeFixPhase(input),
   };
 
+  // v6.0.6 — lifecycle wiring lives in `runPhaseWithLifecycle`. The helper
+  // owns the engine-on/engine-off branch and the failure banner; the caller
+  // just supplies the phase, the input, and the engine-off escape hatch.
+  // The fix phase body is interactive (readline + per-finding diff prints
+  // INSIDE executeFixPhase) — that deviation from "pure phase body" is
+  // documented in fix's executeFixPhase header comment and unaffected by
+  // the helper extract: the helper still calls phase.run, which IS
+  // executeFixPhase, exactly as before.
   let output: FixOutput;
-  if (engineResolved.enabled) {
-    // v6.0.2 — wire fix through the Run State Engine. Same shape as
-    // scan / costs: createRun → runPhase → run.complete + state.json
-    // refresh + best-effort lock release in finally.
-    const created = await createRun({
+  try {
+    const result = await runPhaseWithLifecycle<FixInput, FixOutput>({
       cwd,
-      phases: ['fix'],
-      config: {
-        engine: { enabled: true, source: engineResolved.source },
-        ...(engineResolved.invalidEnvValue !== undefined
-          ? { invalidEnvValue: engineResolved.invalidEnvValue }
-          : {}),
-      },
+      phase,
+      input: fixInput,
+      // The helper only consults `config.engine.enabled` — pass through
+      // `loadedConfig` if we have one, otherwise an empty default.
+      config: loadedConfig ?? { configVersion: 1 },
+      cliEngine: options.cliEngine,
+      envEngine: options.envEngine,
+      runEngineOff: () => executeFixPhase(fixInput),
     });
-    if (engineResolved.invalidEnvValue !== undefined) {
-      // Surface the invalid env value as a typed warning so observers
-      // (`runs show <id> --events`) can attribute the fallthrough.
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.warning',
-          message: `invalid CLAUDE_AUTOPILOT_ENGINE=${JSON.stringify(engineResolved.invalidEnvValue)} ignored`,
-          details: { resolution: engineResolved },
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-    }
-    const runStartedAt = Date.now();
-    try {
-      output = await runPhase<FixInput, FixOutput>(phase, fixInput, {
-        runDir: created.runDir,
-        runId: created.runId,
-        writerId: created.lock.writerId,
-        phaseIdx: 0,
-      });
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.complete',
-          status: 'success',
-          totalCostUSD: 0,
-          durationMs: Date.now() - runStartedAt,
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-      writeStateSnapshot(created.runDir, replayState(created.runDir));
-    } catch (err) {
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.complete',
-          status: 'failed',
-          totalCostUSD: 0,
-          durationMs: Date.now() - runStartedAt,
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-      writeStateSnapshot(created.runDir, replayState(created.runDir));
-      console.error(fmt('red', `[fix] engine: phase failed — ${err instanceof Error ? err.message : String(err)}`));
-      console.error(fmt('dim', `  inspect: claude-autopilot runs show ${created.runId} --events`));
-      await created.lock.release();
-      return 1;
-    } finally {
-      await created.lock.release().catch(() => { /* ignore */ });
-    }
-  } else {
-    // Engine off — legacy stateless path. Behavior is byte-for-byte
-    // identical to v6.0.1 so existing CI / scripts are unaffected.
-    output = await executeFixPhase(fixInput);
+    output = result.output;
+  } catch {
+    // Helper already printed the failure banner + emitted run.complete
+    // failed + refreshed state.json + released the lock.
+    return 1;
   }
 
   return renderFixOutput(output, fixInput);

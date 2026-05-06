@@ -10,6 +10,85 @@
   (`src/core/ui/design-context-loader.ts`) — both gate on the same
   `hasFrontendFiles()` predicate so they only fire when frontend files change.
 
+## v6.0.6 — `runPhaseWithLifecycle` helper (2026-05-06)
+
+**Tech-debt refactor, no behavior change.** v6.0.1 → v6.0.5 wrapped eight
+CLI verbs (`scan`, `costs`, `fix`, `brainstorm`, `spec`, `plan`, `review`,
+`validate`) by hand-rolling the same ~100-line lifecycle pattern in each
+file: `createRun → optional run.warning → runPhase → run.complete →
+state.json refresh → best-effort lock release in finally`. Bugbot caught
+the duplication on PR #97 (LOW severity, deferred) with the explicit
+note: "extracting from 5 of 10 examples risks getting the abstraction
+wrong; from 10 of 10 the pattern is fully evidenced." At 8 of 10, the
+pattern is sufficiently evidenced that the remaining three side-effecting
+phases (`implement`, `migrate`, `pr`) can use the same helper plus
+`ctx.emitExternalRef()` from inside their phase body — no helper-shape
+changes needed.
+
+**The helper.** New `src/core/run-state/run-phase-with-lifecycle.ts` sits
+on top of the existing `runPhase()` API (which is unchanged). Callers
+continue to define their own `RunPhase<I, O>` with per-phase
+`idempotent` / `hasSideEffects` / `run`, and pass it in alongside the
+input, the loaded config, the engine knobs, and an `runEngineOff`
+escape-hatch callback. The helper:
+
+- Resolves engine on/off via the canonical CLI > env > config > default
+  precedence
+- On engine-off: invokes `runEngineOff()` and returns its result with
+  `runId/runDir: null`
+- On engine-on: creates a run dir, optionally emits `run.warning` for
+  invalid env, runs the phase, emits `run.complete` (success or failed),
+  refreshes `state.json` from replayed events, releases the lock in
+  `finally` (idempotent), and returns `{ output, runId, runDir }`
+- On phase failure: emits `run.complete` with `status: 'failed'`, prints
+  the legacy `[<phase>] engine: phase failed — <msg>` banner to stderr
+  byte-for-byte, releases the lock, and re-throws
+
+**Migrated phases.** All eight wrapped verbs reduced. Each `runX(opts)`
+function shrinks: keep the per-phase `RunPhase<I, O>` definition + the
+engine-off path body; delete the lifecycle boilerplate; call
+`runPhaseWithLifecycle` once. Total reduction across `src/cli/`:
+
+- `scan.ts` 498 → 429 lines (-69)
+- `costs.ts` 297 → 231 lines (-66)
+- `fix.ts` 473 → 415 lines (-58)
+- `brainstorm.ts` 251 → 189 lines (-62)
+- `spec.ts` 216 → 159 lines (-57)
+- `plan.ts` 269 → 199 lines (-70)
+- `review.ts` 256 → 189 lines (-67)
+- `validate.ts` 262 → 196 lines (-66)
+- **Total: 2522 → 2007 lines (~515 lines saved)**
+
+**Engine-off path is byte-for-byte unchanged.** All eight existing
+`tests/cli/<verb>-engine-smoke.test.ts` smokes pass without modification
+(44 cases). The helper supplies an `runEngineOff` callback so the legacy
+code path stays intact even when the phase body's call shape would
+otherwise pin it.
+
+### Test count
+
+After v6.0.5 baseline: 1396 → 1408 (+12). +12 cases for the new
+`tests/run-state/run-phase-with-lifecycle.test.ts` covering: engine-off
+(default + CLI > env > config precedence); engine-on success (lifecycle
+events, state.json shape, env / config resolution, costUSD pass-through,
+costUSD-absent fallback to 0); engine-on failure (run.complete failed,
+state.json refresh, error re-thrown with original message preserved,
+lock released through finally); invalid env value falling through to
+config-resolved engine-on with `run.warning`. Existing 44 phase smokes
+unchanged. Typecheck clean. Bugbot LOW from PR #97 addressed.
+
+### Deliberately deferred
+
+- Wrapping the remaining pipeline phases (`implement`, `migrate`, `pr`).
+  Side-effecting phases need careful externalRef plumbing — they will
+  build against `runPhaseWithLifecycle` plus `ctx.emitExternalRef()`
+  from inside their phase body. Helper signature does not need to grow
+  for them; documented in the helper's header comment.
+- Multi-phase pipeline orchestrator (autopilot's full
+  `brainstorm → spec → plan → ...` flow under one runId). The single-
+  phase shape stays — multi-phase wrapping is a separate v6.x lift.
+- Flipping the v6.0 built-in default to ON. v6.1 territory.
+
 ## v6.0.5 — Engine wire-up Part E (2026-05-06)
 
 **The headline.** v6.0.4 wrapped `plan` and `review`. v6.0.5 continues the

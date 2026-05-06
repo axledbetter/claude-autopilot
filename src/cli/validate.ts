@@ -2,11 +2,8 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { loadConfig } from '../core/config/loader.ts';
 import type { GuardrailConfig } from '../core/config/types.ts';
-import { resolveEngineEnabled, type ResolveEngineResult } from '../core/run-state/resolve-engine.ts';
-import { createRun } from '../core/run-state/runs.ts';
-import { runPhase, type RunPhase } from '../core/run-state/phase-runner.ts';
-import { appendEvent, replayState } from '../core/run-state/events.ts';
-import { writeStateSnapshot } from '../core/run-state/state.ts';
+import { type RunPhase } from '../core/run-state/phase-runner.ts';
+import { runPhaseWithLifecycle } from '../core/run-state/run-phase-with-lifecycle.ts';
 
 const C = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
@@ -75,31 +72,24 @@ export async function runValidate(options: ValidateCommandOptions = {}): Promise
     if (loaded) config = loaded;
   }
 
-  // v6.0.5 — engine resolution. CLI > env > config > default.
-  //
-  // INTENTIONAL DEVIATION FROM THE SPEC TABLE: the v6 spec
-  // (docs/specs/v6-run-state-engine.md, line 161) lists `validate` with
-  // `idempotent: yes, hasSideEffects: no, externalRefs: sarif-artifact`.
-  // The wrap in v6.0.5 declares `idempotent: true, hasSideEffects: false`
-  // (matches the spec) but does **not** plumb a `sarif-artifact` externalRef.
-  // The reasoning: the v6.0.5 `validate` CLI verb is an engine-wrap shell
-  // pointing at the Claude Code `/validate` skill — it does not itself emit
-  // a SARIF artifact. SARIF emission lives in `claude-autopilot run
-  // --format sarif --output <path>` (a separate verb, see
-  // help-text.ts → `run` Options block). The `sarif-artifact` externalRef
-  // is local-only file output (no remote upload), so the engine doesn't need
-  // a readback rule for it on resume — `idempotent: true` covers replay
-  // safety. If a future PR adds SARIF emission directly to this verb (or
-  // moves the `--format sarif` flag here), the wrap can add an
+  // INTENTIONAL DEVIATION FROM THE SPEC TABLE (preserved in v6.0.6):
+  // the v6 spec (docs/specs/v6-run-state-engine.md, line 161) lists
+  // `validate` with `idempotent: yes, hasSideEffects: no,
+  // externalRefs: sarif-artifact`. This wrap declares
+  // `idempotent: true, hasSideEffects: false` (matches the spec) but
+  // does **not** plumb a `sarif-artifact` externalRef. The reasoning:
+  // the `validate` CLI verb is an engine-wrap shell pointing at the
+  // Claude Code `/validate` skill — it does not itself emit a SARIF
+  // artifact. SARIF emission lives in `claude-autopilot run --format
+  // sarif --output <path>` (a separate verb, see help-text.ts → `run`
+  // Options block). The `sarif-artifact` externalRef is local-only file
+  // output (no remote upload), so the engine doesn't need a readback
+  // rule for it on resume — `idempotent: true` covers replay safety. If
+  // a future PR adds SARIF emission directly to this verb (or moves the
+  // `--format sarif` flag here), the wrap can add an
   // `ctx.emitExternalRef({ kind: 'sarif-artifact', id: '<path>',
   // observedAt: ... })` call after the file write lands. Until then, no
   // ledger entry is needed because there's nothing to read back from.
-  const engineResolved: ResolveEngineResult = resolveEngineEnabled({
-    ...(options.cliEngine !== undefined ? { cliEngine: options.cliEngine } : {}),
-    ...(options.envEngine !== undefined ? { envValue: options.envEngine } : {}),
-    ...(typeof config.engine?.enabled === 'boolean' ? { configEnabled: config.engine.enabled } : {}),
-  });
-
   const context = options.context ?? null;
   const outputPath = options.outputPath
     ? path.resolve(cwd, options.outputPath)
@@ -126,77 +116,21 @@ export async function runValidate(options: ValidateCommandOptions = {}): Promise
     run: async input => executeValidatePhase(input),
   };
 
+  // v6.0.6 — lifecycle wiring lives in `runPhaseWithLifecycle`.
   let output: ValidateOutput;
-  if (engineResolved.enabled) {
-    // v6.0.5 — wire validate through the Run State Engine. Same shape as
-    // scan / costs / fix / plan / review: createRun → runPhase →
-    // run.complete + state.json refresh + best-effort lock release in
-    // finally.
-    const created = await createRun({
+  try {
+    const result = await runPhaseWithLifecycle<ValidateInput, ValidateOutput>({
       cwd,
-      phases: ['validate'],
-      config: {
-        engine: { enabled: true, source: engineResolved.source },
-        ...(engineResolved.invalidEnvValue !== undefined
-          ? { invalidEnvValue: engineResolved.invalidEnvValue }
-          : {}),
-      },
+      phase,
+      input: validateInput,
+      config,
+      cliEngine: options.cliEngine,
+      envEngine: options.envEngine,
+      runEngineOff: () => executeValidatePhase(validateInput),
     });
-    if (engineResolved.invalidEnvValue !== undefined) {
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.warning',
-          message: `invalid CLAUDE_AUTOPILOT_ENGINE=${JSON.stringify(engineResolved.invalidEnvValue)} ignored`,
-          details: { resolution: engineResolved },
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-    }
-    const runStartedAt = Date.now();
-    try {
-      output = await runPhase<ValidateInput, ValidateOutput>(phase, validateInput, {
-        runDir: created.runDir,
-        runId: created.runId,
-        writerId: created.lock.writerId,
-        phaseIdx: 0,
-      });
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.complete',
-          status: 'success',
-          totalCostUSD: 0,
-          durationMs: Date.now() - runStartedAt,
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-      writeStateSnapshot(created.runDir, replayState(created.runDir));
-    } catch (err) {
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.complete',
-          status: 'failed',
-          totalCostUSD: 0,
-          durationMs: Date.now() - runStartedAt,
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-      writeStateSnapshot(created.runDir, replayState(created.runDir));
-      console.error(fmt('red', `[validate] engine: phase failed — ${err instanceof Error ? err.message : String(err)}`));
-      console.error(fmt('dim', `  inspect: claude-autopilot runs show ${created.runId} --events`));
-      await created.lock.release();
-      return 1;
-    } finally {
-      await created.lock.release().catch(() => { /* ignore */ });
-    }
-  } else {
-    // Engine off — legacy stateless path. This is the v6.0.5 baseline; the
-    // `validate` CLI verb is new in v6.0.5 (validation previously lived only
-    // as a Claude Code skill). Calling without --engine still writes the log
-    // stub so the same-input → same-output guarantee holds.
-    output = await executeValidatePhase(validateInput);
+    output = result.output;
+  } catch {
+    return 1;
   }
 
   return renderValidateOutput(output, validateInput);
