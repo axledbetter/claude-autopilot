@@ -2,11 +2,8 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { loadConfig } from '../core/config/loader.ts';
 import type { GuardrailConfig } from '../core/config/types.ts';
-import { resolveEngineEnabled, type ResolveEngineResult } from '../core/run-state/resolve-engine.ts';
-import { createRun } from '../core/run-state/runs.ts';
-import { runPhase, type RunPhase } from '../core/run-state/phase-runner.ts';
-import { appendEvent, replayState } from '../core/run-state/events.ts';
-import { writeStateSnapshot } from '../core/run-state/state.ts';
+import { type RunPhase } from '../core/run-state/phase-runner.ts';
+import { runPhaseWithLifecycle } from '../core/run-state/run-phase-with-lifecycle.ts';
 
 const C = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
@@ -79,16 +76,6 @@ export async function runPlan(options: PlanCommandOptions = {}): Promise<number>
     if (loaded) config = loaded;
   }
 
-  // v6.0.4 — engine resolution. CLI > env > config > default. Resolved
-  // BEFORE the planner runs so engine-on still creates a run dir + emits
-  // lifecycle events even when no spec is provided. Matches scan / costs /
-  // fix behavior of always producing a run dir when `--engine` is requested.
-  const engineResolved: ResolveEngineResult = resolveEngineEnabled({
-    ...(options.cliEngine !== undefined ? { cliEngine: options.cliEngine } : {}),
-    ...(options.envEngine !== undefined ? { envValue: options.envEngine } : {}),
-    ...(typeof config.engine?.enabled === 'boolean' ? { configEnabled: config.engine.enabled } : {}),
-  });
-
   // Resolve spec path (optional) and output path. Default output lives under
   // .guardrail-cache/plans/ so it's gitignored alongside other cache state.
   const specPath = options.specPath ? path.resolve(cwd, options.specPath) : null;
@@ -122,78 +109,21 @@ export async function runPlan(options: PlanCommandOptions = {}): Promise<number>
     run: async input => executePlanPhase(input),
   };
 
+  // v6.0.6 — lifecycle wiring lives in `runPhaseWithLifecycle`.
   let output: PlanOutput;
-  if (engineResolved.enabled) {
-    // v6.0.4 — wire plan through the Run State Engine. Same shape as
-    // scan / costs / fix: createRun → runPhase → run.complete + state.json
-    // refresh + best-effort lock release in finally.
-    const created = await createRun({
+  try {
+    const result = await runPhaseWithLifecycle<PlanInput, PlanOutput>({
       cwd,
-      phases: ['plan'],
-      config: {
-        engine: { enabled: true, source: engineResolved.source },
-        ...(engineResolved.invalidEnvValue !== undefined
-          ? { invalidEnvValue: engineResolved.invalidEnvValue }
-          : {}),
-      },
+      phase,
+      input: planInput,
+      config,
+      cliEngine: options.cliEngine,
+      envEngine: options.envEngine,
+      runEngineOff: () => executePlanPhase(planInput),
     });
-    if (engineResolved.invalidEnvValue !== undefined) {
-      // Surface the invalid env value as a typed warning so observers
-      // (`runs show <id> --events`) can attribute the fallthrough.
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.warning',
-          message: `invalid CLAUDE_AUTOPILOT_ENGINE=${JSON.stringify(engineResolved.invalidEnvValue)} ignored`,
-          details: { resolution: engineResolved },
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-    }
-    const runStartedAt = Date.now();
-    try {
-      output = await runPhase<PlanInput, PlanOutput>(phase, planInput, {
-        runDir: created.runDir,
-        runId: created.runId,
-        writerId: created.lock.writerId,
-        phaseIdx: 0,
-      });
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.complete',
-          status: 'success',
-          totalCostUSD: 0,
-          durationMs: Date.now() - runStartedAt,
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-      writeStateSnapshot(created.runDir, replayState(created.runDir));
-    } catch (err) {
-      appendEvent(
-        created.runDir,
-        {
-          event: 'run.complete',
-          status: 'failed',
-          totalCostUSD: 0,
-          durationMs: Date.now() - runStartedAt,
-        },
-        { writerId: created.lock.writerId, runId: created.runId },
-      );
-      writeStateSnapshot(created.runDir, replayState(created.runDir));
-      console.error(fmt('red', `[plan] engine: phase failed — ${err instanceof Error ? err.message : String(err)}`));
-      console.error(fmt('dim', `  inspect: claude-autopilot runs show ${created.runId} --events`));
-      await created.lock.release();
-      return 1;
-    } finally {
-      await created.lock.release().catch(() => { /* ignore */ });
-    }
-  } else {
-    // Engine off — legacy stateless path. This is the v6.0.4 baseline; there
-    // was no prior `plan` CLI verb in v6.0.3 (planning lived only as a
-    // Claude Code skill). Calling this verb without --engine still writes
-    // the plan-file stub so the same-input → same-output guarantee holds.
-    output = await executePlanPhase(planInput);
+    output = result.output;
+  } catch {
+    return 1;
   }
 
   return renderPlanOutput(output, planInput);
