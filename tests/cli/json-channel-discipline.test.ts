@@ -493,7 +493,7 @@ const MIGRATED_VERBS = [
   // Review
   'run', 'scan', 'ci', 'fix', 'baseline', 'triage', 'explain', 'report', 'costs',
   // Pipeline
-  'init', 'setup', 'brainstorm', 'pr', 'pr-desc',
+  'init', 'setup', 'brainstorm', 'spec', 'pr', 'pr-desc',
   // Deploy
   'deploy', 'deploy rollback', 'deploy status',
   // Migrate
