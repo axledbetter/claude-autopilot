@@ -63,8 +63,11 @@ interface PrMeta {
  * Phase input — captured as a struct so the engine path's phase body matches
  * the engine-off path call signature. Resolved by the outer scope (PR number
  * detection → metadata lookup → base ref fetch → post-comment knobs).
+ *
+ * Exported so the v6.2.1 orchestrator's phase registry can carry the typed
+ * I/O shape on its `PhaseRegistration<PrInput, PrOutput>` slot.
  */
-interface PrInput {
+export interface PrInput {
   cwd: string;
   configPath: string;
   pr: PrMeta;
@@ -84,14 +87,32 @@ interface PrInput {
  * `result` on phases/pr.json. The PR number is echoed so a future
  * skip-already-applied (Phase 6) can reconcile against the externalRef
  * ledger entry without re-running the review pipeline.
+ *
+ * Exported alongside `PrInput` for the registry's typed I/O slot.
  */
-interface PrOutput {
+export interface PrOutput {
   prNumber: number;
   baseRefName: string;
   headRefName: string;
   postedComments: boolean;
   postedInlineComments: boolean;
   exitCode: number;
+}
+
+/** v6.2.1 — builder discriminants (parity with scan / spec / plan / implement
+ *  / migrate). `pr` has multiple early-exit branches today (PR not found, gh
+ *  not authenticated) — the builder surfaces them as `kind: 'early-exit'`. */
+export interface BuildPrPhaseEarlyExit {
+  kind: 'early-exit';
+  exitCode: number;
+}
+
+export interface BuildPrPhaseResult {
+  kind: 'phase';
+  phase: RunPhase<PrInput, PrOutput>;
+  input: PrInput;
+  config: GuardrailConfig;
+  renderResult: (output: PrOutput) => number;
 }
 
 function ghJson<T>(args: string[], cwd: string): T | null {
@@ -105,7 +126,23 @@ function gitFetch(remote: string, ref: string, cwd: string): boolean {
   return r.status === 0;
 }
 
-export async function runPr(options: PrCommandOptions = {}): Promise<number> {
+/**
+ * v6.2.1 — extract the `RunPhase<PrInput, PrOutput>` construction out of
+ * `runPr(options)` so the new top-level `autopilot` orchestrator can drive
+ * `runPhase` itself with a shared `phaseIdx` against the same run dir.
+ * Mirrors the v6.2.0 builder pattern in scan / spec / plan / implement.
+ *
+ * The v6.2.1 idempotency contract for `pr` was already satisfied by the
+ * v6.0.9 wrap: `executePrPhase` emits the `github-pr` externalRef BEFORE
+ * `runCommand`. The contract registration in `phase-registry.ts` declares
+ * `preEffectRefKinds: ['github-pr'], postEffectRefKinds: []` — the same ref
+ * serves both purposes (its id is recorded pre-effect with the same value
+ * `gh` reports post-create), so no post-effect ref is needed for the
+ * orchestrator's resume preflight.
+ */
+export async function buildPrPhase(
+  options: PrCommandOptions,
+): Promise<BuildPrPhaseResult | BuildPrPhaseEarlyExit> {
   const cwd = options.cwd ?? process.cwd();
   const configPath = options.configPath ?? path.join(cwd, 'guardrail.config.yaml');
 
@@ -148,7 +185,7 @@ export async function runPr(options: PrCommandOptions = {}): Promise<number> {
       if (!detected) {
         console.error(fmt('red', '[pr] No PR number given and no open PR found for current branch.'));
         console.error(fmt('dim', '  Usage: guardrail pr <number>'));
-        return 1;
+        return { kind: 'early-exit', exitCode: 1 };
       }
       prNumber = String(detected.number);
     }
@@ -157,7 +194,7 @@ export async function runPr(options: PrCommandOptions = {}): Promise<number> {
     const meta = ghJson<PrMeta>(['pr', 'view', prNumber, '--json', 'number,baseRefName,headRefName,title'], cwd);
     if (!meta) {
       console.error(fmt('red', `[pr] Could not fetch PR #${prNumber} — is gh authenticated?`));
-      return 1;
+      return { kind: 'early-exit', exitCode: 1 };
     }
     pr = meta;
   }
@@ -235,13 +272,28 @@ export async function runPr(options: PrCommandOptions = {}): Promise<number> {
     runCommandImpl: options.__testRunCommand ?? (opts => runCommand(opts)),
   };
 
+  return {
+    kind: 'phase',
+    phase,
+    input: prInput,
+    config,
+    renderResult: (output: PrOutput) => output.exitCode,
+  };
+}
+
+export async function runPr(options: PrCommandOptions = {}): Promise<number> {
+  const built = await buildPrPhase(options);
+  if (built.kind === 'early-exit') return built.exitCode;
+
+  const { phase, input: prInput, config, renderResult } = built;
+
   // v6.0.9 — lifecycle wiring lives in `runPhaseWithLifecycle`. The helper
   // owns the engine-on/engine-off branch and the failure banner; the caller
   // just supplies the phase, the input, and the engine-off escape hatch.
   let output: PrOutput;
   try {
     const result = await runPhaseWithLifecycle<PrInput, PrOutput>({
-      cwd,
+      cwd: prInput.cwd,
       phase,
       input: prInput,
       config,
@@ -260,7 +312,7 @@ export async function runPr(options: PrCommandOptions = {}): Promise<number> {
     return 1;
   }
 
-  return output.exitCode;
+  return renderResult(output);
 }
 
 // ---------------------------------------------------------------------------
