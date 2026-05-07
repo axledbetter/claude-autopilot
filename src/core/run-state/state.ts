@@ -19,7 +19,26 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { GuardrailError } from '../errors.ts';
 import { appendEvent, replayState } from './events.ts';
-import { type RunState, type WriterId } from './types.ts';
+import { RUN_STATE_SCHEMA_VERSION, type RunState, type WriterId } from './types.ts';
+
+// ---------------------------------------------------------------------------
+// v6.2.2 — cache contract version policy (per spec / codex WARNING #1).
+//
+// `replayState()` uses these bounds to reject run dirs whose `schema_version`
+// is outside the supported window. Strict equality would block resume across
+// rolling deploys / mixed binary fleets — the window allows additive minor
+// schema bumps to ship without breaking forward-read on older readers, and a
+// future major (v7) resets `MIN_SUPPORTED` to break with the past explicitly.
+// ---------------------------------------------------------------------------
+
+/** Lowest `schema_version` value this binary can replay. Bump only on a
+ *  major release that drops support for a prior wire shape. */
+export const RUN_STATE_MIN_SUPPORTED_SCHEMA_VERSION = 1 as const;
+
+/** Highest `schema_version` value this binary can replay. Always equal to
+ *  the writer's `RUN_STATE_SCHEMA_VERSION` — the writer never produces a
+ *  newer shape than the reader on the same binary. */
+export const RUN_STATE_MAX_SUPPORTED_SCHEMA_VERSION = RUN_STATE_SCHEMA_VERSION;
 
 const STATE_FILE = 'state.json';
 const STATE_TMP = 'state.json.tmp';

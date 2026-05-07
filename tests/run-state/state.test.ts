@@ -6,10 +6,12 @@ import * as path from 'node:path';
 import {
   readStateSnapshot,
   recoverState,
+  RUN_STATE_MAX_SUPPORTED_SCHEMA_VERSION,
+  RUN_STATE_MIN_SUPPORTED_SCHEMA_VERSION,
   statePath,
   writeStateSnapshot,
 } from '../../src/core/run-state/state.ts';
-import { appendEvent, readEvents } from '../../src/core/run-state/events.ts';
+import { appendEvent, readEvents, replayState, eventsPath } from '../../src/core/run-state/events.ts';
 import { makeWriterId } from '../../src/core/run-state/lock.ts';
 import {
   RUN_STATE_SCHEMA_VERSION,
@@ -131,6 +133,91 @@ describe('recoverState', () => {
     const r = recoverState(dir, { writerId, runId: path.basename(dir) });
     assert.equal(r.recovered, true);
     assert.equal(r.cause, 'corrupt');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+// ----------------------------------------------------------------------------
+// v6.2.2 — schema_version range guard in replayState (per spec / codex
+// WARNING #1). Validates the MIN/MAX window: equal-to-current is accepted,
+// out-of-range throws corrupted_state with both bounds in the message.
+// ----------------------------------------------------------------------------
+
+describe('replayState — schema_version range guard (v6.2.2)', () => {
+  it('exports the policy bounds with sensible defaults', () => {
+    assert.equal(RUN_STATE_MIN_SUPPORTED_SCHEMA_VERSION, 1);
+    assert.equal(RUN_STATE_MAX_SUPPORTED_SCHEMA_VERSION, RUN_STATE_SCHEMA_VERSION);
+    assert.ok(
+      RUN_STATE_MIN_SUPPORTED_SCHEMA_VERSION <= RUN_STATE_MAX_SUPPORTED_SCHEMA_VERSION,
+      'min must be <= max',
+    );
+  });
+
+  /** Build an events.ndjson with a single run.start whose schema_version
+   *  is forced to `version`. Bypasses appendEvent so we can inject an
+   *  out-of-range value that the writer would never produce naturally. */
+  function writeForcedRunStart(runDir: string, version: number): void {
+    const event = {
+      schema_version: version,
+      ts: new Date().toISOString(),
+      runId: path.basename(runDir),
+      seq: 1,
+      writerId,
+      event: 'run.start',
+      phases: ['scan'],
+    };
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(eventsPath(runDir), JSON.stringify(event) + '\n', 'utf8');
+  }
+
+  it('accepts schema_version inside the supported range', () => {
+    const dir = tmp();
+    writeForcedRunStart(dir, RUN_STATE_SCHEMA_VERSION);
+    // Should not throw — the value is exactly at the upper bound.
+    const state = replayState(dir);
+    assert.equal(state.runId, path.basename(dir));
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('throws corrupted_state when schema_version is below MIN_SUPPORTED', () => {
+    const dir = tmp();
+    writeForcedRunStart(dir, RUN_STATE_MIN_SUPPORTED_SCHEMA_VERSION - 1);
+    assert.throws(
+      () => replayState(dir),
+      (err: unknown) =>
+        err instanceof GuardrailError && err.code === 'corrupted_state',
+    );
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('throws corrupted_state when schema_version is above MAX_SUPPORTED', () => {
+    const dir = tmp();
+    writeForcedRunStart(dir, RUN_STATE_MAX_SUPPORTED_SCHEMA_VERSION + 1);
+    assert.throws(
+      () => replayState(dir),
+      (err: unknown) =>
+        err instanceof GuardrailError && err.code === 'corrupted_state',
+    );
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('range error message names both bounds for operator triage', () => {
+    const dir = tmp();
+    writeForcedRunStart(dir, RUN_STATE_MAX_SUPPORTED_SCHEMA_VERSION + 1);
+    let caught: unknown;
+    try {
+      replayState(dir);
+    } catch (err) {
+      caught = err;
+    }
+    assert.ok(caught instanceof GuardrailError, 'expected GuardrailError');
+    const msg = (caught as GuardrailError).message;
+    // Names both bounds explicitly so an operator can read the binary's
+    // supported window straight from the error.
+    assert.ok(
+      msg.includes(`${RUN_STATE_MIN_SUPPORTED_SCHEMA_VERSION}..${RUN_STATE_MAX_SUPPORTED_SCHEMA_VERSION}`),
+      `expected message to include "${RUN_STATE_MIN_SUPPORTED_SCHEMA_VERSION}..${RUN_STATE_MAX_SUPPORTED_SCHEMA_VERSION}", got: ${msg}`,
+    );
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });
