@@ -30,7 +30,7 @@ import { runCouncilCmd } from './council.ts';
 import { runMigrateV4 } from './migrate-v4.ts';
 import { runMigrateDoctor } from './migrate-doctor.ts';
 import { initMigrate, NoMigrationToolDetectedError } from './init-migrate.ts';
-import { dispatch as runMigrateDispatch } from '../core/migrate/dispatcher.ts';
+import { runMigrate } from './migrate.ts';
 import { runDeploy, runDeployRollback, runDeployStatus } from './deploy.ts';
 import { findPackageRoot } from './_pkg-root.ts';
 import { GuardrailError } from '../core/errors.ts';
@@ -969,28 +969,19 @@ switch (subcommand) {
     }
 
     // Plain `migrate [--env <name>] [--dry-run] [--yes]` → dispatcher.
+    // v6.0.8: routed through `runMigrate` (src/cli/migrate.ts) which
+    // wraps the dispatcher in a `RunPhase<MigrateInput, MigrateOutput>`
+    // with `--engine` / `--no-engine` precedence. Engine-off is byte-for-
+    // byte identical to v6.0.7 — same dispatch shape, same render lines.
     const envName = flag('env') ?? 'dev';
     const dryRun = boolFlag('dry-run');
     const yesFlag = boolFlag('yes');
     const json = boolFlag('json');
-
-    // Read package version for the runtime handshake.
-    const root = findPackageRoot(import.meta.url);
-    let runtimeVersion = 'unknown';
-    if (root) {
-      try {
-        const nodeFs = await import('node:fs');
-        const nodePath = await import('node:path');
-        const pkg = JSON.parse(nodeFs.readFileSync(nodePath.join(root, 'package.json'), 'utf8')) as { version: string };
-        runtimeVersion = pkg.version;
-      } catch {
-        /* fall through with 'unknown' — handshake will fail closed */
-      }
-    }
+    const cliEngine = parseEngineCliFlag();
 
     // Capture migrate result in an outer ref so the wrapper's payload
     // callback can surface its structured fields in --json mode.
-    let migrateResult: Awaited<ReturnType<typeof runMigrateDispatch>> | null = null;
+    let migrateResult: Awaited<ReturnType<typeof runMigrate>>['result'] = null;
     const code = await runUnderJsonMode(
       {
         command: 'migrate',
@@ -1010,25 +1001,17 @@ switch (subcommand) {
         },
       },
       async () => {
-        migrateResult = await runMigrateDispatch({
-          repoRoot: process.cwd(),
+        const out = await runMigrate({
+          cwd: process.cwd(),
           env: envName,
+          dryRun,
           yesFlag,
           nonInteractive: json || !process.stdin.isTTY,
-          currentRuntimeVersion: runtimeVersion,
-          dryRun,
+          ...(cliEngine !== undefined ? { cliEngine } : {}),
+          envEngine: process.env.CLAUDE_AUTOPILOT_ENGINE,
         });
-
-        const ok = migrateResult.status === 'applied' || migrateResult.status === 'skipped';
-        const color = ok ? '\x1b[32m' : '\x1b[31m';
-        console.log(`${color}[migrate] status=${migrateResult.status} reason=${migrateResult.reasonCode}\x1b[0m`);
-        if (migrateResult.appliedMigrations.length > 0) {
-          console.log(`  applied: ${migrateResult.appliedMigrations.join(', ')}`);
-        }
-        if (migrateResult.nextActions.length > 0) {
-          console.log(`  next: ${migrateResult.nextActions.join('; ')}`);
-        }
-        return ok ? 0 : 1;
+        migrateResult = out.result;
+        return out.exitCode;
       },
     );
     process.exit(code);
