@@ -917,6 +917,7 @@ switch (subcommand) {
       budgetUSD = parsed;
     }
     const cliEngine = parseEngineCliFlag();
+    const noUpload = boolFlag('no-upload');
     if (json) {
       const exitCode = await runAutopilotWithJsonEnvelope({
         cwd: process.cwd(),
@@ -924,6 +925,7 @@ switch (subcommand) {
         ...(phases !== undefined ? { phases } : {}),
         ...(budgetUSD !== undefined ? { budgetUSD } : {}),
         ...(cliEngine !== undefined ? { cliEngine } : {}),
+        ...(noUpload ? { noUpload: true } : {}),
         envEngine: process.env.CLAUDE_AUTOPILOT_ENGINE,
       });
       process.exit(exitCode);
@@ -934,6 +936,7 @@ switch (subcommand) {
       ...(phases !== undefined ? { phases } : {}),
       ...(budgetUSD !== undefined ? { budgetUSD } : {}),
       ...(cliEngine !== undefined ? { cliEngine } : {}),
+      ...(noUpload ? { noUpload: true } : {}),
       envEngine: process.env.CLAUDE_AUTOPILOT_ENGINE,
     });
     process.exit(result.exitCode);

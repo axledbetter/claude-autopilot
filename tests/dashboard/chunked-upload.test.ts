@@ -7,6 +7,9 @@ import * as path from 'node:path';
 import { uploadRun } from '../../src/dashboard/upload/uploader.ts';
 import { makeMockServer } from './_helpers/mock-server.ts';
 
+// Test seam — keep retries snappy. The uploader honors this env override.
+process.env.CLAUDE_AUTOPILOT_UPLOAD_RETRY_MS = '5,5,5,5';
+
 const KEY = `clp_${'a'.repeat(64)}`;
 
 async function makeRun(opts: { eventsBytes: number; runId?: string }): Promise<{ runId: string; runDir: string }> {

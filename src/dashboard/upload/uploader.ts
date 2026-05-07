@@ -18,7 +18,18 @@ import { sha256OfCanonical } from './canonical.ts';
 import { snapshotRun, deleteSnapshot, SnapshotMismatchError } from './snapshot.ts';
 
 const CHUNK_BYTES = 1024 * 1024;     // 1 MiB matches server MAX_CHUNK_BYTES
-const RETRY_DELAYS_MS = [1000, 4000, 16000, 64000];
+const DEFAULT_RETRY_DELAYS_MS = [1000, 4000, 16000, 64000];
+
+function resolveRetryDelays(): number[] {
+  // Test seam — let CI/tests override the exponential backoff schedule
+  // so transient-failure assertions don't add minutes to the suite.
+  const override = process.env.CLAUDE_AUTOPILOT_UPLOAD_RETRY_MS;
+  if (!override) return DEFAULT_RETRY_DELAYS_MS;
+  return override
+    .split(',')
+    .map((s) => Number.parseInt(s.trim(), 10))
+    .filter((n) => Number.isFinite(n) && n >= 0);
+}
 
 export interface UploadOptions {
   signal?: AbortSignal;
@@ -125,12 +136,13 @@ async function fetchWithRetry(
   is5xxRetryable: boolean,
 ): Promise<Response> {
   let lastErr: unknown = null;
-  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+  const delays = resolveRetryDelays();
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
     checkAborted(signal);
     try {
       const res = await fetchImpl(url, init);
-      if (res.status >= 500 && res.status < 600 && is5xxRetryable && attempt < RETRY_DELAYS_MS.length) {
-        const wait = RETRY_DELAYS_MS[attempt]!;
+      if (res.status >= 500 && res.status < 600 && is5xxRetryable && attempt < delays.length) {
+        const wait = delays[attempt]!;
         await delay(wait, signal);
         continue;
       }
@@ -138,8 +150,8 @@ async function fetchWithRetry(
     } catch (err) {
       if (signal?.aborted) throw err;
       lastErr = err;
-      if (attempt < RETRY_DELAYS_MS.length) {
-        const wait = RETRY_DELAYS_MS[attempt]!;
+      if (attempt < delays.length) {
+        const wait = delays[attempt]!;
         await delay(wait, signal);
         continue;
       }

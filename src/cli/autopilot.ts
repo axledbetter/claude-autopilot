@@ -107,6 +107,10 @@ export interface AutopilotOptions {
   /** Test seam — keep stdout banners suppressed. Production callers MUST
    *  NOT pass this; the dispatcher does not surface a flag for it. */
   __silent?: boolean;
+  /** v7.0 Phase 2.3 — opt out of auto-upload at run.complete. Surfaced by
+   *  the CLI as `--no-upload`. Equivalent to `CLAUDE_AUTOPILOT_UPLOAD=off`
+   *  but scoped per-invocation. */
+  noUpload?: boolean;
 }
 
 export interface AutopilotPhaseSummary {
@@ -496,6 +500,21 @@ export async function runAutopilot(options: AutopilotOptions = {}): Promise<Auto
           fmt(ANSI_DIM, `  resume:  claude-autopilot run resume ${created.runId}\n`),
         );
       }
+    }
+
+    // --- v7.0 Phase 2.3 — auto-upload at run.complete ----------------
+    // Non-fatal: never overrides the run's exitCode. Failure prints a
+    // resume command via the helper itself. Skipped silently when the
+    // user isn't logged in or has opted out.
+    try {
+      const { autoUploadAtComplete } = await import('../dashboard/auto-upload.ts');
+      await autoUploadAtComplete(created.runId, created.runDir, {
+        ...(options.noUpload ? { disabled: true } : {}),
+        silent,
+      });
+    } catch {
+      // Hosted dashboard is optional. Any unhandled error here MUST NOT
+      // fail the run (spec: "Auto-upload NEVER fails the run").
     }
 
     return {
