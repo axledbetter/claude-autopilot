@@ -268,3 +268,109 @@ describe('checkPhaseBudget — edge cases', () => {
     assert.equal(result.reserveApplied, 0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// v6.2.0 — run-scope budget (per spec WARNING #2)
+// ---------------------------------------------------------------------------
+
+describe('checkPhaseBudget — scope: run (v6.2.0)', () => {
+  it('default scope is "phase" (back-compat — omitting the field)', () => {
+    const result = checkPhaseBudget({
+      budget: { perRunUSD: 100 },
+      phaseName: 'phase0',
+      phaseIdx: 0,
+      estimatedCost: null,
+      actualSoFarUSD: 0,
+      nonInteractive: false,
+    });
+    assert.equal(result.scope, 'phase');
+  });
+
+  it('scope: "run" passes through to the BudgetCheck payload', () => {
+    const result = checkPhaseBudget({
+      budget: { perRunUSD: 100, scope: 'run' },
+      phaseName: 'phase0',
+      phaseIdx: 0,
+      estimatedCost: null,
+      actualSoFarUSD: 0,
+      nonInteractive: false,
+    });
+    assert.equal(result.scope, 'run');
+    assert.equal(result.decision, 'proceed');
+  });
+
+  it('scope: "run" — accumulated spend across phases trips the cap on a later phase', () => {
+    // Simulate the orchestrator running 3 phases. The 3rd phase sees an
+    // actualSoFarUSD that aggregates phases 0 + 1 + sub-phases. With a
+    // $10 cap and $9 already burned + the $5 floor, Layer 2 trips.
+    const result = checkPhaseBudget({
+      budget: { perRunUSD: 10, scope: 'run' },
+      phaseName: 'phase2',
+      phaseIdx: 2,
+      estimatedCost: null,
+      actualSoFarUSD: 9, // sum of every prior phase.cost across the run
+      nonInteractive: true,
+    });
+    assert.equal(result.decision, 'hard-fail');
+    assert.equal(result.scope, 'run');
+    assert.match(result.reason, /run cap exceeded/);
+  });
+
+  it('scope: "run" — Layer 1 advisory still fires when the estimate alone exceeds the cap', () => {
+    const result = checkPhaseBudget({
+      budget: { perRunUSD: 10, scope: 'run' },
+      phaseName: 'pricey',
+      phaseIdx: 1,
+      estimatedCost: { lowUSD: 1, highUSD: 12 },
+      actualSoFarUSD: 0,
+      nonInteractive: true,
+    });
+    assert.equal(result.decision, 'hard-fail');
+    assert.equal(result.scope, 'run');
+    assert.match(result.reason, /advisory estimate/);
+  });
+
+  it('scope: "run" — proceeds when accumulated spend + reserve fits', () => {
+    const result = checkPhaseBudget({
+      budget: { perRunUSD: 25, scope: 'run' },
+      phaseName: 'phase3',
+      phaseIdx: 3,
+      estimatedCost: { lowUSD: 0.5, highUSD: 2 },
+      actualSoFarUSD: 10, // 3 phases @ ~$3.33 already
+      nonInteractive: false,
+    });
+    assert.equal(result.decision, 'proceed');
+    assert.equal(result.scope, 'run');
+    assert.equal(result.actualSoFar, 10);
+    // Layer 2 reserve floor (default $5) + actualSoFar = $15 < $25 cap.
+    assert.ok(result.capRemaining > 0);
+  });
+
+  it('scope: "run" — math is identical between phase and run scopes given the same actualSoFar', () => {
+    // The scope flag is a label; the policy math is unchanged. Same
+    // inputs in either scope must produce the same decision + reasons.
+    // (This is a regression guard so a future divergent policy doesn't
+    // silently break orchestrator parity.)
+    const phaseResult = checkPhaseBudget({
+      budget: { perRunUSD: 10, scope: 'phase' },
+      phaseName: 'p',
+      phaseIdx: 0,
+      estimatedCost: null,
+      actualSoFarUSD: 6,
+      nonInteractive: true,
+    });
+    const runResult = checkPhaseBudget({
+      budget: { perRunUSD: 10, scope: 'run' },
+      phaseName: 'p',
+      phaseIdx: 0,
+      estimatedCost: null,
+      actualSoFarUSD: 6,
+      nonInteractive: true,
+    });
+    assert.equal(phaseResult.decision, runResult.decision);
+    assert.equal(phaseResult.reason, runResult.reason);
+    assert.equal(phaseResult.capRemaining, runResult.capRemaining);
+    assert.equal(phaseResult.scope, 'phase');
+    assert.equal(runResult.scope, 'run');
+  });
+});
