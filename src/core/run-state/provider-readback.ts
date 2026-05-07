@@ -361,11 +361,64 @@ export function __resetMigrationStateFetcher(): void {
   migrationStateFetcher = null;
 }
 
+// ---------------------------------------------------------------------------
+// v6.2.1 — `migration-batch` readback. The batch ref's role is purely
+// "did we start this work?" — the readback consults the dispatcher's ledger
+// for the planned set and compares it to the applied set. Implementations
+// inject a `MigrationBatchFetcher` that knows how to enumerate the planned
+// migrations for a given (env, batchId) tuple. Fails closed: any throw or
+// missing fetcher returns `unknown` so the orchestrator's resume preflight
+// routes to needs-human rather than silently skipping a batch we can't
+// confirm finished.
+//
+// The state vocabulary we map to:
+//   - `merged`   — every planned migration is in the ledger as applied.
+//   - `open`     — at least one planned migration is pending. Resume retries.
+//   - `failed`   — the ledger reports any planned migration in error state.
+//   - `unknown`  — fetcher absent, threw, or returned null. Fail closed.
+// ---------------------------------------------------------------------------
+
+/** State of a single planned migration as reported by the dispatcher's
+ *  ledger. The fetcher returns the per-batch plan + the live ledger view so
+ *  the readback can compute the aggregate state without re-querying. */
+export interface MigrationBatchPlannedItem {
+  /** Migration version (matches the post-effect `migration-version` ref id
+   *  shape — `<env>:<migration>` is the externalRef id, but the planned
+   *  list carries just the migration name). */
+  version: string;
+  /** Live ledger state. `applied` ⇒ merged, `pending` ⇒ open, `errored` ⇒
+   *  failed. */
+  state: 'applied' | 'pending' | 'errored';
+}
+
+/** Minimal `migration-batch` fetcher. Looks up the planned set for a batch
+ *  ref id (typically `${env}:${hash}` or `${env}:pre-dispatch:${ts}` per the
+ *  v6.2.1 spec) and returns the live ledger state of each. Returning null
+ *  indicates "no plan recorded for this batch" — the readback treats that
+ *  as unknown (fail closed). */
+export interface MigrationBatchFetcher {
+  fetch(batchId: string): Promise<{ planned: MigrationBatchPlannedItem[] } | null>;
+}
+
+let migrationBatchFetcher: MigrationBatchFetcher | null = null;
+
+/** Register the `migration-batch` fetcher. The CLI boot wires this from the
+ *  per-skill adapter; tests inject mocks directly. */
+export function registerMigrationBatchFetcher(fetcher: MigrationBatchFetcher | null): void {
+  migrationBatchFetcher = fetcher;
+}
+
+export function __resetMigrationBatchFetcher(): void {
+  migrationBatchFetcher = null;
+}
+
 export function makeSupabaseReadback(): ProviderReadback {
   return {
     name: 'supabase',
-    handles: ['migration-version'],
+    handles: ['migration-version', 'migration-batch'],
     verifyRef: (ref) => failClosed('supabase', ref, async () => {
+      if (ref.kind === 'migration-batch') return verifyMigrationBatch(ref);
+      // migration-version
       if (!migrationStateFetcher) {
         return unknownResult(ref, {
           readback: 'supabase',
@@ -391,6 +444,67 @@ export function makeSupabaseReadback(): ProviderReadback {
         },
       };
     }),
+  };
+}
+
+async function verifyMigrationBatch(ref: ExternalRef): Promise<ReadbackResult> {
+  if (!migrationBatchFetcher) {
+    return unknownResult(ref, {
+      readback: 'supabase',
+      reason: 'no-migration-batch-fetcher-registered',
+    });
+  }
+  const result = await migrationBatchFetcher.fetch(ref.id);
+  if (!result) {
+    return unknownResult(ref, {
+      readback: 'supabase',
+      reason: 'migration-batch-fetch-failed-or-not-found',
+    });
+  }
+  if (result.planned.length === 0) {
+    // A planned-empty batch is degenerate — no work to verify against. Treat
+    // it as merged (skip-already-applied) rather than unknown so a batch ref
+    // emitted before the dispatcher discovered "nothing to do" doesn't
+    // wedge the resume preflight on needs-human. The post-effect ref set is
+    // also empty in this case, so the orchestrator's "all post-effect refs
+    // merged/live" check naturally short-circuits to skip.
+    return {
+      refKind: ref.kind,
+      refId: ref.id,
+      existsOnPlatform: true,
+      currentState: 'merged',
+      metadata: {
+        readback: 'supabase',
+        plannedCount: 0,
+        appliedCount: 0,
+        erroredCount: 0,
+      },
+    };
+  }
+  let appliedCount = 0;
+  let pendingCount = 0;
+  let erroredCount = 0;
+  for (const item of result.planned) {
+    if (item.state === 'applied') appliedCount++;
+    else if (item.state === 'pending') pendingCount++;
+    else if (item.state === 'errored') erroredCount++;
+  }
+  let currentState: ReadbackState;
+  if (erroredCount > 0) currentState = 'failed';
+  else if (pendingCount === 0) currentState = 'merged';
+  else currentState = 'open';
+  return {
+    refKind: ref.kind,
+    refId: ref.id,
+    existsOnPlatform: true,
+    currentState,
+    metadata: {
+      readback: 'supabase',
+      plannedCount: result.planned.length,
+      appliedCount,
+      pendingCount,
+      erroredCount,
+    },
   };
 }
 
