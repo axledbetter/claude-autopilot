@@ -35,6 +35,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       { verb: 'brainstorm', summary: 'Pipeline entry point (Claude Code skill — see /brainstorm)' },
       { verb: 'spec', summary: 'Spec-writing pointer (Claude Code skill — see /brainstorm)' },
       { verb: 'plan', summary: 'Pipeline plan phase (engine-wrap shell — see superpowers:writing-plans skill)' },
+      { verb: 'implement', summary: 'Pipeline implement phase (engine-wrap shell — see claude-autopilot skill)' },
       { verb: 'review', summary: 'Pipeline review phase (engine-wrap shell — see /review, /review-2pass)' },
       { verb: 'validate', summary: 'Pipeline validate phase (engine-wrap shell — see /validate skill)' },
       { verb: 'pr', summary: 'Review a specific PR by number (auto-detects if on PR branch)' },
@@ -186,6 +187,26 @@ export const HELP_OPTIONS: Record<string, string> = {
         is an engine-wrap shell; engine-on still produces a run-state
         snapshot (state.json + events.ndjson) for pipeline introspection.
         SARIF emission lives in \`claude-autopilot run --format sarif\`.`,
+  implement: `Options (implement):
+  --context <text>     Optional context note injected into the implement log
+  --plan <path>        Plan file the implement phase consumed (e.g. docs/plans/<slug>.md)
+  --output <path>      Where to write the implement log (default: .guardrail-cache/implement/<ts>-implement.md)
+  --config <path>      Path to config file
+  --engine             Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
+  --no-engine          Force the legacy stateless code path (overrides config / env)
+
+  Note: implement is primarily a Claude Code skill (claude-autopilot — reads
+        plan, dispatches subagents per plan phase via subagent-driven-development,
+        writes code, runs tests, commits, optionally pushes via commit-push-pr).
+        The CLI verb is an engine-wrap shell; engine-on still produces a
+        run-state snapshot (state.json + events.ndjson) for pipeline
+        introspection. The v6.0.7 wrap declares idempotent: true,
+        hasSideEffects: false because the CLI verb writes a local log stub
+        only — no git push, no PR creation. If a future PR inlines the
+        implement loop into the CLI verb, the declarations flip to match
+        the spec table (idempotent: false, hasSideEffects: true,
+        externalRefs: git-remote-push). See src/cli/implement.ts deviation
+        note for the full rationale.`,
   watch: `Options (watch):
   --config <path>      Path to config file (default: ./guardrail.config.yaml)
   --debounce <ms>      Debounce delay in ms (default: 300)`,
@@ -275,7 +296,7 @@ export const GLOBAL_FLAGS_BLOCK = `Global flags:
   --engine               Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
   --no-engine            Force the legacy stateless code path (overrides config / env)
                          Precedence: CLI > env (CLAUDE_AUTOPILOT_ENGINE) > config (engine.enabled) > built-in default
-                         v6.0.1: wired for \`scan\`. v6.0.2: wired for \`fix\` and \`costs\`. v6.0.3: wired for \`brainstorm\` and \`spec\`. v6.0.4: wired for \`plan\` and \`review\`. v6.0.5: wired for \`validate\`. Other phases land in subsequent v6.0.x releases.`;
+                         v6.0.1: wired for \`scan\`. v6.0.2: wired for \`fix\` and \`costs\`. v6.0.3: wired for \`brainstorm\` and \`spec\`. v6.0.4: wired for \`plan\` and \`review\`. v6.0.5: wired for \`validate\`. v6.0.7: wired for \`implement\`. Other phases land in subsequent v6.0.x releases.`;
 
 /** Build the full two-level help text. Returned as a string so tests can assert against it without spawning. */
 export function buildHelpText(): string {
