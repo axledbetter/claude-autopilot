@@ -1,0 +1,39 @@
+name: npm tarball boundary
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  check:
+    name: Tarball excludes apps/
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build CLI tarball
+        run: npm run build
+
+      - name: Run npm pack --dry-run
+        id: pack
+        run: npm pack --dry-run 2>&1 | tee /tmp/pack-output.txt
+
+      - name: Assert apps/ NOT in tarball
+        run: |
+          if grep -q '^.*apps/' /tmp/pack-output.txt; then
+            echo "::error::apps/ leaked into the published tarball"
+            grep '^.*apps/' /tmp/pack-output.txt
+            exit 1
+          fi
+          echo "apps/ correctly excluded from tarball boundary"

@@ -1,6 +1,6 @@
 {
   "name": "@delegance/claude-autopilot",
-  "version": "6.3.0-pre.1",
+  "version": "6.3.0-pre.2",
   "type": "module",
   "publishConfig": {
     "tag": "next"
@@ -18,6 +18,7 @@
     "pipeline"
   ],
   "license": "MIT",
+  "workspaces": ["apps/*", "packages/*"],
   "repository": {
     "type": "git",
     "url": "https://github.com/axledbetter/claude-autopilot.git"
