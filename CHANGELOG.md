@@ -1,6 +1,83 @@
 ## Unreleased
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
+
+## v6.0.9 — wrap `pr` through `runPhaseWithLifecycle` (2026-05-06)
+
+**First side-effecting phase wrapped.** v6.0.1 → v6.0.5 wrapped read-only
+verbs (`scan`, `costs`, `fix`, `brainstorm`, `spec`, `plan`, `review`,
+`validate`); v6.0.6 extracted the lifecycle helper. v6.0.9 wraps `pr` —
+the first verb that mutates state on the platform of record (GitHub
+issue comments + PR reviews). This proves the helper's `ctx.emitExternalRef`
+plumbing for genuinely side-effecting phases without any helper-shape
+changes.
+
+**Declarations.** Match the v6 spec table exactly:
+
+- `idempotent: false` — re-running posts a NEW PR review ID each time
+  (`postReviewComments` dismisses prior + creates new). PR comment
+  posting (`postPrComment`) is marker-deduped on the body but the
+  underlying `gh` API call is still mutating.
+- `hasSideEffects: true` — posts to GitHub via the `gh` CLI inside the
+  inner `runCommand` invocation.
+- `externalRefs: github-pr` — recorded BEFORE the inner `runCommand`
+  runs so a crash mid-pipeline still leaves a breadcrumb pointing at
+  the PR. The engine path's Phase 6 resume logic can `gh pr view <id>`
+  to confirm the PR is still open before deciding whether a replay
+  is safe.
+
+**Engine-off byte-for-byte unchanged.** All `gh pr view` + `git fetch` +
+`runCommand` behavior preserved. The wrap adds two test seams
+(`__testPrMeta` to short-circuit PR metadata lookup, `__testRunCommand`
+to stub the inner pipeline) so the smoke test exercises the engine
+lifecycle without `gh` or a real review pipeline. Production callers
+must not pass these — they're documented "test only" with a comment
+mirroring scan / fix's `__testReviewEngine` precedent.
+
+**CLI plumbing.** The `pr` dispatcher arm now threads `cliEngine` from
+`parseEngineCliFlag()` and `envEngine` from
+`process.env.CLAUDE_AUTOPILOT_ENGINE`, mirroring every other wrapped
+verb. The per-verb help block (`claude-autopilot help pr`) gains
+`--engine` / `--no-engine` lines plus a side-effects note (engine-on
+records a `github-pr` externalRef; future replays gate on the spec's
+"side-effect readback" rule). `GLOBAL_FLAGS_BLOCK` adds "v6.0.9: wired
+for `pr`" to its breadcrumb list.
+
+**Smoke test.** New `tests/cli/pr-engine-smoke.test.ts`, 6 cases:
+- engine off (default): no run dir / no engine artifacts; runCommand
+  still invoked
+- engine off (`cliEngine: false`): no run dir
+- engine on (`--engine`): state.json + events.ndjson + lifecycle in
+  order (run.start → phase.start → phase.externalRef → phase.success
+  → run.complete); externalRef recorded with kind=`github-pr`,
+  id=`42`, provider=`github`; `idempotent: false, hasSideEffects: true`
+  reflected on the phase
+- env precedence (`CLAUDE_AUTOPILOT_ENGINE=on` without CLI flag)
+- CLI override (`--no-engine` beats env on)
+- runCommand returning 1 surfaces as verb exit 1 WITHOUT marking the
+  engine phase as failed (pipeline result ≠ phase failure, same
+  precedent as scan)
+
+**Why no follow-up `github-comment` externalRef yet.** A potential
+extension is to record one externalRef per posted comment / review
+(`github-comment`). That requires plumbing the post-comment URL out
+of `runCommand` (currently only logged) — deferred to a follow-up PR.
+For v6.0.9 the `github-pr` ref is sufficient for the spec's readback
+rule: a Phase 6 resume can verify the PR is still open before
+deciding whether to retry.
+
+**Files changed.** `src/cli/pr.ts` (270 insertions / 22 deletions),
+`src/cli/index.ts` (+12 lines for engine knob plumbing),
+`src/cli/help-text.ts` (+8 lines for the per-verb Options block +
+breadcrumb), `tests/cli/pr-engine-smoke.test.ts` (new, 306 lines),
+`docs/v6/wrapping-pipeline-phases.md` (status header + table row +
+deviation note), `docs/v6/migration-guide.md` ("what works today" list
+adds `pr`), `docs/specs/v6-run-state-engine.md` (reconciliation block
+appended). Total: ~600 lines added, ~25 lines removed.
+
+**Status after v6.0.9.** Nine of 10 phases wrapped. Remaining:
+`implement` (v6.0.7) and `migrate` (v6.0.8) — both side-effecting,
+both wrapped concurrently with this PR by parallel agents.
 - **Bundled UI polish skills** — ships `/ui`, `/simplify-ui`, `/ui-ux-pro-max`,
   `/make-interfaces-feel-better` so consumers get them via `npm install` instead
   of needing user-level skill installs. `/ui` runs the chained pass (audit →
