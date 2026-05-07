@@ -1,7 +1,10 @@
 {
   "name": "@delegance/claude-autopilot",
-  "version": "6.2.2",
+  "version": "6.3.0-pre.1",
   "type": "module",
+  "publishConfig": {
+    "tag": "next"
+  },
   "description": "Autonomous development pipeline for Claude Code: brainstorm → spec → plan → implement → migrate → validate → PR → review → merge. Multi-model, local-first, every phase a skill you can intervene in.",
   "keywords": [
     "claude-autopilot",
