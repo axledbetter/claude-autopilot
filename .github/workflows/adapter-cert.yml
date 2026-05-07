@@ -34,10 +34,11 @@ jobs:
   cert:
     name: Live adapter cert
     runs-on: ubuntu-latest
-    # 30 minutes is the spec's worst-case for "Render free-tier cold
-    # build + Fly release polling + Vercel deploy". A real run typically
-    # finishes in under 12 minutes.
-    timeout-minutes: 30
+    # 45 minutes accounts for compounded retry budget + Render free-tier
+    # cold-build tail. A real run typically finishes in under 12 minutes;
+    # the extra headroom is for "bad night" combinations of rate-limits
+    # + cold boot + rollout lag (per codex pre-flight review WARNING #2).
+    timeout-minutes: 45
     permissions:
       contents: read
 
@@ -93,7 +94,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: adapter-cert-${{ github.run_id }}
-          path: artifacts/adapter-cert/
+          # Narrow glob — only the two artifact kinds the harness is
+          # documented to write. Prevents accidental token leak if a
+          # future test or helper drops a debug dump under this tree
+          # (per codex pre-flight review WARNING #1: minimize collection
+          # scope, don't rely solely on redaction discipline).
+          path: |
+            artifacts/adapter-cert/**/events.ndjson
+            artifacts/adapter-cert/**/log-tail.txt
           # Even if there are no artifacts (skip-mode), don't fail.
           if-no-files-found: ignore
           # Keep ~30 days. Sandbox cert traces are not sensitive but

@@ -419,6 +419,13 @@ export interface RunCheckOptions {
   sleepImpl?: (ms: number) => Promise<void>;
   /** Override `Date.now()` so events are deterministic in tests. */
   nowImpl?: () => number;
+  /** Random source for backoff jitter. Tests pass a deterministic stub
+   *  (e.g. `() => 0` or `() => 0.5`) so the unit suite stays
+   *  deterministic. Production uses `Math.random`. Per codex pre-flight
+   *  WARNING #3: deterministic backoff `[1s, 4s, 16s]` aligns retry
+   *  bursts across nightly runs into a recognizable automation
+   *  fingerprint; 0-20% jitter smooths provider-side patterns. */
+  randomImpl?: () => number;
 }
 
 export interface RunCheckResult {
@@ -452,6 +459,7 @@ export async function runCheck(
   const counter = opts.counter ?? sharedSoftFailCounter;
   const sleep = opts.sleepImpl ?? DEFAULT_SLEEP;
   const now = opts.nowImpl ?? Date.now;
+  const random = opts.randomImpl ?? Math.random;
   const start = now();
 
   sink?.write({
@@ -502,9 +510,14 @@ export async function runCheck(
       if (lastCategory === 'deterministic' || lastCategory === 'unknown') {
         break;
       }
-      // Transient + flaky retry within the budget.
+      // Transient + flaky retry within the budget. Adds 0-20% jitter
+      // to the deterministic backoff so synchronized retry bursts
+      // across nightly runs don't fingerprint our traffic on provider
+      // anti-abuse systems (per codex pre-flight WARNING #3).
       if (attempt < MAX_ATTEMPTS) {
-        await sleep(RETRY_BACKOFF_MS[attempt - 1] ?? 0);
+        const baseMs = RETRY_BACKOFF_MS[attempt - 1] ?? 0;
+        const jitterMs = Math.floor(baseMs * 0.2 * random());
+        await sleep(baseMs + jitterMs);
         continue;
       }
     }

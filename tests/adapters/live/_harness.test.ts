@@ -438,7 +438,8 @@ describe('runCheck — retry budget + flake control', () => {
     // Regression: every `RETRY_BACKOFF_MS` entry must be consulted
     // before declaring the budget exhausted. We capture the actual
     // sleep durations the harness asks for and assert the full
-    // schedule was applied.
+    // schedule was applied. `randomImpl: () => 0` zeros the jitter
+    // so the assertion matches the deterministic schedule exactly.
     const sleeps: number[] = [];
     const result = await runCheck(
       async () => {
@@ -449,11 +450,50 @@ describe('runCheck — retry budget + flake control', () => {
         check: 'budget-uses-all-backoffs',
         counter: new SoftFailCounter(),
         sleepImpl: async (ms) => { sleeps.push(ms); },
+        randomImpl: () => 0,
       },
     );
     assert.equal(result.outcome, 'soft-fail');
     // 4 attempts → 3 inter-attempt waits → exactly the schedule.
     assert.deepEqual(sleeps, [1000, 4000, 16000]);
+  });
+
+  it('codex pre-flight WARNING #3 — 0-20% jitter applied to backoff schedule', async () => {
+    // With randomImpl returning 1.0 we get the maximum jitter:
+    // base * (1 + 0.2 * 1.0) = base * 1.2.
+    const sleeps: number[] = [];
+    await runCheck(
+      async () => {
+        throw new GuardrailError('5xx', { code: 'transient_network', provider: 'fly' });
+      },
+      {
+        provider: 'fly',
+        check: 'jitter-max',
+        counter: new SoftFailCounter(),
+        sleepImpl: async (ms) => { sleeps.push(ms); },
+        randomImpl: () => 1.0,
+      },
+    );
+    // Math.floor(base * 0.2 * 1.0) = base * 0.2 exactly for our values.
+    assert.deepEqual(sleeps, [1000 + 200, 4000 + 800, 16000 + 3200]);
+  });
+
+  it('jitter is bounded — randomImpl=0.5 yields ~10% extra', async () => {
+    const sleeps: number[] = [];
+    await runCheck(
+      async () => {
+        throw new GuardrailError('5xx', { code: 'transient_network', provider: 'render' });
+      },
+      {
+        provider: 'render',
+        check: 'jitter-mid',
+        counter: new SoftFailCounter(),
+        sleepImpl: async (ms) => { sleeps.push(ms); },
+        randomImpl: () => 0.5,
+      },
+    );
+    // Math.floor(base * 0.2 * 0.5) = base * 0.1.
+    assert.deepEqual(sleeps, [1000 + 100, 4000 + 400, 16000 + 1600]);
   });
 
   it('Bugbot LOW PR #92 — hard-fail attempts reflect the actual attempt count after a transient retry', async () => {
