@@ -406,3 +406,60 @@ If your CI relies on the v5.x output shape, set `CLAUDE_AUTOPILOT_ENGINE=off` (o
 - **Full spec:** [`docs/specs/v6-run-state-engine.md`](../specs/v6-run-state-engine.md)
 - **v6.1 default-flip spec:** [`docs/specs/v6.1-default-flip.md`](../specs/v6.1-default-flip.md)
 - **Phase-by-phase changelog entries:** [CHANGELOG.md](../../CHANGELOG.md)
+
+## v6 → v7: hosted dashboard
+
+v7.0 is the optional hosted product: every engine-on autopilot run can
+upload its events.ndjson + state.json snapshot to autopilot.dev for
+team-visible run history, replay, and review.
+
+**Adoption is fully opt-in.** Nothing changes for users who don't run
+`claude-autopilot dashboard login`. Engine-on autopilot continues to
+write the same local `~/.claude-autopilot/runs/<id>/` directories — the
+hosted dashboard is purely an upload layer that runs after `run.complete`.
+
+### How to enable
+
+```bash
+# 1. Sign in once. Opens a browser, mints a server-side API key, writes
+#    ~/.claude-autopilot/dashboard.json (mode 0600).
+claude-autopilot dashboard login
+
+# 2. Verify.
+claude-autopilot dashboard status
+
+# 3. Run autopilot as usual. Upload happens after run.complete.
+claude-autopilot autopilot
+```
+
+### How to opt out
+
+- **Per-run:** `claude-autopilot autopilot --no-upload`.
+- **Globally:** `export CLAUDE_AUTOPILOT_UPLOAD=off`.
+- **Permanently:** `claude-autopilot dashboard logout` (revokes API key
+  server-side, deletes the local config).
+
+### Failure mode
+
+Auto-upload **never fails the run**. If the upload fails the CLI prints
+a resume command and preserves the run's original exit code:
+
+```
+[autopilot] upload failed: 503 Service Unavailable
+            Resume with: claude-autopilot dashboard upload 01HFGB...
+```
+
+The local run dir contains a snapshot the resume path uses byte-identically.
+
+### Privacy + security
+
+- API keys are 128-bit `clp_<64-hex>` random tokens, SHA256-hashed at
+  rest. Plaintext is stored in `~/.claude-autopilot/dashboard.json` with
+  mode 0600 (dir 0700).
+- Login uses a 128-bit nonce-bound loopback HTTP listener (ports
+  56000-56050 only) with strict server-side `callbackUrl` regex
+  validation and `crypto.timingSafeEqual` nonce comparison.
+- Uploads use a separate signed JWT (15-min TTL, HS256) minted per
+  upload session.
+- The events.ndjson snapshot is hash-chained on the CLI side and
+  verified on the server before any run is marked `source_verified`.

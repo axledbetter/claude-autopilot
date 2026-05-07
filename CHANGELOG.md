@@ -2,6 +2,27 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 6.3.0-pre.4 (2026-05-07)
+
+**v7.0 Phase 2.3 — CLI dashboard verbs + auto-upload at run.complete.** Connects v6.x autopilot pipeline to Phase 2.2's ingest API.
+
+Four new CLI verbs: `claude-autopilot dashboard {login,logout,status,upload}`. After `dashboard login`, every engine-on `autopilot --mode full` automatically uploads to autopilot.dev when `run.complete` fires. Login flow uses 128-bit nonce-bound loopback HTTP listener (port 56000-56050) with strict server-side `callbackUrl` validation, `crypto.timingSafeEqual` nonce verify, and atomic config write at `~/.claude-autopilot/dashboard.json` (mode 0600, dir 0700). Snapshot-before-upload (events.ndjson + state.json copied to `<runDir>/.upload-snapshot/` with stat-before/stat-after defense) so streaming writers can't tear the chunk reads. Auto-upload is foreground await with SIGINT/AbortController; failure prints `claude-autopilot dashboard upload <runId>` resume command and never overrides the run's exit code. Empty events.ndjson skips upload cleanly. Opt out per-run with `--no-upload` or globally with `CLAUDE_AUTOPILOT_UPLOAD=off`.
+
+Web side adds four new endpoints under `/api/dashboard/`: `POST api-keys/mint` (Supabase session auth → atomic `mint_api_key_with_nonce` RPC, 128-bit `clp_<64-hex>` keys, SHA256-hashed at rest, 12-char prefix display), `POST api-keys/revoke` (idempotent, ownership-scoped), `GET me` (memberships + lastUploadAt), `GET runs/:runId/upload-session` (resume in-flight session). Centralized `authViaApiKey()` helper in `apps/web/lib/dashboard/auth.ts` looks up keys by deterministic hash with `eq + maybeSingle` (O(1)) and filters revoked keys. Strict `validateCallbackUrl()` regex restricts callbacks to `http://(127.0.0.1|localhost):560(0[0-9]|[1-4][0-9]|50)/cli-callback` with double-parse defense.
+
+CLI ↔ web parity guaranteed by shared fixtures: `apps/web/lib/upload/__fixtures__/{chain-vectors,state-canonicalization-vectors}.json` are loaded byte-for-byte by `tests/dashboard/parity.test.ts`. Identical chain-root and JCS-canonical sha256 in both directions.
+
+**Migration:** `data/deltas/20260507120000_phase2_3_api_keys.sql` — adds `api_keys` (RLS, key_hash regex check, prefix_display regex check), `api_key_mint_nonces` (RLS, service-role-only), `expire_mint_nonces()` SECURITY DEFINER RPC, and the atomic `mint_api_key_with_nonce()` SECURITY DEFINER RPC that fuses sweep + dedup-check + insert key + insert nonce in a single transaction. Operator runs `/migrate` post-merge.
+
+**New env vars:**
+- Web (Vercel): `NEXT_PUBLIC_AUTOPILOT_BASE_URL` — used by the `cli-auth` web page (deferred to Phase 4 dashboard UI) to display loopback callback URL.
+- CLI: `AUTOPILOT_DASHBOARD_BASE_URL` (defaults `https://autopilot.dev`); `CLAUDE_AUTOPILOT_HOME` (defaults `~/.claude-autopilot`); `CLAUDE_AUTOPILOT_UPLOAD=off` opts out of auto-upload; `CLAUDE_AUTOPILOT_UPLOAD_RETRY_MS` overrides retry backoff (test seam).
+
+**Operator follow-ups:**
+- Run `/migrate` to apply the migration through dev → QA → prod.
+- Set `NEXT_PUBLIC_AUTOPILOT_BASE_URL=https://autopilot.dev` in Vercel.
+- Implement the `/cli-auth` web page in Phase 4 dashboard UI. The page must mint via `POST /api/dashboard/api-keys/mint` then POST `{ apiKey, fingerprint, accountEmail, nonce }` to the loopback callback (URL passed in `?cb=`). Phase 2.3 tests use a mock handler that simulates this flow end-to-end.
+
 ## 6.3.0-pre.3 (2026-05-07)
 
 **v7.0 Phase 2.2 — ingest API + tamper-evident events.** First server endpoints in the repo. Three routes (`POST /api/upload-session`, `PUT /api/runs/:runId/events/:seq`, `POST /api/runs/:runId/finalize`) implement signed-session uploads with hash-chain verification and idempotent finalize. Per-chunk immutable Storage objects, DB row lock + unique constraint + Storage `upsert: false` triple-defense against concurrent corruption. Two-phase write ordering with `upload_session_chunks.status` for crash recovery. Dedicated `UPLOAD_SESSION_JWT_SECRET` (HS256, 15-min TTL, full claim hardening). RFC 8785 (JCS) state canonicalization. 38 new tests across upload-session, events-chunk, finalize, hash-chain vectors, JCS vectors, JWT, and storage helpers.
