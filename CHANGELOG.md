@@ -2,6 +2,39 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 6.2.1 — Side-effect phase idempotency contracts (`migrate` + `pr`) (2026-05-07)
+
+**Headline.** Side-effecting phases now satisfy a registry-enforced two-step contract — record a deterministic "I'm starting this work" breadcrumb BEFORE the side-effect, then one reconciliation ref per durable artifact AFTER. With the contract in place, `migrate` and `pr` enter the orchestrator's `--mode=full` registry, expanding the v6.2.0 `scan → spec → plan → implement` pipeline to the full **6-phase** flow `scan → spec → plan → implement → migrate → pr` under one runId.
+
+**Motivation — Codex CRITICAL gate from v6.2.** The v6.2 orchestrator spec flagged side-effect resume as the riskiest property to certify before adding `migrate` or `pr`: a partial crash mid-dispatch could leave the engine blind to applied work, causing the resume preflight to either silently re-run side effects (data loss) or pessimistically refuse every retry (operability tax). v6.2.1 closes the gap with a uniform contract every side-effecting phase must declare AND a registry-time guard that throws if the declaration is missing.
+
+**What's in (the 7 deliverables from spec section "Scope of THIS PR").**
+
+- **New `migration-batch` ref kind** in `ExternalRefKind` (`src/core/run-state/types.ts`). Documented semantics: "deterministic id covers a planned migration batch; emitted BEFORE dispatch so a partial crash leaves a resume target." Joins `migration-version` (the post-effect reconciliation ref).
+- **`migrate` pre-effect breadcrumb.** `src/cli/migrate.ts` now emits a `migration-batch` ref BEFORE `dispatchFn(input)` — a partial crash leaves the orchestrator a resume target. The post-success `migration-version` refs stay (one per applied migration). Per the v6.2.1 spec, the batch id uses the `${env}:pre-dispatch:${Date.now()}` fallback form because no Delegance migrate skill (Supabase, Rails, Alembic, …) exposes its planned set pre-dispatch — the deterministic-id form `sha256(env+plannedMigrations)` is reserved for a follow-up that adds a planning verb to the skill protocol.
+- **Provider readback for `migration-batch`** in `src/core/run-state/provider-readback.ts`. Queries the dispatcher's ledger for the planned set + applied set, returns `merged` (all applied), `open` (some pending), `failed` (any errored), or `unknown` (fail closed on missing fetcher / throw / null). New `MigrationBatchFetcher` interface + `registerMigrationBatchFetcher` seam alongside the existing `MigrationStateFetcher`.
+- **Registry-time enforcement** in `src/core/run-state/phase-registry.ts`. New `registerPhase()` helper throws `Error: registry: side-effect phase <name> missing idempotency contract` when a `hasSideEffects: true` registration omits `preEffectRefKinds` or `postEffectRefKinds`. Applied to all six entries; the four read-only phases (scan/spec/plan/implement) omit the arrays without complaint.
+- **`buildMigratePhase` and `buildPrPhase` builders** extracted following the v6.2.0 builder pattern (scan/spec/plan/implement). Each verb's existing `runX(options)` continues to delegate to its builder — direct CLI behavior is byte-for-byte identical to v6.2.0. The full registry now has: `scan / spec / plan / implement / migrate / pr`.
+- **Resume preflight in orchestrator** (`src/cli/autopilot.ts` + new `src/core/run-state/resume-preflight.ts`). Before invoking `runPhase` on any side-effecting phase, the orchestrator collects prior `phase.success` + `phase.externalRef` events from `events.ndjson` and routes per the spec decision matrix: all post-effect refs `merged`/`live` → emit synthetic `phase.success` and skip; pre-effect breadcrumb `open` → retry (the phase body's own ledger handles dedup); otherwise → emit `replay.override` + throw `GuardrailError('needs_human')`. New error code `needs_human` joins the taxonomy in `src/core/errors.ts`.
+- **`--mode=full` extended** to 6 phases (`DEFAULT_FULL_PHASES` in `phase-registry.ts`). After v6.2.1, `claude-autopilot autopilot` runs the entire pipeline under one runId — the YC-demo win deferred from v6.2.0.
+
+**Tests.** Baseline 1509 → 1532 (+23 net new):
+
+- 9 gating tests in `tests/cli/autopilot-side-effect-resume.test.ts` covering the 6 spec scenarios (migrate partial-crash retry, migrate full-success skip, pr-open skip, pr-closed needs-human, registry rejection, run-scope budget no-double-charge) plus 3 edge cases (proceed-fresh, prior success without refs, errored-ledger needs-human).
+- 8 unit tests in `tests/run-state/provider-readback.test.ts` covering the new `migration-batch` readback (merged / open / failed / empty plan / null fetcher / throw / no fetcher / default-registry routing).
+- 2 updated tests in `tests/cli/migrate-engine-smoke.test.ts` to account for the new pre-effect breadcrumb (now `1 + N` refs per run instead of `N`).
+- 4 new test variants for the contract guard (`hasSideEffects: true` with each missing array, plus the empty-postEffect / read-only positive cases).
+
+**Engine-off path unchanged.** Existing `migrate`/`pr` invocations without `--engine` continue byte-for-byte identical. The engine-off escape hatch threads through `executeMigratePhase(input, null)` / `executePrPhase(input, null)`, where a null `ctx` makes `emitExternalRef` a no-op — same precedent as every other wrapped verb.
+
+**Out of scope (deliberate, see spec for full list).**
+- Deterministic batch id (`sha256(env + plannedMigrations)`) — requires extracting a `planMigrations()` verb from each migrate skill's protocol. v6.2.x follow-up.
+- `implement`'s `git-remote-push` ref (declared in the spec table but not yet emitted by `implement.ts`). v6.2.x follow-up.
+- Cross-run ref dedup (e.g. recognizing two pre-dispatch breadcrumbs as the same operation across runs). Not needed for orchestrator MVP.
+- Provider readback for non-Delegance migrate skills (Rails, Alembic, …). v6.2.1 ships the contract; per-skill readback is per-skill follow-up work.
+
+**Spec.** docs/specs/v6.2.1-side-effect-idempotency.md (Codex CRITICAL gate from v6.2 — folded back as the foundation for this PR).
+
 ## 6.2.0 — Multi-phase orchestrator (`claude-autopilot autopilot`) (2026-05-07)
 
 **Headline.** New top-level `claude-autopilot autopilot` verb runs `scan → spec → plan → implement` under **one runId**. The pre-v6.2 chain (`scan && spec && plan && implement`) created four separate runs with no parent — the orchestrator collapses them into a single ledger so `claude-autopilot runs watch <id>` covers the whole pipeline and a `--budget=$25` cap ticks down across phases instead of resetting per verb.
