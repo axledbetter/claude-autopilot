@@ -579,11 +579,21 @@ switch (subcommand) {
   }
 
   case 'pr': {
+    // v6.0.9 — engine-wrap shell for the `pr` pipeline phase. Side-effecting
+    // (posts/updates a PR comment + inline review comments via the `gh` CLI
+    // inside runCommand). Declared `idempotent: false, hasSideEffects: true`
+    // with a `github-pr` externalRef recorded before the inner pipeline
+    // runs. See the long declaration note in src/cli/pr.ts for the
+    // per-call breakdown of what `gh` mutations happen and why the
+    // declaration matches the v6 spec table.
     const config = flag('config');
     const noPostComments = boolFlag('no-post-comments');
     const noInlineComments = boolFlag('no-inline-comments');
     const json = boolFlag('json');
     const prNumber = args.slice(1).find(a => !a.startsWith('--') && /^\d+$/.test(a));
+    // v6.0.9 — engine knob. CLI flag wins; env / config / default resolved
+    // inside runPr once it's loaded the config file.
+    const cliEngine = parseEngineCliFlag();
     const code = await runUnderJsonMode(
       { command: 'pr', active: json },
       () => runPr({
@@ -591,6 +601,8 @@ switch (subcommand) {
         prNumber,
         noPostComments,
         noInlineComments,
+        ...(cliEngine !== undefined ? { cliEngine } : {}),
+        envEngine: process.env.CLAUDE_AUTOPILOT_ENGINE,
       }),
     );
     process.exit(code);
