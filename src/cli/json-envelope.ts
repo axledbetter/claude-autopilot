@@ -205,6 +205,167 @@ export interface RunUnderJsonModeOptions {
   statusFor?: (exit: number) => JsonEnvelopeStatus;
 }
 
+// ----------------------------------------------------------------------------
+// v6.2.2 — autopilot --json envelope
+//
+// The autopilot orchestrator emits its OWN envelope shape (different from
+// the universal `JsonEnvelope` Phase 5 wrapper) because it carries cross-
+// phase result fields (`phases`, `failedAtPhase`, `failedPhaseName`,
+// `totalCostUSD`) that the per-verb wrapper has no concept of.
+//
+// Per spec docs/specs/v6.2.2-json-envelope-and-docs.md:
+//   - exactly ONE envelope on stdout per autopilot invocation
+//   - NDJSON events continue to flow to stderr (existing v6 Phase 5
+//     channel discipline preserved)
+//   - bounded `AutopilotErrorCode` enum so CI consumers can branch on
+//     specific strings (codex NOTE #5)
+//   - single-write latch + uncaughtException handlers so the envelope is
+//     emitted exactly once even on async unhandled rejections (codex
+//     WARNING #2)
+// ----------------------------------------------------------------------------
+
+/** Bounded error-code enum. CI consumers MAY rely on these specific
+ *  strings; new codes ship as minor versions of the envelope. The
+ *  exit-code-to-errorCode mapping is documented adjacent to
+ *  `computeAutopilotExitCode` so the contract is observable from a single
+ *  place. */
+export const AUTOPILOT_ERROR_CODES = [
+  'invalid_config',     // pre-run validation, --phases parse, engine off
+  'budget_exceeded',    // run-scope budget cap hit
+  'lock_held',          // engine lock collision
+  'corrupted_state',    // state.json mismatch / schemaVersion out of range
+  'partial_write',      // events.ndjson torn write
+  'needs_human',        // interactive prompt would fire in --json
+  'phase_failed',       // generic phase failure (LLM error, network, etc.)
+  'internal_error',     // catch-all for the uncaughtException handler
+] as const;
+export type AutopilotErrorCode = typeof AUTOPILOT_ERROR_CODES[number];
+
+/** Per-phase outcome surfaced inside the envelope. Mirrors the orchestrator
+ *  internal `AutopilotPhaseSummary` but uses the `'success' | 'failed' |
+ *  'skipped-replay'` alphabet from the spec rather than the orchestrator's
+ *  internal `'not-run'` placeholder. */
+export interface AutopilotPhaseResult {
+  name: string;
+  status: 'success' | 'failed' | 'skipped-replay';
+  costUSD: number;
+  durationMs: number;
+  /** For skipped-replay phases (resume short-circuit). */
+  reason?: 'side-effect-already-applied' | 'idempotent-replay';
+}
+
+export interface AutopilotJsonResult {
+  runId: string | null;
+  status: 'success' | 'failed';
+  exitCode: 0 | 1 | 2 | 78;
+  phases: AutopilotPhaseResult[];
+  totalCostUSD: number;
+  durationMs: number;
+  errorCode?: AutopilotErrorCode;
+  errorMessage?: string;
+  failedAtPhase?: number;
+  failedPhaseName?: string;
+}
+
+/** Outer envelope shape (per spec). The autopilot envelope is pinned to
+ *  `version: '1'` independently of the universal `JsonEnvelope`'s
+ *  `schema_version` — the two evolve on separate cadences. */
+export interface AutopilotJsonEnvelope {
+  version: '1';
+  verb: 'autopilot';
+  runId: string | null;
+  status: 'success' | 'failed';
+  exitCode: 0 | 1 | 2 | 78;
+  phases: AutopilotPhaseResult[];
+  totalCostUSD: number;
+  durationMs: number;
+  errorCode?: AutopilotErrorCode;
+  errorMessage?: string;
+  failedAtPhase?: number;
+  failedPhaseName?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Single-write latch (codex WARNING #2). Module-scoped boolean. Flipped by
+// `writeAutopilotEnvelope` BEFORE writing so subsequent calls (success path
+// + uncaughtException handler racing) no-op. Tests can reset via
+// `__resetAutopilotEnvelopeLatch()`.
+// ---------------------------------------------------------------------------
+
+let _autopilotEnvelopeWritten = false;
+
+export function __resetAutopilotEnvelopeLatch(): void {
+  _autopilotEnvelopeWritten = false;
+}
+
+export function __isAutopilotEnvelopeWritten(): boolean {
+  return _autopilotEnvelopeWritten;
+}
+
+/** Emit the outer JSON envelope on stdout. Idempotent — the second call is
+ *  a no-op so the success path + a finalization-error fallback can both
+ *  invoke this safely.
+ *
+ *  ANSI codes are stripped from `errorMessage` defensively (the orchestrator
+ *  builds it via interpolation and may include color codes from upstream
+ *  errors).
+ *
+ *  This function does NOT flush stdout. Callers in the orchestrator path
+ *  should `await new Promise(r => process.stdout.write('', r))` after this
+ *  call before invoking `process.exit` to guarantee bytes hit the pipe. */
+export function writeAutopilotEnvelope(result: AutopilotJsonResult): void {
+  if (_autopilotEnvelopeWritten) return;
+  _autopilotEnvelopeWritten = true;
+
+  const env: AutopilotJsonEnvelope = {
+    version: '1',
+    verb: 'autopilot',
+    runId: result.runId,
+    status: result.status,
+    exitCode: result.exitCode,
+    phases: result.phases.map(p => ({ ...p })),
+    totalCostUSD: result.totalCostUSD,
+    durationMs: result.durationMs,
+    ...(result.errorCode !== undefined ? { errorCode: result.errorCode } : {}),
+    ...(result.errorMessage !== undefined
+      ? { errorMessage: stripAnsi(result.errorMessage) }
+      : {}),
+    ...(result.failedAtPhase !== undefined ? { failedAtPhase: result.failedAtPhase } : {}),
+    ...(result.failedPhaseName !== undefined ? { failedPhaseName: result.failedPhaseName } : {}),
+  };
+
+  const line = JSON.stringify(env) + '\n';
+  if (_testSink) _testSink.stdout(line);
+  else process.stdout.write(line);
+}
+
+/** Translate the spec's exit-code-to-errorCode matrix into a deterministic
+ *  number. CI scripts MUST be able to branch on this without re-reading
+ *  the envelope. */
+export function computeAutopilotExitCode(
+  errorCode: AutopilotErrorCode | undefined,
+): 0 | 1 | 2 | 78 {
+  if (errorCode === undefined) return 0;
+  switch (errorCode) {
+    case 'budget_exceeded':
+    case 'needs_human':
+      return 78;
+    case 'lock_held':
+    case 'corrupted_state':
+    case 'partial_write':
+      return 2;
+    case 'invalid_config':
+    case 'phase_failed':
+    case 'internal_error':
+      return 1;
+    default: {
+      const _exhaustive: never = errorCode;
+      void _exhaustive;
+      return 1;
+    }
+  }
+}
+
 export async function runUnderJsonMode(
   opts: RunUnderJsonModeOptions,
   handler: () => Promise<number | void>,

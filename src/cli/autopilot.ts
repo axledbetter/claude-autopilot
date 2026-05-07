@@ -53,6 +53,15 @@ import {
   type ResumeDecision,
 } from '../core/run-state/resume-preflight.ts';
 import type { ExternalRef, RunEvent } from '../core/run-state/types.ts';
+import {
+  AUTOPILOT_ERROR_CODES,
+  computeAutopilotExitCode,
+  writeAutopilotEnvelope,
+  __isAutopilotEnvelopeWritten,
+  type AutopilotErrorCode,
+  type AutopilotJsonResult,
+  type AutopilotPhaseResult,
+} from './json-envelope.ts';
 
 // ---------------------------------------------------------------------------
 // ANSI codes — kept inline to match the rest of cli/ (no shared formatter).
@@ -707,6 +716,255 @@ function formatDuration(ms: number): string {
   const seconds = totalSeconds % 60;
   if (minutes === 0) return `${seconds}s`;
   return `${minutes}m${seconds.toString().padStart(2, '0')}s`;
+}
+
+// ===========================================================================
+// v6.2.2 — `claude-autopilot autopilot --json` envelope
+//
+// `runAutopilotWithJsonEnvelope` is the entrypoint the dispatcher uses when
+// `--json` is passed. It wraps `runAutopilot`, captures the per-phase
+// outcomes into the spec's `AutopilotPhaseResult[]` shape, and emits exactly
+// one envelope on stdout via `writeAutopilotEnvelope`.
+//
+// The single-write latch + process-scoped uncaughtException/unhandledRejection
+// handlers (codex WARNING #2) live here. Tests pass
+// `__testInstallProcessHandlers: false` to avoid leaking the handlers into
+// the rest of the suite — production callers always get `true` (the default).
+// ===========================================================================
+
+export interface AutopilotJsonOptions extends AutopilotOptions {
+  /** Test seam — install process-level uncaughtException / unhandledRejection
+   *  handlers that emit a fallback envelope if the orchestrator throws past
+   *  our try/catch. Default: true (production behavior). Tests pass false to
+   *  avoid leaking handlers across the suite. */
+  __testInstallProcessHandlers?: boolean;
+  /** Test seam — when set, the orchestrator throws AFTER the success
+   *  envelope is written. Used to verify the single-write latch suppresses
+   *  the uncaughtException handler's fallback envelope. Production code
+   *  never sets this. */
+  __testThrowAfterEnvelope?: () => never;
+}
+
+interface InstalledProcessHandlers {
+  uncaughtException: (err: unknown) => void;
+  unhandledRejection: (err: unknown) => void;
+}
+
+/** Install process-scoped fatal handlers for `--json` mode. Returns a
+ *  removal function so the caller (test seam) can detach them deterministically.
+ *
+ *  Both handlers consult the single-write latch via
+ *  `__isAutopilotEnvelopeWritten()` — if an envelope already shipped, they
+ *  no-op-exit; otherwise they emit a fallback `internal_error` envelope and
+ *  exit 1. Per spec "Channel discipline" → "Exactly-once guarantee under
+ *  fatal paths". */
+function installAutopilotJsonProcessHandlers(
+  startedAt: number,
+): { remove: () => void; handlers: InstalledProcessHandlers } {
+  const handlers: InstalledProcessHandlers = {
+    uncaughtException: (err: unknown) => {
+      if (__isAutopilotEnvelopeWritten()) {
+        process.exit(1);
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      writeAutopilotEnvelope({
+        runId: null,
+        status: 'failed',
+        exitCode: 1,
+        phases: [],
+        totalCostUSD: 0,
+        durationMs: Date.now() - startedAt,
+        errorCode: 'internal_error',
+        errorMessage: message,
+      });
+      // Best-effort flush before exit.
+      process.stdout.write('', () => process.exit(1));
+    },
+    unhandledRejection: (err: unknown) => {
+      if (__isAutopilotEnvelopeWritten()) {
+        process.exit(1);
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      writeAutopilotEnvelope({
+        runId: null,
+        status: 'failed',
+        exitCode: 1,
+        phases: [],
+        totalCostUSD: 0,
+        durationMs: Date.now() - startedAt,
+        errorCode: 'internal_error',
+        errorMessage: message,
+      });
+      process.stdout.write('', () => process.exit(1));
+    },
+  };
+  process.on('uncaughtException', handlers.uncaughtException);
+  process.on('unhandledRejection', handlers.unhandledRejection);
+  return {
+    handlers,
+    remove: () => {
+      process.removeListener('uncaughtException', handlers.uncaughtException);
+      process.removeListener('unhandledRejection', handlers.unhandledRejection);
+    },
+  };
+}
+
+/** Translate the orchestrator's internal phase summary status into the
+ *  envelope's bounded enum. Pre-run failures and unstarted phases are
+ *  reported as `failed`; replay short-circuits map to `skipped-replay`. */
+function toEnvelopePhaseStatus(
+  status: AutopilotPhaseSummary['status'],
+): AutopilotPhaseResult['status'] {
+  switch (status) {
+    case 'success':
+      return 'success';
+    case 'failed':
+    case 'not-run':
+      return 'failed';
+    case 'skipped':
+      return 'skipped-replay';
+    default: {
+      const _exhaustive: never = status;
+      void _exhaustive;
+      return 'failed';
+    }
+  }
+}
+
+/** Map an internal `AutopilotResult.errorCode` (string, possibly
+ *  unrecognized) onto the bounded `AutopilotErrorCode` enum. Unknown
+ *  values fall back to `phase_failed` so CI consumers always get a
+ *  member of the published enum. */
+function narrowErrorCode(
+  code: string | undefined,
+): AutopilotErrorCode | undefined {
+  if (code === undefined) return undefined;
+  if ((AUTOPILOT_ERROR_CODES as readonly string[]).includes(code)) {
+    return code as AutopilotErrorCode;
+  }
+  return 'phase_failed';
+}
+
+/** Build the envelope's `AutopilotJsonResult` from the orchestrator's
+ *  internal `AutopilotResult`. Pure projection — no IO. */
+function resultToJsonResult(result: AutopilotResult): AutopilotJsonResult {
+  const failedIdx = result.phases.findIndex(p => p.status === 'failed');
+  const errorCode = narrowErrorCode(result.errorCode);
+  const status: 'success' | 'failed' = result.exitCode === 0 ? 'success' : 'failed';
+  const phases: AutopilotPhaseResult[] = result.phases.map(p => ({
+    name: p.name,
+    status: toEnvelopePhaseStatus(p.status),
+    costUSD: p.costUSD,
+    durationMs: p.durationMs,
+  }));
+  const exitCode = computeAutopilotExitCode(errorCode);
+  // Defensive: if narrowErrorCode mapped us off the canonical exit code (e.g.
+  // an internal `errorCode: 'concurrency_lock'` → fallback `phase_failed`)
+  // prefer the orchestrator's authoritative `exitCode` so we don't disagree
+  // with the legacy text-mode path. The mapping above is the canonical
+  // translation; this is the safety belt.
+  const finalExitCode: 0 | 1 | 2 | 78 = (() => {
+    if (status === 'success') return 0;
+    if (errorCode !== undefined) return exitCode;
+    // Fall back to whatever the orchestrator returned, clamped to the
+    // documented set.
+    const ec = result.exitCode;
+    if (ec === 0 || ec === 1 || ec === 2 || ec === 78) return ec;
+    return 1;
+  })();
+  const out: AutopilotJsonResult = {
+    runId: result.runId,
+    status,
+    exitCode: finalExitCode,
+    phases,
+    totalCostUSD: result.totalCostUSD,
+    durationMs: result.durationMs,
+  };
+  if (errorCode !== undefined) out.errorCode = errorCode;
+  if (result.errorMessage !== undefined) out.errorMessage = result.errorMessage;
+  if (failedIdx >= 0) {
+    out.failedAtPhase = failedIdx;
+    out.failedPhaseName = result.phases[failedIdx]!.name;
+  }
+  return out;
+}
+
+/** v6.2.2 entrypoint for `claude-autopilot autopilot --json`.
+ *
+ *  Wraps `runAutopilot` (which already handles pre-run failures inline by
+ *  returning an `AutopilotResult` with `runId: null` + populated
+ *  `errorCode` / `errorMessage`) and emits exactly one envelope on stdout.
+ *  Process-level fatal handlers (codex WARNING #2) catch async failures
+ *  that would otherwise bypass our try/catch.
+ *
+ *  Returns the exit code the dispatcher should propagate via
+ *  `process.exit`. */
+export async function runAutopilotWithJsonEnvelope(
+  options: AutopilotJsonOptions = {},
+): Promise<number> {
+  const startedAt = Date.now();
+  const installHandlers = options.__testInstallProcessHandlers !== false; // default true
+  const handlerHandle = installHandlers
+    ? installAutopilotJsonProcessHandlers(startedAt)
+    : null;
+
+  // Force `__silent` so the orchestrator's own banner stdout writes don't
+  // pollute the envelope. Per spec "Channel discipline" — stdout in --json
+  // mode is the envelope and ONLY the envelope.
+  const innerOptions: AutopilotOptions = {
+    ...options,
+    __silent: true,
+  };
+
+  let exitCode: 0 | 1 | 2 | 78 = 1;
+  try {
+    let result: AutopilotResult;
+    try {
+      result = await runAutopilot(innerOptions);
+    } catch (err) {
+      // Orchestrator threw past its own try/catch — surface as
+      // internal_error envelope. Non-GuardrailError throws here are usually
+      // bugs; we still emit a deterministic envelope so CI sees something
+      // parseable.
+      const message = err instanceof Error ? err.message : String(err);
+      const errorCode: AutopilotErrorCode =
+        err instanceof GuardrailError &&
+        (AUTOPILOT_ERROR_CODES as readonly string[]).includes(err.code)
+          ? (err.code as AutopilotErrorCode)
+          : 'internal_error';
+      const ec = computeAutopilotExitCode(errorCode);
+      writeAutopilotEnvelope({
+        runId: null,
+        status: 'failed',
+        exitCode: ec,
+        phases: [],
+        totalCostUSD: 0,
+        durationMs: Date.now() - startedAt,
+        errorCode,
+        errorMessage: message,
+      });
+      await new Promise<void>(resolve => process.stdout.write('', () => resolve()));
+      exitCode = ec;
+      return exitCode;
+    }
+
+    const jsonResult = resultToJsonResult(result);
+    writeAutopilotEnvelope(jsonResult);
+    await new Promise<void>(resolve => process.stdout.write('', () => resolve()));
+    exitCode = jsonResult.exitCode;
+
+    // Test seam — emulate a finalization throw AFTER the envelope is on
+    // disk so the latch test can verify uncaughtException handlers no-op.
+    if (typeof options.__testThrowAfterEnvelope === 'function') {
+      options.__testThrowAfterEnvelope();
+    }
+
+    return exitCode;
+  } finally {
+    if (handlerHandle) handlerHandle.remove();
+  }
 }
 
 // Re-export so the dispatcher can mention it in --help without importing
