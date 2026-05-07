@@ -2,6 +2,32 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 6.2.0 — Multi-phase orchestrator (`claude-autopilot autopilot`) (2026-05-07)
+
+**Headline.** New top-level `claude-autopilot autopilot` verb runs `scan → spec → plan → implement` under **one runId**. The pre-v6.2 chain (`scan && spec && plan && implement`) created four separate runs with no parent — the orchestrator collapses them into a single ledger so `claude-autopilot runs watch <id>` covers the whole pipeline and a `--budget=$25` cap ticks down across phases instead of resetting per verb.
+
+**What's in.**
+- **`claude-autopilot autopilot [options]`** — sequential N-phase orchestrator. Engine-on REQUIRED (rejected at pre-flight if `--no-engine` / `CLAUDE_AUTOPILOT_ENGINE=off` / `engine.enabled: false`). Lifecycle: `createRun({ phases })` → per-phase `buildPhase + runPhase` → emit `run.complete` exactly once → refresh state snapshot → release lock in `finally`. Non-interactive (a `pause` budget decision becomes hard-fail) so it works in CI without prompting.
+- **`build<Phase>Phase()` builders** extracted from `scan`, `spec`, `plan`, `implement`. Each verb's existing `runX(options)` continues to call its builder internally — direct CLI behavior is byte-for-byte identical to v6.1. Per-verb parity tests (`tests/cli/<verb>-builder-parity.test.ts`) compare stdout / stderr / `events.ndjson` between the legacy entry and the explicit builder + `runPhaseWithLifecycle` path.
+- **Phase registry** at `src/core/run-state/phase-registry.ts`. `as const` + per-entry `satisfies PhaseRegistration<I, O>` preserves per-phase I/O typing through dynamic dispatch (per codex review NOTE #5). `getPhase(name)`, `listPhaseNames()`, and `validatePhaseNames(names)` are the public surface; `--phases=<csv>` validation lives here.
+- **Run-scope budget** — `BudgetConfig.scope: 'phase' | 'run'` (default `'phase'` for back-compat). When `scope === 'run'` the orchestrator's per-phase budget gates resolve against cross-phase `phase.cost` totals so the `$25` demo narrative ticks down across the whole pipeline. `sumPhaseCost(events, '*')` cross-phase overload added. Both `BudgetCheck.scope` and `BudgetCheckEvent.scope` carry the resolution forward to observers (`runs show <id> --events`, future cost dashboards). Per codex review WARNING #2 — pulled forward into v6.2.0 (was deferred to v6.2.2 in the initial draft).
+- **Exit-code matrix** (per codex review WARNING #3) — 0 success, 78 budget_exceeded, 2 engine error (`lock_held` / `corrupted_state` / `partial_write`), 1 everything else. Phase failure wins over finalization error.
+- **CLI surface**: `--mode=full` (default — `scan → spec → plan → implement`), `--phases=<csv>` for custom lists, `--budget=<usd>` for the run-scope cap. `--mode=fix` and `--mode=review` reserved for v6.2.1+; `--json` envelope reserved for v6.2.2.
+
+**Tests.** Baseline 1492 → 1509 (+17 new):
+- 4 builder-parity tests (`scan`, `spec`, `plan`, `implement`) covering stdout / stderr / events triple-snapshot.
+- 6 run-scope budget tests in `tests/run-state/budget.test.ts` covering scope flag default, run-scope happy path, run-scope cap exceeded across phases, Layer 1 advisory in run-scope, and phase/run scope math equivalence (regression guard).
+- 7 orchestrator integration tests in `tests/cli/autopilot.test.ts` covering: 3-phase happy path, scan-failure phase 0, run-scope budget exceeded → exit 78, resume lookup `already-complete` short-circuit, `--phases=invalid,scan` → exit 1 invalid_config no run dir, `CLAUDE_AUTOPILOT_ENGINE=off` → exit 1 invalid_config, `cliEngine: false` → exit 1 invalid_config.
+
+**Out of scope (deliberate, see spec for full list).**
+- `migrate`, `pr` — gated on per-phase idempotency contracts (preflight readback + externalRef recorded BEFORE side-effect). v6.2.1.
+- `--mode=fix`, `--mode=review` — v6.2.1+.
+- `--json` envelope — v6.2.2.
+- Parallel phase execution. Sequential by design.
+- Interactive prompts inside the orchestrator. CI/scripts get deterministic exit codes; pause budget decisions hard-fail.
+
+**Spec.** docs/specs/v6.2-multi-phase-orchestrator.md (Codex-reviewed: 1 CRITICAL + 3 WARNING + 3 NOTE folded back into the spec before implementation).
+
 ## 6.1.0 — Default flip: engine on by default + `--no-engine` deprecated (2026-05-07)
 
 **Headline.** The Run State Engine is now ON by default. Bare
