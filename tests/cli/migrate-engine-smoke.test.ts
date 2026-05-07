@@ -80,11 +80,15 @@ function makeFakeArtifact(opts: {
 }
 
 describe('migrate --engine smoke (v6.0.8)', () => {
-  it('engine off (default): no run dir / no engine artifacts', async () => {
+  it('engine off (cliEngine: false, legacy escape hatch): no run dir / no engine artifacts', async () => {
+    // v6.1 flipped the default to ON. To exercise the engine-off path we
+    // now must opt out explicitly — the escape hatch survives one minor
+    // version (removed in v7).
     const cwd = tmpProject();
     try {
       const out = await runMigrate({
         cwd,
+        cliEngine: false,
         nonInteractive: true,
         __testDispatch: async () => makeFakeArtifact({
           status: 'skipped',

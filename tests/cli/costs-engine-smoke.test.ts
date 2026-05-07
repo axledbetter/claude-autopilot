@@ -74,19 +74,15 @@ function findRunDir(cwd: string): string | null {
 }
 
 describe('costs --engine smoke (v6.0.2)', () => {
-  it('engine off: no run dir / no engine artifacts (back-compat string-arg form)', async () => {
+  it('back-compat string-arg form: runCosts(cwd) still resolves (v6.1: engine on by default)', async () => {
+    // Bare-string call form (the legacy `runCosts(cwd)` shape used by
+    // tests/costs.test.ts and the MCP handlers). Must remain supported.
+    // v6.1 flipped the default to ON, so the string-arg path now creates a
+    // run dir as well — but the call signature must keep working.
     const cwd = tmpProject();
     try {
-      // Bare-string call form (the legacy `runCosts(cwd)` shape used by
-      // tests/costs.test.ts and the MCP handlers). Must remain supported.
       const exit = await runCosts(cwd);
       assert.equal(exit, 0);
-      const runs = path.join(cwd, '.guardrail-cache', 'runs');
-      assert.equal(
-        fs.existsSync(runs),
-        false,
-        `engine-off path should not create ${runs} — got dir`,
-      );
     } finally {
       cleanup(cwd);
     }

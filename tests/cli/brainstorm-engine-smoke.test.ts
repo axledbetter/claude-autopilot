@@ -54,23 +54,21 @@ function findRunDir(cwd: string): string | null {
 }
 
 describe('brainstorm --engine smoke (v6.0.3)', () => {
-  it('engine off (default): no run dir / no engine artifacts', async () => {
+  it('engine on (v6.1 default): creates a run dir even without --engine', async () => {
+    // v6.1+ flipped the built-in default to ON. Bare invocation now
+    // produces engine artifacts.
     const cwd = tmpProject();
     try {
       const exit = await runBrainstorm({ cwd, __silent: true });
       assert.equal(exit, 0);
       const runs = path.join(cwd, '.guardrail-cache', 'runs');
-      assert.equal(
-        fs.existsSync(runs),
-        false,
-        `engine-off path should not create ${runs} — got dir`,
-      );
+      assert.equal(fs.existsSync(runs), true, 'v6.1 default = engine on, expected run dir');
     } finally {
       cleanup(cwd);
     }
   });
 
-  it('engine off (cliEngine: false): no run dir / no engine artifacts', async () => {
+  it('engine off (cliEngine: false): no run dir / no engine artifacts (legacy escape hatch)', async () => {
     const cwd = tmpProject();
     try {
       const exit = await runBrainstorm({ cwd, cliEngine: false, __silent: true });

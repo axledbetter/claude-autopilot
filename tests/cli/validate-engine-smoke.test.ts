@@ -59,18 +59,13 @@ function findRunDir(cwd: string): string | null {
 }
 
 describe('validate --engine smoke (v6.0.5)', () => {
-  it('engine off (default): no run dir / no engine artifacts; validate log written', async () => {
+  it('engine on (v6.1 default): validate log still written and run dir created', async () => {
     const cwd = tmpProject();
     try {
       const exit = await runValidate({ cwd });
       assert.equal(exit, 0);
       const runs = path.join(cwd, '.guardrail-cache', 'runs');
-      assert.equal(
-        fs.existsSync(runs),
-        false,
-        `engine-off path should not create ${runs} — got dir`,
-      );
-      // The validate-log stub is the verb's output regardless of engine state.
+      assert.equal(fs.existsSync(runs), true, 'v6.1 default = engine on, expected run dir');
       const validateDir = path.join(cwd, '.guardrail-cache', 'validate');
       assert.ok(fs.existsSync(validateDir), 'validate log dir should exist');
       const validateLogs = fs.readdirSync(validateDir);

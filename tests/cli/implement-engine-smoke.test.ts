@@ -59,17 +59,13 @@ function findRunDir(cwd: string): string | null {
 }
 
 describe('implement --engine smoke (v6.0.7)', () => {
-  it('engine off (default): no run dir / no engine artifacts; implement log written', async () => {
+  it('engine on (v6.1 default): implement log still written and run dir created', async () => {
     const cwd = tmpProject();
     try {
       const exit = await runImplement({ cwd });
       assert.equal(exit, 0);
       const runs = path.join(cwd, '.guardrail-cache', 'runs');
-      assert.equal(
-        fs.existsSync(runs),
-        false,
-        `engine-off path should not create ${runs} — got dir`,
-      );
+      assert.equal(fs.existsSync(runs), true, 'v6.1 default = engine on, expected run dir');
       // The implement-log stub is the verb's output regardless of engine state.
       const implementDir = path.join(cwd, '.guardrail-cache', 'implement');
       assert.ok(fs.existsSync(implementDir), 'implement log dir should exist');

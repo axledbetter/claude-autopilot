@@ -88,8 +88,13 @@ const DEFAULT_CONFIG: GuardrailConfig = { configVersion: 1 };
 // ---------------------------------------------------------------------------
 
 describe('runPhaseWithLifecycle — engine-off path', () => {
-  it('calls runEngineOff when engine is disabled (default v6.0)', async () => {
+  it('calls runEngineOff when engine is disabled (--no-engine explicit opt-out, v6.1+)', async () => {
+    // v6.1+ flipped the default to ON, so engine-off requires an explicit
+    // opt-out (CLI flag here). v7 removes this escape hatch entirely.
     const cwd = tmpProject();
+    // Suppress the deprecation banner the helper now writes on engine-off.
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (((_: string | Uint8Array) => true) as unknown) as typeof process.stderr.write;
     try {
       let offCalled = false;
       const result = await runPhaseWithLifecycle<NoopInput, NoopOutput>({
@@ -97,7 +102,7 @@ describe('runPhaseWithLifecycle — engine-off path', () => {
         phase: makeSuccessPhase(),
         input: { tag: 'engine-off' },
         config: DEFAULT_CONFIG,
-        cliEngine: undefined,
+        cliEngine: false,
         envEngine: undefined,
         runEngineOff: async () => {
           offCalled = true;
@@ -112,12 +117,40 @@ describe('runPhaseWithLifecycle — engine-off path', () => {
       const runs = path.join(cwd, '.guardrail-cache', 'runs');
       assert.equal(fs.existsSync(runs), false, 'engine-off must not create run dir');
     } finally {
+      process.stderr.write = originalWrite;
+      cleanup(cwd);
+    }
+  });
+
+  it('v6.1 default flip: undefined CLI/env + empty config → engine ON (no longer reaches engine-off)', async () => {
+    // Pinning the v6.1 behavior at the helper boundary. With nothing set,
+    // the helper now creates a run dir and runs the engine-on path.
+    const cwd = tmpProject();
+    try {
+      const result = await runPhaseWithLifecycle<NoopInput, NoopOutput>({
+        cwd,
+        phase: makeSuccessPhase({ name: 'v61-default' }),
+        input: { tag: 'engine-on-by-default' },
+        config: DEFAULT_CONFIG,
+        cliEngine: undefined,
+        envEngine: undefined,
+        runEngineOff: async () => {
+          throw new Error('runEngineOff must NOT be called on the v6.1 default (engine on)');
+        },
+      });
+      assert.equal(result.output.tag, 'engine-on-by-default');
+      assert.ok(result.runId, 'runId must be populated on the v6.1 default');
+      assert.ok(result.runDir, 'runDir must be populated on the v6.1 default');
+      assert.equal(readState(result.runDir!).status, 'success');
+    } finally {
       cleanup(cwd);
     }
   });
 
   it('--no-engine wins over env on (CLI > env precedence)', async () => {
     const cwd = tmpProject();
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (((_: string | Uint8Array) => true) as unknown) as typeof process.stderr.write;
     try {
       const result = await runPhaseWithLifecycle<NoopInput, NoopOutput>({
         cwd,
@@ -132,12 +165,18 @@ describe('runPhaseWithLifecycle — engine-off path', () => {
       assert.equal(result.runDir, null);
       assert.equal(fs.existsSync(path.join(cwd, '.guardrail-cache', 'runs')), false);
     } finally {
+      process.stderr.write = originalWrite;
       cleanup(cwd);
     }
   });
 
-  it('config engine.enabled=false beats default (config > default precedence)', async () => {
+  it('config engine.enabled=false beats default (config > default precedence, still works in v6.1)', async () => {
+    // v6.1 flipped the default to ON, but explicit `engine.enabled: false`
+    // in config STILL wins per precedence — the escape hatch survives one
+    // minor version. v7 removes it.
     const cwd = tmpProject();
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (((_: string | Uint8Array) => true) as unknown) as typeof process.stderr.write;
     try {
       const result = await runPhaseWithLifecycle<NoopInput, NoopOutput>({
         cwd,
@@ -151,8 +190,67 @@ describe('runPhaseWithLifecycle — engine-off path', () => {
       assert.equal(result.runId, null);
       assert.equal(fs.existsSync(path.join(cwd, '.guardrail-cache', 'runs')), false);
     } finally {
+      process.stderr.write = originalWrite;
       cleanup(cwd);
     }
+  });
+
+  it('v6.1 deprecation banner: explicit --no-engine prints to stderr', async () => {
+    // Pin the deprecation banner copy + emission point at the helper boundary.
+    const cwd = tmpProject();
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    const stderrLines: string[] = [];
+    process.stderr.write = (((chunk: string | Uint8Array) => {
+      stderrLines.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+      return true;
+    }) as unknown) as typeof process.stderr.write;
+    try {
+      await runPhaseWithLifecycle<NoopInput, NoopOutput>({
+        cwd,
+        phase: makeSuccessPhase(),
+        input: { tag: 't' },
+        config: DEFAULT_CONFIG,
+        cliEngine: false,
+        envEngine: undefined,
+        runEngineOff: async () => ({ tag: 'off' }),
+      });
+    } finally {
+      process.stderr.write = originalWrite;
+      cleanup(cwd);
+    }
+    const captured = stderrLines.join('');
+    assert.match(captured, /\[deprecation]/);
+    assert.match(captured, /--no-engine/);
+    assert.match(captured, /engine\.enabled: false/);
+    assert.match(captured, /v7/);
+  });
+
+  it('v6.1 deprecation banner: NOT emitted on the engine-on default path', async () => {
+    const cwd = tmpProject();
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    const stderrLines: string[] = [];
+    process.stderr.write = (((chunk: string | Uint8Array) => {
+      stderrLines.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+      return true;
+    }) as unknown) as typeof process.stderr.write;
+    try {
+      await runPhaseWithLifecycle<NoopInput, NoopOutput>({
+        cwd,
+        phase: makeSuccessPhase(),
+        input: { tag: 't' },
+        config: DEFAULT_CONFIG,
+        cliEngine: undefined,
+        envEngine: undefined,
+        runEngineOff: async () => {
+          throw new Error('engine-off must not run on the v6.1 default');
+        },
+      });
+    } finally {
+      process.stderr.write = originalWrite;
+      cleanup(cwd);
+    }
+    const captured = stderrLines.join('');
+    assert.doesNotMatch(captured, /\[deprecation]/);
   });
 });
 

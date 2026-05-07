@@ -40,7 +40,11 @@ import { createRun } from './runs.ts';
 import { runPhase, type RunPhase } from './phase-runner.ts';
 import { appendEvent, replayState } from './events.ts';
 import { writeStateSnapshot } from './state.ts';
-import { resolveEngineEnabled, type ResolveEngineResult } from './resolve-engine.ts';
+import {
+  resolveEngineEnabled,
+  emitEngineOffDeprecationWarning,
+  type ResolveEngineResult,
+} from './resolve-engine.ts';
 import type { GuardrailConfig } from '../config/types.ts';
 
 // Inline ANSI codes — same shape every wrapped verb uses. Kept here so the
@@ -143,7 +147,12 @@ export async function runPhaseWithLifecycle<I, O>(
   if (!engineResolved.enabled) {
     // Engine off — call the caller's legacy path. No run dir, no events,
     // no lifecycle work. Behavior is byte-for-byte identical to pre-engine
-    // versions of the verb.
+    // versions of the verb. v6.1+ emits a one-line stderr deprecation
+    // notice when the user explicitly opted out (CLI / env / config); the
+    // v6.1 default is `enabled: true`, so a `'default'` source can't reach
+    // this branch and the deprecation helper no-ops on the `enabled: true`
+    // path. v7 removes the opt-out entirely.
+    emitEngineOffDeprecationWarning(engineResolved);
     const output = await runEngineOff();
     return { output, runId: null, runDir: null };
   }
