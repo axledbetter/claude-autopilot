@@ -104,9 +104,13 @@ describe('audit.events immutability', () => {
       .eq('organization_id', aliceOrg)
       .order('id', { ascending: true });
 
-    assert.ok((rows?.length ?? 0) >= 2);
-    for (let i = 1; i < rows!.length; i++) {
-      assert.equal(rows![i].prev_hash, rows![i - 1].this_hash, `chain break at row ${i}`);
+    const chainRows = rows ?? [];
+    assert.ok(chainRows.length >= 2);
+    for (let i = 1; i < chainRows.length; i++) {
+      const cur = chainRows[i];
+      const prev = chainRows[i - 1];
+      if (!cur || !prev) continue;
+      assert.equal(cur.prev_hash, prev.this_hash, `chain break at row ${i}`);
     }
   });
 

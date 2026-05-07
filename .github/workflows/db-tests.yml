@@ -23,13 +23,17 @@ jobs:
       - run: npm ci
 
       - name: Install Supabase CLI
-        run: npm install -g supabase
+        # Official action: installs the supabase binary to PATH (npm install -g
+        # supabase doesn't actually expose the binary on most CI images).
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
 
       - name: Start local Supabase
         run: |
           cd db && supabase start
           # Print URLs + keys for the test step
-          supabase status --output json > ../supabase-status.json
+          supabase status --workdir db --output json > supabase-status.json
 
       - name: Apply migrations
         run: |
@@ -39,10 +43,10 @@ jobs:
         env:
           SUPABASE_URL: http://127.0.0.1:54321
         run: |
-          export SUPABASE_ANON_KEY=$(jq -r '.ANON_KEY' supabase-status.json)
-          export SUPABASE_SERVICE_ROLE_KEY=$(jq -r '.SERVICE_ROLE_KEY' supabase-status.json)
+          export SUPABASE_ANON_KEY=$(jq -r '.ANON_KEY' db/supabase-status.json)
+          export SUPABASE_SERVICE_ROLE_KEY=$(jq -r '.SERVICE_ROLE_KEY' db/supabase-status.json)
           npm run test:rls
 
       - name: Stop Supabase
         if: always()
-        run: cd db && supabase stop --no-backup
+        run: cd db && supabase stop --no-backup || true

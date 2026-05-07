@@ -41,7 +41,9 @@ describe('entitlements RLS', () => {
       .select('plan, limits').eq('organization_id', aliceOrg);
     assert.equal(error, null);
     assert.equal(data?.length, 1);
-    assert.equal(data?.[0].plan, 'small');
+    const first = data?.[0];
+    assert.ok(first, 'entitlement row should exist');
+    assert.equal(first.plan, 'small');
   });
 
   it('Member (non-admin) CANNOT read entitlement (billing-sensitive)', async () => {
