@@ -2,6 +2,16 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 6.3.0-pre.3 (2026-05-07)
+
+**v7.0 Phase 2.2 — ingest API + tamper-evident events.** First server endpoints in the repo. Three routes (`POST /api/upload-session`, `PUT /api/runs/:runId/events/:seq`, `POST /api/runs/:runId/finalize`) implement signed-session uploads with hash-chain verification and idempotent finalize. Per-chunk immutable Storage objects, DB row lock + unique constraint + Storage `upsert: false` triple-defense against concurrent corruption. Two-phase write ordering with `upload_session_chunks.status` for crash recovery. Dedicated `UPLOAD_SESSION_JWT_SECRET` (HS256, 15-min TTL, full claim hardening). RFC 8785 (JCS) state canonicalization. 38 new tests across upload-session, events-chunk, finalize, hash-chain vectors, JCS vectors, JWT, and storage helpers.
+
+**Migration:** `data/deltas/20260507000000_phase2_2_ingest.sql` — adds `upload_session_chunks` table, augments `upload_sessions` with `next_expected_seq` + `chain_tip_hash`, adds `runs.state_sha256` + `runs.events_index_path`, partial unique index on `upload_sessions(run_id) WHERE consumed_at IS NULL`, CHECK constraints on hash-format columns, plus `claim_chunk_slot` and `mark_chunk_persisted` SECURITY DEFINER RPCs. Operator runs via `/migrate` post-merge.
+
+**New env var:** `UPLOAD_SESSION_JWT_SECRET` — set in Vercel + local `.env.local`. Generate with `openssl rand -hex 32`. NOT shared with `SUPABASE_JWT_SECRET`.
+
+**Storage bucket:** `run-uploads` — operator one-time setup in the Supabase project (private; service-role-only writes).
+
 ## 6.3.0-pre.2 (2026-05-07)
 
 **v7.0 Phase 2.1 — Next.js scaffold + Supabase Auth (Free tier sign-in).**
