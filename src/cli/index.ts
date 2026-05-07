@@ -1443,6 +1443,15 @@ switch (subcommand) {
     break;
   }
 
+  case 'dashboard': {
+    // v7.0 Phase 2.3 — hosted dashboard verbs.
+    //   claude-autopilot dashboard {login,logout,status,upload <runId>}
+    const { runDashboardVerb } = await import('./dashboard/index.ts');
+    const exit = await runDashboardVerb({ argv: args.slice(1) });
+    process.exit(exit);
+    break;
+  }
+
   default:
     console.error(`\x1b[31m[claude-autopilot] Unknown subcommand: "${subcommand}"\x1b[0m`);
     printUsage();

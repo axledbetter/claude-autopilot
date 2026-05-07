@@ -92,6 +92,13 @@ export const HELP_GROUPS: HelpGroup[] = [
     ],
   },
   {
+    name: 'Dashboard',
+    tagline: 'hosted product — login, status, manual upload (v7.0 Phase 2.3)',
+    verbs: [
+      { verb: 'dashboard', summary: 'Manage hosted dashboard auth + uploads: dashboard {login,logout,status,upload <runId>}' },
+    ],
+  },
+  {
     name: 'Advanced',
     tagline: 'server / experimental — hidden from welcome screen',
     verbs: [
@@ -220,6 +227,26 @@ export const HELP_OPTIONS: Record<string, string> = {
     claude-autopilot autopilot
     claude-autopilot autopilot --budget 25
     claude-autopilot autopilot --phases=scan,spec,plan`,
+  dashboard: `Options (dashboard):
+  login                Open browser, mint API key via loopback callback
+  logout               Revoke server-side, delete local config
+  status               Show login state + memberships + last upload
+  upload <runId>       Manually upload a run (resume an interrupted auto-upload)
+
+  Auto-upload: after \`dashboard login\`, every engine-on autopilot run
+  uploads to autopilot.dev when run.complete fires. Failure prints a
+  resume command and never fails the run. Opt out per-run with
+  \`--no-upload\` or globally with \`CLAUDE_AUTOPILOT_UPLOAD=off\`.
+
+  Env:
+    AUTOPILOT_DASHBOARD_BASE_URL   Override base URL (default https://autopilot.dev)
+    CLAUDE_AUTOPILOT_HOME          Override config dir (default ~/.claude-autopilot)
+    CLAUDE_AUTOPILOT_UPLOAD=off    Skip auto-upload at run.complete
+
+  Examples:
+    claude-autopilot dashboard login
+    claude-autopilot dashboard status
+    claude-autopilot dashboard upload 01HFGB...`,
   implement: `Options (implement):
   --context <text>     Optional context note injected into the implement log
   --plan <path>        Plan file the implement phase consumed (e.g. docs/plans/<slug>.md)
