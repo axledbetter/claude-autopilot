@@ -47,6 +47,77 @@ run.complete events. Concurrent dispatch — landed alongside v6.0.8
 - Test count: 1408 → 1414 (+6). `npm test` clean. `npx tsc --noEmit`
   clean except pre-existing fixture errors.
 
+## v6.0.8 — wrap `migrate` through `runPhaseWithLifecycle` (2026-05-06)
+
+**First side-effecting phase under the engine.** v6.0.1 → v6.0.6 wrapped
+eight read-only / advisory verbs (`scan`, `costs`, `fix`, `brainstorm`,
+`spec`, `plan`, `review`, `validate`). v6.0.8 wraps `migrate` — the
+first verb that mutates external state (database schema). Builds on the
+`runPhaseWithLifecycle` helper landed in v6.0.6 plus
+`ctx.emitExternalRef()` from inside the phase body for the
+`migration-version` ledger. No helper-shape changes needed.
+
+**Phase declarations** match the spec table at line 162 of
+`docs/specs/v6-run-state-engine.md`:
+
+```
+idempotent:     false   — dispatcher output varies by ledger state
+                          (N applied on attempt 1, 0 on attempt 2 even
+                          though both are operationally safe)
+hasSideEffects: true    — applies migrations, writes audit log,
+                          regenerates types, refreshes schema cache
+externalRefs:   migration-version, scoped `<env>:<name>` per applied
+                migration. Phase 6's resume gate will read these back
+                against the live `migration_state` to decide
+                skip-already-applied vs retry vs needs-human.
+```
+
+**Why `idempotent: false` even though the underlying Delegance migrate
+skill is ledger-guarded against double-apply:** at the *engine
+semantics* layer, `idempotent: true` means "re-running the phase against
+the same input produces equivalent output." A dispatch invocation that
+previously applied N migrations on attempt 1 and applies 0 on attempt 2
+(everything already in the ledger) DOES produce different output
+(different `appliedMigrations` list, different `status`). The spec's
+`idempotent: false` is correct.
+
+**Engine-off path is byte-for-byte identical to v6.0.7.** Same dispatch
+shape (`src/core/migrate/dispatcher.ts` unchanged), same render lines,
+same `--json` payload callback. CI / scripts that don't pass `--engine`
+are unaffected.
+
+| File | Role |
+|---|---|
+| `src/cli/migrate.ts` (new) | Engine-wrap shell calling `runMigrate(opts) → { exitCode, result }`. Defines `MigrateInput` / `MigrateOutput` (JSON-serializable), `RunPhase<MigrateInput, MigrateOutput>` with `name: 'migrate'`, `idempotent: false`, `hasSideEffects: true`. Phase body invokes the dispatcher and emits one `migration-version` externalRef per applied migration via `ctx.emitExternalRef({ kind: 'migration-version', id: '<env>:<name>' })`. Test seam: `__testDispatch` injects a fake dispatcher so smoke tests can exercise the engine-wrap path without spawning a child process or hitting a real database |
+| `src/cli/index.ts` | dispatcher case for `migrate` routes through `runMigrate` instead of inlining `runMigrateDispatch`; threads `cliEngine` + `envEngine`. Engine-off byte-for-byte unchanged — same `--json` payload callback, same render |
+| `src/cli/help-text.ts` | per-verb Options block for `migrate` documents `--engine` / `--no-engine` + `--config`; GLOBAL_FLAGS_BLOCK breadcrumb cites v6.0.8 |
+| `tests/cli/migrate-engine-smoke.test.ts` (new) | 6 cases: engine off (default — no run dir), engine on (lifecycle events, state.json shape, idempotent: false + hasSideEffects: true declaration), externalRef emission per applied migration scoped by env, skipped status (zero externalRefs), dispatcher error → exit 1 + engine still records phase.success (domain failure ≠ engine failure), CLI `--no-engine` beats env on |
+| `docs/v6/wrapping-pipeline-phases.md` | phase-status table flips `migrate` to "WRAPPED in v6.0.8"; status line at top moves to "NINE phases wrapped"; new deviation note documents the ledger-vs-engine-semantics rationale |
+| `docs/v6/migration-guide.md` | "What works today" updated — three knobs now honored by `scan`, `costs`, `fix`, `brainstorm`, `spec`, `plan`, `review`, `validate`, `migrate` |
+| `docs/specs/v6-run-state-engine.md` | new "What was actually built (v6.0.8)" reconciliation block |
+
+**Test delta:** 1408 → 1414 (+6). Typecheck clean. All 1408 existing
+tests pass unchanged — the engine-off path for `migrate` is byte-for-
+byte identical to v6.0.7 (same dispatch shape, same render).
+
+**Concurrency note.** v6.0.7 (`implement`) and v6.0.9 (`pr`) are in
+flight on parallel worktrees, both targeting shared docs (CHANGELOG,
+recipe table, migration-guide) and `src/cli/{index,help-text}.ts`. The
+rebase contract: on push rejection, fetch + rebase + resolve conflicts
+keeping all wraps' contributions, re-test, push with `--force-with-lease`.
+
+**Not done in v6.0.8 — explicit non-goals:**
+- Wrapping `implement` and `pr`. Continues across v6.0.7 / v6.0.9
+  using the same helper plus `ctx.emitExternalRef()` for
+  `git-remote-push` (implement) and `github-pr` (pr).
+- Wiring Phase 6's `migration_state` read-back. The engine PERSISTS
+  `migration-version` externalRefs in v6.0.8; consulting them on
+  resume ships in Phase 6+. Until then, retries on side-effecting
+  phases require `--force-replay`.
+- Multi-phase pipeline orchestrator (autopilot's full
+  `brainstorm → spec → plan → ... → migrate → ...` flow under one runId).
+- Flipping the v6.0 built-in default to ON. v6.1 territory.
+
 ## v6.0.6 — `runPhaseWithLifecycle` helper (2026-05-06)
 
 **Tech-debt refactor, no behavior change.** v6.0.1 → v6.0.5 wrapped eight

@@ -2,7 +2,7 @@
 
 **Audience:** maintainers wiring v5.x pipeline phases through `runPhase` one PR at a time.
 
-**Status as of v6.0.7:** NINE phases wrapped — `scan` (v6.0.1), `costs` and `fix` (v6.0.2), `brainstorm` and `spec` (v6.0.3), `plan` and `review` (v6.0.4), `validate` (v6.0.5), plus `implement` (v6.0.7). v6.0.6 extracted the lifecycle boilerplate into `runPhaseWithLifecycle` — the recipe below now points at the helper instead of the raw `createRun` / `runPhase` / `appendEvent` / `writeStateSnapshot` calls each verb used to wire by hand. Subsequent v6.0.x point releases wrap the rest using this recipe; aim for one or two phases per PR so blast radius stays small and bugbot can catch regressions phase-by-phase.
+**Status as of v6.0.8:** NINE phases wrapped — `scan` (v6.0.1), `costs` and `fix` (v6.0.2), `brainstorm` and `spec` (v6.0.3), `plan` and `review` (v6.0.4), `validate` (v6.0.5), `implement` (v6.0.7), plus `migrate` (v6.0.8 — first side-effecting phase). v6.0.6 extracted the lifecycle boilerplate into `runPhaseWithLifecycle` — the recipe below now points at the helper instead of the raw `createRun` / `runPhase` / `appendEvent` / `writeStateSnapshot` calls each verb used to wire by hand. Only `pr` remains. Aim for one or two phases per PR so blast radius stays small and bugbot can catch regressions phase-by-phase.
 
 ---
 
@@ -19,7 +19,7 @@ Tracked in `docs/specs/v6-run-state-engine.md` "Idempotency rules + external ope
 | `brainstorm` | yes (v6.0.3 — see deviation note) | no | (none in v6.0.3; `spec-file` if/when the CLI verb grows a real LLM body) | **WRAPPED in v6.0.3** |
 | `spec` | yes (v6.0.3 — see deviation note) | no | (none in v6.0.3; `spec-file` if/when the CLI verb grows a real LLM body) | **WRAPPED in v6.0.3** |
 | `implement` | yes (v6.0.7 — see deviation note) | no (v6.0.7 — see deviation note) | (none in v6.0.7; `git-remote-push` if/when the CLI verb inlines the implement loop) | **WRAPPED in v6.0.7** |
-| `migrate` | no | yes | `migration-version` (per env) | NOT WRAPPED |
+| `migrate` | no (v6.0.8) | yes (v6.0.8) | `migration-version` (per env, scoped `<env>:<name>`) | **WRAPPED in v6.0.8** |
 | `validate` | yes (v6.0.5) | no (v6.0.5) | (none in v6.0.5 — see deviation note) | **WRAPPED in v6.0.5** |
 | `pr` | no | yes | `github-pr` | NOT WRAPPED |
 | `scan` | yes | no | (none in v6.0.1) | **WRAPPED in v6.0.1 (worked example below)** |
@@ -42,6 +42,27 @@ Tracked in `docs/specs/v6-run-state-engine.md` "Idempotency rules + external ope
 > top-of-file comments for the per-phase rationale.
 
 > **Deviation note for `review` (v6.0.4).** The spec table elsewhere in this repo (`docs/specs/v6-run-state-engine.md`) lists `review` with `idempotent: yes, hasSideEffects: no, externalRefs: review-comments`, which assumes the verb posts review comments to GitHub PRs. The v6.0.4 `review` CLI verb does **not** post anywhere — PR-side comment posting lives in `claude-autopilot pr --inline-comments` / `--post-comments` (a separate verb). The wrapped behavior is local-file-only (writes a review log stub under `.guardrail-cache/reviews/`), so `hasSideEffects: false` is correct for v6.0.4. If a future PR adds platform-side comment posting to this verb, both declarations will flip and a `review-comments` externalRef readback rule will need to land in the recipe.
+
+> **Note for `migrate` (v6.0.8).** First side-effecting phase to land
+> under the helper. Declares `idempotent: false, hasSideEffects: true,
+> externalRefs: migration-version (scoped <env>:<name>)` — matches the
+> spec table exactly. Why `idempotent: false` even though the underlying
+> Delegance migrate skill is ledger-guarded against double-apply: at the
+> *engine semantics* layer, `idempotent: true` means "re-running the
+> phase against the same input produces equivalent output." A dispatch
+> invocation that previously applied N migrations on attempt 1 and
+> applies 0 on attempt 2 (everything already in the ledger) DOES produce
+> different output (different `appliedMigrations` list, different
+> `status`). The spec's `idempotent: false` is correct. Each applied
+> migration emits `ctx.emitExternalRef({ kind: 'migration-version', id:
+> '<env>:<migration_name>' })` so Phase 6's resume gate can read back
+> the live ledger and decide skip-already-applied vs retry vs needs-
+> human. The `<env>:` prefix scopes the ref by target environment so
+> multi-env pipelines (dev → qa → prod) can disambiguate the same
+> migration across targets. See `src/cli/migrate.ts` top-of-file
+> rationale for the per-phase declaration; the wrap delegates to
+> `src/core/migrate/dispatcher.ts` (unchanged) for the actual stack.md
+> resolution / handshake / policy / execute / audit-log flow.
 
 > **Deviation note for `validate` (v6.0.5).** The spec table at line 161 of `docs/specs/v6-run-state-engine.md` lists `validate` with `idempotent: yes, hasSideEffects: no, externalRefs: sarif-artifact`. The v6.0.5 wrap matches the `idempotent: true, hasSideEffects: false` declaration but does **not** plumb a `sarif-artifact` externalRef. The reasoning: the v6.0.5 `validate` CLI verb is an engine-wrap shell pointing at the Claude Code `/validate` skill — the verb itself does not emit a SARIF artifact. SARIF emission lives in `claude-autopilot run --format sarif --output <path>` (a separate verb). The `sarif-artifact` reference is local-only file output (no remote upload), so the engine doesn't need a readback rule for it on resume — `idempotent: true` covers replay safety. If a future PR adds SARIF emission directly to this verb (or moves the `--format sarif` flag here), the wrap can add a `ctx.emitExternalRef({ kind: 'sarif-artifact', id: '<path>', observedAt: ... })` call after the file write lands. Until then, no ledger entry is needed because there's nothing to read back from.
 

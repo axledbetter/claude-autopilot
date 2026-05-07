@@ -218,7 +218,16 @@ export const HELP_OPTIONS: Record<string, string> = {
   migrate: `Options (migrate):
   --env <name>         Target environment from .autopilot/stack.md (default: dev)
   --dry-run            Run skill in dry-run mode (no side effects)
-  --yes                Required to apply prod migrations in CI`,
+  --yes                Required to apply prod migrations in CI
+  --config <path>      Path to config file (default: ./guardrail.config.yaml)
+  --engine             Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
+  --no-engine          Force the legacy stateless code path (overrides config / env)
+
+  Note: migrate is a side-effecting phase — re-running with --engine after a
+        prior phase.success requires --force-replay (Phase 6+) because the
+        engine cannot read back \`migration_state\` yet. Each applied
+        migration emits a \`migration-version\` externalRef under the run
+        for the resume gate.`,
   'migrate-doctor': `Options (migrate doctor / migrate-doctor):
   --fix                Apply auto-fixable mutations (legacy stack.md, skills/migrate/, schema_version)`,
   runs: `Sub-verbs (runs):
@@ -296,7 +305,7 @@ export const GLOBAL_FLAGS_BLOCK = `Global flags:
   --engine               Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
   --no-engine            Force the legacy stateless code path (overrides config / env)
                          Precedence: CLI > env (CLAUDE_AUTOPILOT_ENGINE) > config (engine.enabled) > built-in default
-                         v6.0.1: wired for \`scan\`. v6.0.2: wired for \`fix\` and \`costs\`. v6.0.3: wired for \`brainstorm\` and \`spec\`. v6.0.4: wired for \`plan\` and \`review\`. v6.0.5: wired for \`validate\`. v6.0.7: wired for \`implement\`. Other phases land in subsequent v6.0.x releases.`;
+                         v6.0.1: wired for \`scan\`. v6.0.2: wired for \`fix\` and \`costs\`. v6.0.3: wired for \`brainstorm\` and \`spec\`. v6.0.4: wired for \`plan\` and \`review\`. v6.0.5: wired for \`validate\`. v6.0.7: wired for \`implement\`. v6.0.8: wired for \`migrate\`. Other phases land in subsequent v6.0.x releases.`;
 
 /** Build the full two-level help text. Returned as a string so tests can assert against it without spawning. */
 export function buildHelpText(): string {
