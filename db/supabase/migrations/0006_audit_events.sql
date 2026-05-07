@@ -8,6 +8,11 @@
 
 -- pgcrypto provides digest() — required by audit.append() below.
 -- Codex CRITICAL: must be created BEFORE the function references it.
+-- Supabase pre-installs pgcrypto in the `extensions` schema. The audit
+-- function's search_path includes `extensions` so digest() resolves
+-- without explicit qualification (`CREATE EXTENSION ... WITH SCHEMA public`
+-- can fail when the extension is already installed elsewhere by the
+-- platform; safer to keep wherever Supabase put it and adjust search_path).
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE audit.events (
@@ -62,7 +67,7 @@ CREATE OR REPLACE FUNCTION audit.append(
 ) RETURNS BIGINT
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = audit, public
+SET search_path = audit, public, extensions
 AS $$
 DECLARE
   v_prev_hash TEXT;
