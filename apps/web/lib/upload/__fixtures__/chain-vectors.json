@@ -1,0 +1,24 @@
+[
+  {
+    "description": "single empty chunk",
+    "chunks": [
+      ""
+    ],
+    "expected_root": "66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925"
+  },
+  {
+    "description": "single ascii chunk 'hello\\n'",
+    "chunks": [
+      "aGVsbG8K"
+    ],
+    "expected_root": "2bfca97447a98d0e1536f5086a70c97912b3dae2c08f45fe96e3dccc43b03d6e"
+  },
+  {
+    "description": "two chunks, ndjson-shaped",
+    "chunks": [
+      "eyJldmVudCI6InJ1bi5zdGFydGVkIn0K",
+      "eyJldmVudCI6InJ1bi51c2FnZSIsImNvc3QiOjAuMDF9Cg=="
+    ],
+    "expected_root": "af6d85ee4b1dbe6ad1e1e581688ee6b4bd557e169aee98be0225f67d24ba6ea9"
+  }
+]
