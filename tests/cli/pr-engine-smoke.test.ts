@@ -98,7 +98,9 @@ function fakeRunCommand(): Promise<number> {
 }
 
 describe('pr --engine smoke (v6.0.9)', () => {
-  it('engine off (default): no run dir / no engine artifacts; runCommand still invoked', async () => {
+  it('engine on (v6.1 default): runCommand still invoked, run dir created', async () => {
+    // v6.1 flipped the default to ON. The verb's runCommand seam continues
+    // to fire either way; with the default flipped, a run dir is created too.
     const cwd = tmpProject();
     let runCommandCalled = false;
     try {
@@ -109,12 +111,8 @@ describe('pr --engine smoke (v6.0.9)', () => {
       });
       assert.equal(exit, 0);
       const runs = path.join(cwd, '.guardrail-cache', 'runs');
-      assert.equal(
-        fs.existsSync(runs),
-        false,
-        `engine-off path should not create ${runs} — got dir`,
-      );
-      assert.equal(runCommandCalled, true, 'engine-off path should still invoke runCommand');
+      assert.equal(fs.existsSync(runs), true, 'v6.1 default = engine on, expected run dir');
+      assert.equal(runCommandCalled, true, 'pr verb must still invoke runCommand');
     } finally {
       cleanup(cwd);
     }

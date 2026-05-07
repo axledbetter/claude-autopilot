@@ -2,6 +2,95 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 6.1.0 — Default flip: engine on by default + `--no-engine` deprecated (2026-05-07)
+
+**Headline.** The Run State Engine is now ON by default. Bare
+`claude-autopilot <verb>` invocations create a `.guardrail-cache/runs/<ulid>/`
+directory, emit typed NDJSON events on stderr, apply budget gates if
+`budgets:` is configured, and write a state snapshot — without any opt-in
+config. v6.0 shipped the engine OFF behind an explicit `engine.enabled: true`
+opt-in to give users control during a stabilization window; v6.1 closes
+that window.
+
+**Motivation — v6.0 stabilization criteria met.**
+- 10 of 10 pipeline phases wrapped through `runPhaseWithLifecycle`
+  (`scan` v6.0.1, `costs`/`fix` v6.0.2, `brainstorm`/`spec` v6.0.3,
+  `plan`/`review` v6.0.4, `validate` v6.0.5, `implement` v6.0.7,
+  `migrate` v6.0.8 — first side-effecting wrap with `migration-version`
+  externalRefs, `pr` v6.0.9 — second side-effecting wrap with `github-pr`
+  externalRefs).
+- Lifecycle helper extracted (v6.0.6) so all 10 wraps share the same
+  byte-for-byte engine-on / engine-off behavior.
+- Side-effecting wraps proven (`migrate` + `pr`) — externalRef ledger
+  + provider readback semantics exercised end-to-end.
+- Live adapter cert suite green (Vercel + Fly + Render).
+- `runs watch <id>` live cost/budget meter shipped (this release's
+  `v6.1.0-pre` entry below) — the YC-demo moment for the events stream.
+- `npm test` baseline: 1469 → 1492 (+23 net new this release; all green).
+
+**Deprecation.** `--no-engine`, `CLAUDE_AUTOPILOT_ENGINE=off|false|0|no`,
+and `engine.enabled: false` continue to work as the legacy escape hatch
+in v6.1.x. Each invocation that resolves to engine-off via one of those
+explicit opt-outs now prints a single-line stderr deprecation notice:
+
+```
+[deprecation] --no-engine / engine.enabled: false will be removed in v7. Migrate to engine-on (default).
+```
+
+The notice fires only on user-driven opt-outs (`source: 'cli' | 'env' |
+'config'`); the new (engine-on) default never trips it. **v7 removes
+the escape hatch** — `engine.enabled: false` becomes a config validation
+error and `--no-engine` / `CLAUDE_AUTOPILOT_ENGINE=off` are silently
+ignored.
+
+**Spec.** [`docs/specs/v6.1-default-flip.md`](docs/specs/v6.1-default-flip.md)
+is the canonical reference for what flipped, why, and the v7 follow-up.
+
+**Migration tips.**
+- If your CI parses stderr as free-form text and relies on the v5.x
+  shape, set `CLAUDE_AUTOPILOT_ENGINE=off` (or pass `--no-engine`)
+  to pin the legacy behavior. You'll see the deprecation notice on
+  every invocation until you remove it — that's expected.
+- If you opt out via config (`engine.enabled: false`), the same notice
+  fires on every invocation. Plan to remove that line before bumping
+  to v7.
+- Existing users on `engine.enabled: true` are no-op'd — your config
+  still wins via the same precedence rules.
+- See [`docs/v6/migration-guide.md#migrating-from-v60-to-v61`](docs/v6/migration-guide.md)
+  for the full upgrade walkthrough.
+
+**Test surface.**
+- `tests/run-state/resolve-engine.test.ts` — flipped 4 default-related
+  cases. New `v6.1 default-flip` describe block + `v6.1 deprecation
+  warning` describe block covering the predicate, the emitter, the
+  default `process.stderr` branch, and the `builtInDefault` override
+  path.
+- `tests/run-state/run-phase-with-lifecycle.test.ts` — added 4 new
+  cases pinning engine-on as the new default + the deprecation banner
+  firing on opt-out / staying silent on the new default.
+- 9 engine-smoke tests (`brainstorm`, `costs`, `implement`, `migrate`,
+  `plan`, `pr`, `review`, `spec`, `validate`) updated — the
+  "engine off (default)" cases are now "engine on (v6.1 default)";
+  the matching `cliEngine: false` cases stay as legacy-escape-hatch
+  coverage.
+
+**Files changed.**
+- `src/core/run-state/resolve-engine.ts` — new active default constant
+  `ENGINE_DEFAULT_V6_1 = true`. The deprecated `ENGINE_DEFAULT_V6_0`
+  export keeps its historical value (`false`) so out-of-tree consumers
+  who pinned that symbol get what the name promises; both constants are
+  removed in v7. New `emitEngineOffDeprecationWarning` helper +
+  `shouldWarnEngineOffDeprecation` predicate +
+  `ENGINE_OFF_DEPRECATION_MESSAGE` stable copy.
+- `src/core/run-state/run-phase-with-lifecycle.ts` — wires the
+  deprecation helper into the engine-off branch.
+- `docs/v6/migration-guide.md` — new "Migrating from v6.0 to v6.1"
+  section, updated precedence matrix, refreshed default-flip plan,
+  relabeled "What changes" table.
+- `README.md` — v6 section updated (engine on by default + v7 removal
+  timeline).
+- `package.json` — version `5.5.2` → `6.1.0`.
+
 ## v6.1.0-pre — `runs watch <id>` live cost meter (2026-05-07)
 
 **The YC-demo moment.** v6.0.x hardened the events.ndjson stream across

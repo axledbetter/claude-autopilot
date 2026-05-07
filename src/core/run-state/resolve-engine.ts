@@ -5,11 +5,19 @@
 // "Migration path (v5.6 → v6) + precedence matrix" + docs/v6/migration-guide.md
 // "How to opt in".
 //
+// v6.1 update — built-in default flipped from `false` → `true` per
+// docs/specs/v6.1-default-flip.md. Users who opt out explicitly via
+// `--no-engine`, `CLAUDE_AUTOPILOT_ENGINE=off|false|0|no`, or
+// `engine.enabled: false` in `guardrail.config.yaml` keep the legacy
+// (engine-off) behavior, but they now receive a deprecation warning —
+// the escape hatch goes away in v7. See `emitEngineOffDeprecationWarning`
+// below.
+//
 // Precedence (highest wins):
 //   1. CLI flag         — `--engine` / `--no-engine`
 //   2. Env var          — `CLAUDE_AUTOPILOT_ENGINE=on|off|true|false|1|0|yes|no`
 //   3. Config           — `engine.enabled: true|false` in guardrail.config.yaml
-//   4. Built-in default — v6.0: false; v6.1+: true (per v6.1-default-flip spec)
+//   4. Built-in default — v6.1+: true (was false in v6.0)
 //
 // This module is intentionally pure and side-effect-free: it never reads from
 // the environment or the config file directly. Callers (the CLI dispatcher)
@@ -55,9 +63,17 @@ export interface ResolveEngineOptions {
   builtInDefault?: boolean;
 }
 
-/** v6.0 ships with the engine OFF by default. Flipped to `true` in v6.1
- *  per `docs/specs/v6.1-default-flip.md`. Exported so tests / future
- *  releases can pin a known value. */
+/** v6.1+ ships with the engine ON by default — flipped from the v6.0
+ *  default (`false`) per `docs/specs/v6.1-default-flip.md`. Exported so
+ *  tests / future releases can pin a known value. */
+export const ENGINE_DEFAULT_V6_1 = true as const;
+/** Historical v6.0 default. Preserved verbatim — its semantic meaning
+ *  ("the v6.0 default was off") doesn't change just because the active
+ *  default flipped. Out-of-tree consumers that pinned this constant get
+ *  the value the name promises. Use `ENGINE_DEFAULT_V6_1` for the active
+ *  default. Removed in v7.
+ *  @deprecated Use `ENGINE_DEFAULT_V6_1` or omit `builtInDefault` to inherit
+ *  the active default. */
 export const ENGINE_DEFAULT_V6_0 = false as const;
 
 /** Parse a stringly-typed env value into a tri-state boolean.
@@ -89,7 +105,7 @@ export function parseEngineEnvValue(raw: string | undefined): boolean | undefine
  *  Pure function — does not touch process.env, fs, or anything I/O. */
 export function resolveEngineEnabled(opts: ResolveEngineOptions = {}): ResolveEngineResult {
   const { cliEngine, envValue, configEnabled, builtInDefault } = opts;
-  const builtIn = builtInDefault ?? ENGINE_DEFAULT_V6_0;
+  const builtIn = builtInDefault ?? ENGINE_DEFAULT_V6_1;
 
   // Layer 1 — CLI flag wins outright.
   if (cliEngine === true) {
@@ -157,7 +173,80 @@ function resolveWithFallthrough(opts: FallthroughOpts): ResolveEngineResult {
   return {
     enabled: builtIn,
     source: 'default',
-    reason: `built-in default (engine ${builtIn ? 'on' : 'off'} in v6.0)${invalidSuffix}`,
+    reason: `built-in default (engine ${builtIn ? 'on' : 'off'} in v6.1+)${invalidSuffix}`,
     ...(invalidEnvValue !== undefined ? { invalidEnvValue } : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// v6.1 deprecation warning for explicit engine-off
+// ---------------------------------------------------------------------------
+
+/** Stable copy emitted on stderr when a user explicitly opts out of the
+ *  engine via `--no-engine`, `CLAUDE_AUTOPILOT_ENGINE=off`, or
+ *  `engine.enabled: false`. v7 removes the escape hatch entirely.
+ *
+ *  Exported for tests + downstream consumers (e.g. CI parsers) that want to
+ *  match against the exact string. Kept on a single line so terminals don't
+ *  wrap mid-message. */
+export const ENGINE_OFF_DEPRECATION_MESSAGE =
+  '[deprecation] --no-engine / engine.enabled: false will be removed in v7. Migrate to engine-on (default).';
+
+/** Optional callback shape for the deprecation warner. Tests pass a capture
+ *  function; production callers omit it and get the default `process.stderr`
+ *  writer. Kept narrow (single-arg) so a `jest.fn` or a `(msg) => lines.push(msg)`
+ *  array sink is trivially droppable. */
+export type EngineDeprecationWarn = (message: string) => void;
+
+/** Decide whether v6.1's `--no-engine` deprecation warning applies for a
+ *  given resolver result. Returns `true` ONLY when the user explicitly
+ *  opted out (via CLI flag, env var, or config) — never on the v6.1 default
+ *  (which is `enabled: true`, so it can't trigger here anyway) and never
+ *  when the engine is actually on. Pure: takes the resolver result, returns
+ *  a boolean.
+ *
+ *  Why this is a separate predicate (not collapsed into the warner): the
+ *  CLI dispatcher wants to ALSO emit a typed `run.warning` event into a
+ *  ledger when the engine ends up on but the resolver came from a layer
+ *  that's about to be removed — except today, on v6.1, the only path that
+ *  warns IS the "engine off, explicit opt-out" path. So the predicate
+ *  collapses cleanly to that single condition. v7 removes both. */
+export function shouldWarnEngineOffDeprecation(
+  resolved: Pick<ResolveEngineResult, 'enabled' | 'source'>,
+): boolean {
+  if (resolved.enabled) return false;
+  return (
+    resolved.source === 'cli' ||
+    resolved.source === 'env' ||
+    resolved.source === 'config'
+  );
+}
+
+/** Emit the v6.1 `--no-engine` deprecation warning to stderr (or the
+ *  supplied `warn` callback) when the resolver result indicates the user
+ *  explicitly opted out of the engine. No-op when:
+ *    - the engine is on (no opt-out happened);
+ *    - the source is `'default'` (v6.1's flipped default = on, so a default
+ *      result with `enabled: false` is impossible without a custom
+ *      `builtInDefault` override — and even that path doesn't warn since
+ *      it's not a user-driven opt-out).
+ *
+ *  Pure-ish: side-effect is captured behind the optional `warn` callback so
+ *  tests can assert on the message without spawning a subprocess. The
+ *  default warner writes to `process.stderr` with a trailing newline.
+ *
+ *  Returns `true` when the warning fired, `false` when it was a no-op. The
+ *  return value is purely informational — callers can use it to decide
+ *  whether to also append a `run.warning` event into a run ledger (only
+ *  meaningful on the engine-on path; the v6.1 deprecation only fires on
+ *  engine-off, where there's no run dir to write into). */
+export function emitEngineOffDeprecationWarning(
+  resolved: Pick<ResolveEngineResult, 'enabled' | 'source'>,
+  warn: EngineDeprecationWarn = (msg) => {
+    process.stderr.write(`${msg}\n`);
+  },
+): boolean {
+  if (!shouldWarnEngineOffDeprecation(resolved)) return false;
+  warn(ENGINE_OFF_DEPRECATION_MESSAGE);
+  return true;
 }

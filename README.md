@@ -87,7 +87,7 @@ Persistent state for autopilot runs. Resume after crashes, enforce hard budget c
 ```yaml
 # guardrail.config.yaml
 engine:
-  enabled: true              # opt-in; default flips to true in v6.1
+  enabled: true              # default in v6.1+; explicit `false` is deprecated and removed in v7
 budgets:
   perRunUSD: 10              # hard stop; mandatory runtime guard
   perPhaseUSD: 5
@@ -97,13 +97,13 @@ budgets:
 claude-autopilot scan --all                  # any command — engine writes a per-run dir
 claude-autopilot runs list                   # newest-first, with status / cost / lastPhase
 claude-autopilot runs show 01HZK7P3D8Q9V…    # state snapshot + optional event tail
-claude-autopilot run resume 01HZK7P3D8Q9V…   # lookup-only in v6.0; live execution in v6.1+
+claude-autopilot run resume 01HZK7P3D8Q9V…   # lookup-only today; live execution in a later v6.x
 claude-autopilot runs gc --older-than-days 7 # retire completed runs
 ```
 
 Every state transition appends a typed event to `.guardrail-cache/runs/<ulid>/events.ndjson`; every CLI verb supports `--json` with strict stdout-envelope / stderr-NDJSON channel discipline. Side-effect phase replay consults persisted `externalRefs` plus a live provider read-back so resume is safe by construction.
 
-**v6.0 ships with the engine OFF by default.** Opt in per project via the config block above. Default flips to ON in v6.1 after a stabilization period; `--no-engine` is the one-version escape hatch (removed in v7).
+**v6.1+ ships with the engine ON by default** (flipped from v6.0's off-by-default after the stabilization criteria in [`docs/specs/v6.1-default-flip.md`](docs/specs/v6.1-default-flip.md) were met). Users who want the legacy v5.x output shape can opt out for one minor version via `--no-engine`, `CLAUDE_AUTOPILOT_ENGINE=off`, or `engine.enabled: false` — each prints a deprecation warning and is removed in v7.
 
 → [`docs/v6/quickstart.md`](docs/v6/quickstart.md) — five-minute setup
 → [`docs/v6/migration-guide.md`](docs/v6/migration-guide.md) — full v5.x → v6 walkthrough with precedence matrix, per-phase idempotency rules, and troubleshooting

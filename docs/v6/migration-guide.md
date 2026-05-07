@@ -2,13 +2,52 @@
 
 **Audience:** existing claude-autopilot users (v5.x) who want to start using the v6 Run State Engine on their next run.
 
-**TL;DR.** v6 is a **superset** of v5.x. Every existing CLI verb keeps its current behavior. The Run State Engine is **opt-in** in v6.0 and ships **OFF by default**. To turn it on, add a single config line — and you get persistent run state, resumable phases, hard budget caps, and a typed JSON event stream that CI can consume.
+**TL;DR.** v6 is a **superset** of v5.x. Every existing CLI verb keeps its current behavior. As of **v6.1**, the Run State Engine is **on by default** — every invocation gets persistent run state, resumable phases, hard budget caps, and a typed JSON event stream. v6.0 shipped it OFF for a stabilization window; v6.1 flips the default once that window closed. Users who want the old (engine-off) shape can opt out for one minor version via `--no-engine` / `CLAUDE_AUTOPILOT_ENGINE=off` / `engine.enabled: false` — that escape hatch is removed in v7.
+
+---
+
+## Migrating from v6.0 to v6.1
+
+If you're already on v6.0, this is a small change.
+
+**What flipped.** The built-in default for `engine.enabled` flipped from `false` (v6.0) to `true` (v6.1+). Everything else — the precedence matrix, the events shape, the `runs *` CLI surface, budget config — is unchanged.
+
+**Practical effect.**
+
+- **You opted in via config (`engine.enabled: true`).** No-op. Your config still wins via the same precedence rules.
+- **You opted in via CLI / env (`--engine` / `CLAUDE_AUTOPILOT_ENGINE=on`).** No-op. Those still win and the result is the same.
+- **You did nothing (relied on the default).** v6.1 now creates a `.guardrail-cache/runs/<ulid>/` dir on every invocation, emits NDJSON events on stderr, and applies budget gates if `budgets:` is configured. If your CI parses stderr as free-form text, the new event lines may need a filter — see [strict --json mode](#strict-json-mode) below for the channel discipline contract.
+
+**Keeping v6.0 (engine-off) behavior temporarily.** Three equivalent ways, in precedence order:
+
+```bash
+# CLI flag (per invocation)
+claude-autopilot scan --no-engine src/
+
+# Env var (process-wide)
+export CLAUDE_AUTOPILOT_ENGINE=off
+
+# Config (project-wide)
+# guardrail.config.yaml
+engine:
+  enabled: false
+```
+
+**Heads up — these are deprecated as of v6.1.** Each one prints a one-line stderr notice on every invocation:
+
+```
+[deprecation] --no-engine / engine.enabled: false will be removed in v7. Migrate to engine-on (default).
+```
+
+**v7 removes the escape hatch.** After v7, `engine.enabled: false` is a config-validation error and `--no-engine` / `CLAUDE_AUTOPILOT_ENGINE=off` are silently ignored (the engine is the only mode). The deprecation notice in v6.1 is your one minor version of warning. Plan to remove any explicit `engine.enabled: false` from your config before bumping to v7.
 
 ---
 
 ## What changes when the engine is on
 
-| Surface | v5.x (today, default) | v6 with engine on |
+(In v6.1+, the engine is on by default. The right-hand column describes every bare invocation; the left-hand column describes the v5.x shape that you opt back into via `--no-engine` / `CLAUDE_AUTOPILOT_ENGINE=off` / `engine.enabled: false`. Both forms are deprecated and removed in v7.)
+
+| Surface | v5.x shape (engine off, deprecated) | v6.1+ default (engine on) |
 |---|---|---|
 | Run identity | None | One ULID per run, e.g. `01HZK7P3D8Q9V…` |
 | State on disk | Cost log only (`.guardrail-cache/costs.jsonl`) | Per-run dir at `.guardrail-cache/runs/<ulid>/` with `state.json`, `events.ndjson`, per-phase snapshots, copied artifacts |
@@ -34,28 +73,31 @@ These are **identical** in v5.x and v6:
 
 If you don't opt into the engine, your v5.x workflow runs unchanged on v6. No migration step required.
 
-## How to opt in
+## How to opt in (or out)
 
-Three ways, in **precedence order** (highest wins):
+As of **v6.1+**, the engine is **on by default** — bare `claude-autopilot <verb>` invocations create a run dir, emit events, and apply budget gates without any config. The four precedence layers (highest wins) still resolve as documented; users who need the engine-off shape opt out via one of the layers below (deprecated; removed in v7).
 
-1. **CLI flag** — `--engine` / `--no-engine` per invocation. ✅ **Wired in v6.0.1 — currently honored by `scan`, `costs`, `fix`, `brainstorm`, `spec`, `plan`, `review`, `validate`, `pr`.** Other phases land in subsequent v6.0.x releases per [`wrapping-pipeline-phases.md`](./wrapping-pipeline-phases.md).
-2. **Env var** — `CLAUDE_AUTOPILOT_ENGINE=on|off|true|false|1|0|yes|no` (case-insensitive). ✅ **Wired in v6.0.1 — currently honored by `scan`, `costs`, `fix`, `brainstorm`, `spec`, `plan`, `review`, `validate`, `pr`.**
-3. **Config** — `engine.enabled: true` under `guardrail.config.yaml`. ✅ **Wired in v6.0.1 — currently honored by `scan`, `costs`, `fix`, `brainstorm`, `spec`, `plan`, `review`, `validate`, `pr`.**
-4. **Built-in default** — v6.0: **off**. v6.1+: **on**.
+1. **CLI flag** — `--engine` / `--no-engine` per invocation. Honored by every wrapped pipeline verb (`scan`, `costs`, `fix`, `brainstorm`, `spec`, `plan`, `review`, `validate`, `implement`, `migrate`, `pr`). `--no-engine` emits a deprecation warning and is removed in v7.
+2. **Env var** — `CLAUDE_AUTOPILOT_ENGINE=on|off|true|false|1|0|yes|no` (case-insensitive). Same surface coverage as the CLI flag. The `off` / `false` / `0` / `no` forms are deprecated and removed in v7.
+3. **Config** — `engine.enabled: true|false` under `guardrail.config.yaml`. The `false` form is deprecated as of v6.1 and removed in v7; the `true` form is redundant on v6.1+ since it matches the default, and stays the no-op recommended form for explicit clarity.
+4. **Built-in default** — **v6.1+: on** (flipped from v6.0's `off`). See [`docs/specs/v6.1-default-flip.md`](../specs/v6.1-default-flip.md).
 
-> **What works today (v6.0.9 — ALL 10 PHASES WRAPPED):** the three knobs above are wired and resolve via the documented precedence (CLI > env > config > default) for **every** pipeline verb: `scan` (v6.0.1), `costs` and `fix` (v6.0.2), `brainstorm` and `spec` (v6.0.3), `plan` and `review` (v6.0.4), `validate` (v6.0.5), `implement` (v6.0.7), `migrate` (v6.0.8 — first side-effecting wrap, emits `migration-version` externalRefs scoped `<env>:<name>`), and `pr` (v6.0.9 — second side-effecting wrap, records a `github-pr` externalRef). The engine modules ship and are exercised by `runs list / show / gc / delete / doctor` and `run resume <id>` (lookup). The `--json` channel discipline is live across every CLI verb. Budget enforcement is live for any phase that runs through `runPhase` with a `BudgetConfig`.
+> **What works today (v6.1 — ALL 10 PHASES WRAPPED + default flipped on):** the four knobs above resolve via the documented precedence (CLI > env > config > default) for **every** pipeline verb: `scan` (v6.0.1), `costs` and `fix` (v6.0.2), `brainstorm` and `spec` (v6.0.3), `plan` and `review` (v6.0.4), `validate` (v6.0.5), `implement` (v6.0.7), `migrate` (v6.0.8 — first side-effecting wrap, emits `migration-version` externalRefs scoped `<env>:<name>`), and `pr` (v6.0.9 — second side-effecting wrap, records a `github-pr` externalRef). The engine modules ship and are exercised by `runs list / show / gc / delete / doctor / watch` and `run resume <id>` (lookup). The `--json` channel discipline is live across every CLI verb. Budget enforcement is live for any phase that runs through `runPhase` with a `BudgetConfig`. v6.1 flipped the built-in default from off → on and added a deprecation warning when users opt out explicitly via `--no-engine` / `CLAUDE_AUTOPILOT_ENGINE=off` / `engine.enabled: false` — that escape hatch is removed in v7.
 >
-> **v6.0.x is feature-complete with v6.0.9.** No further wraps in v6.0.x. The v6.1 release flips the built-in default from off → on; subsequent v6.x lifts (multi-phase orchestrator, full Phase 6 readback wiring on resume, autopilot-skill inlining of implement) build on the current foundation.
+> **v6.0.x is feature-complete with v6.0.9.** No further wraps in v6.0.x. v6.1 flipped the default; subsequent v6.x lifts (multi-phase orchestrator, full Phase 6 readback wiring on resume, autopilot-skill inlining of implement) build on the current foundation.
 >
-> The migration guide describes the **target shape** of v6 so you can plan against it. The reconciliation column in `docs/specs/v6-run-state-engine.md` tracks what landed when.
+> The reconciliation column in `docs/specs/v6-run-state-engine.md` tracks what landed when.
 
-### Precedence matrix (target)
+### Precedence matrix
 
 ```
 CLI flag  →  env var  →  config  →  built-in default
---engine     CLAUDE_AUTOPILOT_     engine.enabled    v6.0: off
---no-engine  ENGINE=on|off                            v6.1: on
+--engine     CLAUDE_AUTOPILOT_     engine.enabled    v6.1+: on
+--no-engine  ENGINE=on|off          true|false        (was off in v6.0)
+(deprecated; removed in v7)
 ```
+
+The right-most layer is the only one a user has to think about on v6.1+ — the engine is on. The three left layers remain available for opt-out (`--no-engine` / `CLAUDE_AUTOPILOT_ENGINE=off` / `engine.enabled: false`), each prints a deprecation warning, and all three are removed in v7.
 
 Same precedence applies to the related flags:
 - `--json` / `CLAUDE_AUTOPILOT_JSON=on|off` / (no config) / off
@@ -63,7 +105,13 @@ Same precedence applies to the related flags:
 
 ## The `--no-engine` escape hatch
 
-Once the engine becomes the default in v6.1, `--no-engine` (or `CLAUDE_AUTOPILOT_ENGINE=off`) restores v5.x behavior — no run dir, no events, no state.json, no budget gate. **Supported for one minor version only.** v7 removes it; if you've held off on adopting the engine through v6.x you'll have to migrate then.
+`--no-engine` (or `CLAUDE_AUTOPILOT_ENGINE=off` or `engine.enabled: false`) restores v5.x behavior — no run dir, no events, no state.json, no budget gate. **Supported for one minor version only — v6.1.** Each invocation that triggers the engine-off path now prints:
+
+```
+[deprecation] --no-engine / engine.enabled: false will be removed in v7. Migrate to engine-on (default).
+```
+
+v7 removes it; if you've held off on adopting the engine through v6.x you'll have to migrate then.
 
 ## New CLI verbs
 
@@ -258,12 +306,12 @@ By design. `gcRuns` filters out non-terminal status (`pending` / `running` / `pa
 
 ## Default-flip plan
 
-- **v6.0** — engine ships **off** by default. Opt in via config / env / flag. `--no-engine` is a no-op (engine is already off).
-- **v6.0.x** — point releases land the missing wiring (`engine.enabled`, env var, CLI flags) and progressively wrap the existing pipeline phases through `runPhase`. CHANGELOG calls out each wave.
-- **v6.1** — engine ships **on** by default after a stabilization period (target: 30 days on master with no engine-related bug reports, all bugbot findings on engine code addressed). `--no-engine` becomes the explicit escape hatch and is documented.
-- **v7** — `--no-engine` removed. The engine is the only mode.
+- **v6.0** — engine shipped **off** by default. Opt in via config / env / flag. `--no-engine` was a no-op (engine was already off).
+- **v6.0.x** — point releases landed the missing wiring (`engine.enabled`, env var, CLI flags) and progressively wrapped the existing pipeline phases through `runPhase`. All 10 phases were wrapped by v6.0.9.
+- **v6.1 (current)** — engine ships **on** by default after the stabilization criteria in [`docs/specs/v6.1-default-flip.md`](../specs/v6.1-default-flip.md) were met. `--no-engine` / `CLAUDE_AUTOPILOT_ENGINE=off` / `engine.enabled: false` keep working as a one-version escape hatch and emit a deprecation warning on every invocation.
+- **v7** — `--no-engine`, `CLAUDE_AUTOPILOT_ENGINE=off`, and `engine.enabled: false` are removed. The engine is the only mode.
 
-If your CI relies on the v5.x output shape, set `CLAUDE_AUTOPILOT_ENGINE=off` (or `--no-engine`) explicitly on every invocation through v6.x — that pins the behavior across the default flip and lets you migrate on your schedule.
+If your CI relies on the v5.x output shape, set `CLAUDE_AUTOPILOT_ENGINE=off` (or `--no-engine`) explicitly on every invocation through v6.x — that pins the behavior across the default flip and lets you migrate on your schedule. You'll see the deprecation warning until you remove it; v7 will silently ignore the flag.
 
 ## What v6 deliberately defers
 

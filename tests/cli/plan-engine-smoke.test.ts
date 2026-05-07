@@ -55,18 +55,16 @@ function findRunDir(cwd: string): string | null {
 }
 
 describe('plan --engine smoke (v6.0.4)', () => {
-  it('engine off (default): no run dir / no engine artifacts; plan file written', async () => {
+  it('engine on (v6.1 default): plan file still written and a run dir is created', async () => {
+    // v6.1 flipped the default to ON. The verb still produces its plan
+    // file regardless of engine state; with the default flipped, a run dir
+    // is also created.
     const cwd = tmpProject();
     try {
       const exit = await runPlan({ cwd });
       assert.equal(exit, 0);
       const runs = path.join(cwd, '.guardrail-cache', 'runs');
-      assert.equal(
-        fs.existsSync(runs),
-        false,
-        `engine-off path should not create ${runs} — got dir`,
-      );
-      // The plan-file stub is the verb's output regardless of engine state.
+      assert.equal(fs.existsSync(runs), true, 'v6.1 default = engine on, expected run dir');
       const plansDir = path.join(cwd, '.guardrail-cache', 'plans');
       assert.ok(fs.existsSync(plansDir), 'plan file dir should exist');
       const planFiles = fs.readdirSync(plansDir);
