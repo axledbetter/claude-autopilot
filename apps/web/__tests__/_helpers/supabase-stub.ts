@@ -258,8 +258,17 @@ export class SupabaseStub {
             async download(path: string) {
               const buf = stub.storage.get(path);
               if (!buf) return { data: null, error: { message: 'Not found' } };
-              const blob = new Blob([new Uint8Array(buf)]);
-              return { data: blob, error: null };
+              // Wrap the Buffer in a Blob-like object with arrayBuffer().
+              // jsdom's Blob lacks a working arrayBuffer() in some versions,
+              // so we hand back a duck-typed object that callers treat as
+              // a Blob.
+              const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+              const blobLike = {
+                size: buf.byteLength,
+                type: 'application/octet-stream',
+                arrayBuffer: async () => ab,
+              };
+              return { data: blobLike, error: null };
             },
           };
         },
