@@ -1,0 +1,49 @@
+name: Web tests (v7.0)
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  web:
+    name: apps/web typecheck + build + tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    env:
+      # CI uses Phase 1's local-Supabase keys (the values are non-sensitive
+      # — they're the standard supabase-cli local dev defaults). Production
+      # uses Vercel-managed env. We hardcode here so `next build` doesn't
+      # fail at module-init time on missing env.
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsImtpZCI6IiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlLWRlbW8iLCJpYXQiOjE2NDE3NjkyMDAsImV4cCI6MTc5OTUzNTYwMH0.dc_X5iR_VP_qT0zsiyj_I_OZ2T9FtRU2BBNWN8Bu4GE
+      NEXT_PUBLIC_SUPABASE_PROJECT_REF: claude-autopilot-test
+      NEXT_PUBLIC_SITE_URL: http://localhost:3000
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Validate env vars (codex final-pass NOTE #6)
+        run: |
+          [[ -n "$NEXT_PUBLIC_SUPABASE_URL" ]] || { echo "NEXT_PUBLIC_SUPABASE_URL missing"; exit 1; }
+          [[ -n "$NEXT_PUBLIC_SUPABASE_ANON_KEY" ]] || { echo "NEXT_PUBLIC_SUPABASE_ANON_KEY missing"; exit 1; }
+          [[ -n "$NEXT_PUBLIC_SUPABASE_PROJECT_REF" ]] || { echo "NEXT_PUBLIC_SUPABASE_PROJECT_REF missing"; exit 1; }
+          [[ "$NEXT_PUBLIC_SITE_URL" =~ ^https?:// ]] || { echo "NEXT_PUBLIC_SITE_URL must start with http(s)://"; exit 1; }
+
+      - name: Typecheck apps/web
+        run: npm run typecheck --workspace apps/web
+
+      - name: Build apps/web
+        run: npm run build --workspace apps/web
+
+      - name: Run apps/web tests
+        run: npm run test --workspace apps/web
