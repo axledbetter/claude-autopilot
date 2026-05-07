@@ -8,26 +8,21 @@ INSERT INTO storage.buckets (id, name, public, file_size_limit) VALUES
   ('user-runs', 'user-runs', false, 52428800)
 ON CONFLICT (id) DO NOTHING;
 
--- Helper: extract the leading path segment ('org' or 'user') and the next
--- segment (id) from a storage object name.
-CREATE OR REPLACE FUNCTION storage.path_prefix_segments(name TEXT)
-  RETURNS TABLE (kind TEXT, id TEXT)
-  LANGUAGE sql IMMUTABLE
-AS $$
-  SELECT
-    split_part(name, '/', 1) AS kind,
-    split_part(name, '/', 2) AS id;
-$$;
+-- Path-prefix logic is inlined into each policy below via split_part().
+-- We don't create a helper function in the storage schema because Supabase
+-- migrations run as a role without CREATE permission on `storage` (the
+-- schema is owned by supabase_storage_admin). Inlining keeps the logic in
+-- public-schema-side policies that we DO own.
 
 -- org-runs: read requires active membership in the org whose UUID is segment 2.
 CREATE POLICY org_runs_select ON storage.objects
   FOR SELECT TO authenticated
   USING (
     bucket_id = 'org-runs'
-    AND (storage.path_prefix_segments(name)).kind = 'org'
+    AND split_part(name, '/', 1) = 'org'
     AND EXISTS (
       SELECT 1 FROM public.memberships m
-      WHERE m.organization_id::text = (storage.path_prefix_segments(name)).id
+      WHERE m.organization_id::text = split_part(name, '/', 2)
         AND m.user_id = auth.uid()
         AND m.status = 'active'
     )
@@ -38,8 +33,8 @@ CREATE POLICY user_runs_select ON storage.objects
   FOR SELECT TO authenticated
   USING (
     bucket_id = 'user-runs'
-    AND (storage.path_prefix_segments(name)).kind = 'user'
-    AND (storage.path_prefix_segments(name)).id = auth.uid()::text
+    AND split_part(name, '/', 1) = 'user'
+    AND split_part(name, '/', 2) = auth.uid()::text
   );
 
 -- Writes only via signed upload URL (issued by service_role); clients can't
