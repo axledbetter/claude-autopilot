@@ -20,7 +20,8 @@ beforeEach(() => {
   process.env.NEXT_PUBLIC_SUPABASE_URL = 'http://stub';
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'anon';
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'stub';
-  process.env.NODE_ENV = 'test';
+  // NODE_ENV is read-only in Next 16's @types — cast through Record.
+  (process.env as Record<string, string>).NODE_ENV = 'test';
   stub.reset();
 });
 
@@ -30,6 +31,15 @@ interface Seeded {
   jti: string;
   token: string;
   sessionId: string;
+}
+
+// Safely fetch the seeded session row, throwing if absent. `noUncheckedIndexedAccess`
+// makes `arr[0]` possibly-undefined; this helper centralizes the assertion.
+function firstSession(): Record<string, unknown> {
+  const sessions = stub.tables.get('upload_sessions');
+  if (!sessions || sessions.length === 0) throw new Error('no seeded upload_sessions');
+  const row = sessions[0]!;
+  return row;
 }
 
 function seed(): Seeded {
@@ -55,7 +65,9 @@ function req(token: string, runId: string, seq: number, prevHash: string, body: 
       'content-type': 'application/x-ndjson',
       'x-chunk-prev-hash': prevHash,
     },
-    body,
+    // Pass a Uint8Array view — Buffer has the wrong DOM type signature for
+    // BodyInit in Next 16's TS lib resolution, but Uint8Array is accepted.
+    body: new Uint8Array(body),
   });
 }
 
@@ -73,9 +85,9 @@ describe('PUT /api/runs/:runId/events/:seq', () => {
   it('test 8: seq=1 with correct prev_hash → 201', async () => {
     const { token, runId, sessionId } = seed();
     const firstHash = hashChunk(zeroHash, Buffer.from('a'));
-    const sessions = stub.tables.get('upload_sessions')!;
-    sessions[0].next_expected_seq = 1;
-    sessions[0].chain_tip_hash = firstHash;
+    const session = firstSession();
+    session.next_expected_seq = 1;
+    session.chain_tip_hash = firstHash;
     stub.seed('upload_session_chunks', [{
       session_id: sessionId, seq: 0, hash: firstHash, bytes: 1,
       storage_path: 'x', status: 'persisted',
@@ -89,18 +101,17 @@ describe('PUT /api/runs/:runId/events/:seq', () => {
   it('test 9: wrong prev_hash → 409, no state mutation', async () => {
     const { token, runId } = seed();
     const wrong = '1'.repeat(64);
-    const sessions = stub.tables.get('upload_sessions')!;
-    const before = sessions[0].next_expected_seq;
+    const before = firstSession().next_expected_seq;
     const res = await PUT(req(token, runId, 0, wrong, Buffer.from('a')), { params: { runId, seq: '0' } });
     expect(res.status).toBe(409);
-    expect(stub.tables.get('upload_sessions')![0].next_expected_seq).toBe(before);
+    expect(firstSession().next_expected_seq).toBe(before);
   });
 
   it('test 10: seq=2 when next_expected_seq=1 → 422 (structural)', async () => {
     const { token, runId } = seed();
-    const sessions = stub.tables.get('upload_sessions')!;
-    sessions[0].next_expected_seq = 1;
-    sessions[0].chain_tip_hash = '2'.repeat(64);
+    const session = firstSession();
+    session.next_expected_seq = 1;
+    session.chain_tip_hash = '2'.repeat(64);
     const res = await PUT(req(token, runId, 2, '2'.repeat(64), Buffer.from('a')), { params: { runId, seq: '2' } });
     expect(res.status).toBe(422);
   });
@@ -161,8 +172,7 @@ describe('PUT chunk — concurrency + token + recovery', () => {
 
   it('test 16: session consumed → 401', async () => {
     const { token, runId } = seed();
-    const sessions = stub.tables.get('upload_sessions')!;
-    sessions[0].consumed_at = new Date().toISOString();
+    firstSession().consumed_at = new Date().toISOString();
     const res = await PUT(req(token, runId, 0, zeroHash, Buffer.from('a')), { params: { runId, seq: '0' } });
     expect(res.status).toBe(401);
   });
@@ -184,10 +194,10 @@ describe('PUT chunk — concurrency + token + recovery', () => {
     const liveJti = randomUUID();
     const userId = randomUUID();
     const { token: validToken } = mintUploadToken({ userId, runId, orgId: null, jti: liveJti });
-    const sessions = stub.tables.get('upload_sessions')!;
-    sessions[0].jti = liveJti;
-    sessions[0].user_id = userId;
-    sessions[0].expires_at = new Date(Date.now() - 60_000).toISOString();
+    const session = firstSession();
+    session.jti = liveJti;
+    session.user_id = userId;
+    session.expires_at = new Date(Date.now() - 60_000).toISOString();
     const r2 = await PUT(req(validToken, runId, 0, zeroHash, Buffer.from('a')), { params: { runId, seq: '0' } });
     expect(r2.status).toBe(401);
     const j2 = await r2.json();
@@ -198,7 +208,7 @@ describe('PUT chunk — concurrency + token + recovery', () => {
     const { token, runId, sessionId } = seed();
     const body = Buffer.from('a');
     const expectedHash = hashChunk(zeroHash, body);
-    const userId = stub.tables.get('upload_sessions')![0].user_id as string;
+    const userId = firstSession().user_id as string;
     const path = `user/${userId}/${runId}/events/0.ndjson`;
 
     // Simulate prior crash: storage object exists, chunk row at status='pending', session NOT advanced.
@@ -210,7 +220,10 @@ describe('PUT chunk — concurrency + token + recovery', () => {
 
     const res = await PUT(req(token, runId, 0, zeroHash, body), { params: { runId, seq: '0' } });
     expect(res.status).toBe(201);
-    expect(stub.tables.get('upload_sessions')![0].next_expected_seq).toBe(1);
-    expect(stub.tables.get('upload_session_chunks')!.find((r) => r.seq === 0)!.status).toBe('persisted');
+    expect(firstSession().next_expected_seq).toBe(1);
+    const chunks = stub.tables.get('upload_session_chunks');
+    const chunk0 = chunks?.find((r) => r.seq === 0);
+    if (!chunk0) throw new Error('chunk row not found');
+    expect(chunk0.status).toBe('persisted');
   });
 });

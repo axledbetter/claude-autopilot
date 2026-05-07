@@ -103,14 +103,17 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
       return NextResponse.json({ error: 'missing chunk rows' }, { status: 422 });
     }
     for (let i = 0; i < chunks.length; i++) {
-      if (chunks[i].seq !== i) {
+      const chunk = chunks[i];
+      if (!chunk) continue;
+      if (chunk.seq !== i) {
         return NextResponse.json({ error: `non-contiguous seq at index ${i}` }, { status: 422 });
       }
-      if (chunks[i].status !== 'persisted') {
+      if (chunk.status !== 'persisted') {
         return NextResponse.json({ error: `chunk ${i} not persisted` }, { status: 422 });
       }
     }
-    if (chunks[chunks.length - 1].hash !== body.chainRoot) {
+    const lastChunk = chunks[chunks.length - 1];
+    if (!lastChunk || lastChunk.hash !== body.chainRoot) {
       return NextResponse.json({ error: 'last chunk hash != chainRoot' }, { status: 409 });
     }
 
