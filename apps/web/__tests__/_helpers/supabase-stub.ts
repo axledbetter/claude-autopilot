@@ -255,6 +255,53 @@ export class SupabaseStub {
       });
     }
 
+    if (fn === 'expire_mint_nonces') {
+      const cutoff = Date.now() - 5 * 60 * 1000;
+      const rows = this.tables.get('api_key_mint_nonces') ?? [];
+      const keep = rows.filter((r) => new Date(r.created_at as string).getTime() >= cutoff);
+      this.tables.set('api_key_mint_nonces', keep);
+      return { data: rows.length - keep.length, error: null };
+    }
+
+    if (fn === 'mint_api_key_with_nonce') {
+      // Phase 2.3 — atomic mint+nonce-record. Sweep stale nonces, reject
+      // duplicate nonce, insert key + nonce in a single conceptual txn.
+      const cutoff = Date.now() - 5 * 60 * 1000;
+      const nonces = (this.tables.get('api_key_mint_nonces') ?? []).filter(
+        (r) => new Date(r.created_at as string).getTime() >= cutoff,
+      );
+      this.tables.set('api_key_mint_nonces', nonces);
+
+      const userId = args.p_user_id as string;
+      const nonce = args.p_nonce as string;
+      const dup = nonces.some((r) => r.user_id === userId && r.nonce === nonce);
+      if (dup) {
+        return { data: null, error: { code: 'P0010', message: 'nonce_conflict' } };
+      }
+
+      const id = `key_${Math.random().toString(36).slice(2, 10)}`;
+      const keys = this.tables.get('api_keys') ?? [];
+      this.tables.set('api_keys', [...keys, {
+        id,
+        user_id: userId,
+        key_hash: args.p_key_hash,
+        prefix_display: args.p_prefix_display,
+        label: args.p_label ?? null,
+        created_at: new Date().toISOString(),
+        last_used_at: null,
+        revoked_at: null,
+      }]);
+
+      this.tables.set('api_key_mint_nonces', [...nonces, {
+        user_id: userId,
+        nonce,
+        api_key_id: id,
+        created_at: new Date().toISOString(),
+      }]);
+
+      return { data: [{ key_id: id }], error: null };
+    }
+
     return { data: null, error: { message: `unknown rpc: ${fn}` } };
   }
 

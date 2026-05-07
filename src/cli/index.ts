@@ -917,6 +917,7 @@ switch (subcommand) {
       budgetUSD = parsed;
     }
     const cliEngine = parseEngineCliFlag();
+    const noUpload = boolFlag('no-upload');
     if (json) {
       const exitCode = await runAutopilotWithJsonEnvelope({
         cwd: process.cwd(),
@@ -924,6 +925,7 @@ switch (subcommand) {
         ...(phases !== undefined ? { phases } : {}),
         ...(budgetUSD !== undefined ? { budgetUSD } : {}),
         ...(cliEngine !== undefined ? { cliEngine } : {}),
+        ...(noUpload ? { noUpload: true } : {}),
         envEngine: process.env.CLAUDE_AUTOPILOT_ENGINE,
       });
       process.exit(exitCode);
@@ -934,6 +936,7 @@ switch (subcommand) {
       ...(phases !== undefined ? { phases } : {}),
       ...(budgetUSD !== undefined ? { budgetUSD } : {}),
       ...(cliEngine !== undefined ? { cliEngine } : {}),
+      ...(noUpload ? { noUpload: true } : {}),
       envEngine: process.env.CLAUDE_AUTOPILOT_ENGINE,
     });
     process.exit(result.exitCode);
@@ -1440,6 +1443,15 @@ switch (subcommand) {
     for (const line of result.stdout) process.stdout.write(line.endsWith('\n') ? line : `${line}\n`);
     for (const line of result.stderr) process.stderr.write(line.endsWith('\n') ? line : `${line}\n`);
     process.exit(result.exit);
+    break;
+  }
+
+  case 'dashboard': {
+    // v7.0 Phase 2.3 — hosted dashboard verbs.
+    //   claude-autopilot dashboard {login,logout,status,upload <runId>}
+    const { runDashboardVerb } = await import('./dashboard/index.ts');
+    const exit = await runDashboardVerb({ argv: args.slice(1) });
+    process.exit(exit);
     break;
   }
 
