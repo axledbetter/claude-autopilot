@@ -1,0 +1,57 @@
+name: DB tests (v7.0)
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  rls:
+    name: RLS negative tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install Supabase CLI
+        # Official action: installs the supabase binary to PATH (npm install -g
+        # supabase doesn't actually expose the binary on most CI images).
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start local Supabase
+        # Run all supabase commands from the repo root with --workdir db.
+        # Don't `cd db` — that compounds with --workdir to chdir into db/db.
+        run: |
+          supabase start --workdir db
+          supabase status --workdir db --output json > supabase-status.json
+
+      - name: Apply migrations
+        run: supabase db reset --no-seed --workdir db
+
+      - name: Run RLS tests
+        env:
+          SUPABASE_URL: http://127.0.0.1:54321
+        run: |
+          export SUPABASE_ANON_KEY=$(jq -r '.ANON_KEY // .anon_key' supabase-status.json)
+          export SUPABASE_SERVICE_ROLE_KEY=$(jq -r '.SERVICE_ROLE_KEY // .service_role_key' supabase-status.json)
+          if [ -z "$SUPABASE_ANON_KEY" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "Failed to extract keys from supabase status output:" >&2
+            cat supabase-status.json >&2
+            exit 1
+          fi
+          npm run test:rls
+
+      - name: Stop Supabase
+        if: always()
+        run: supabase stop --no-backup --workdir db || true

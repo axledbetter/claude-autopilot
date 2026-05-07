@@ -2,6 +2,29 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 6.3.0-pre.1 (2026-05-07)
+
+**v7.0 Phase 1 — Foundation: schema + RLS + cross-tenant negative tests.**
+
+First step toward the v7.0 hosted product. Database-only PR; no endpoints, no UI, no Stripe integration.
+
+**What landed:**
+
+- `db/supabase/` Supabase project bootstrap with 8 numbered migrations
+- 7 multi-tenant tables: `organizations`, `memberships`, `runs`, `upload_sessions`, `entitlements`, `audit_events`, `organization_settings`
+- RLS enabled on every table with two-branch pattern: `(organization_id IS NOT NULL AND active member)` OR `(organization_id IS NULL AND user_id = auth.uid())`
+- `audit.append()` SQL function with hash-chain immutability; app roles get INSERT only via the function
+- Supabase Storage buckets `org-runs` and `user-runs` with tenant-scoped path-prefix RLS
+- `entitlements.plan` CHECK constraint matching `organizations.plan` exactly
+- `upload_sessions` stores only `jti` + token hash (never raw signing material)
+- 7 RLS negative test files covering: runs cross-tenant, free-vs-org-tier branches, audit immutability, storage path isolation, entitlements admin-only, membership edge cases, upload_sessions single-use
+- CI workflow `.github/workflows/db-tests.yml` runs the test suite against a Dockerized Supabase on every PR
+
+**Spec:** `docs/specs/v7.0-hosted-product-mvp.md` (PR #114)
+**Plan:** `docs/superpowers/plans/2026-05-07-v7.0-phase1-foundation.md`
+
+Pre-release on the npm `next` tag. `latest` stays on `6.2.2`.
+
 ## 6.2.2 — `claude-autopilot autopilot --json` envelope + cache version policy (2026-05-07)
 
 **Headline.** Closes out the v6.2.x track. `claude-autopilot autopilot --json` now emits exactly one machine-readable envelope on stdout — successful runs, pre-run failures, and mid-pipeline failures all produce the same shape so CI consumers can branch on `.exitCode` / `.failedPhase` / `.errorCode` directly without parsing stderr NDJSON. The cache contract gains a `MIN_SUPPORTED..MAX_SUPPORTED` schema-version window so a stale run dir from a future binary fails with a clear error instead of an opaque shape crash. The migration guide gets a new "v6.1 → v6.2: one runId across the pipeline" section.

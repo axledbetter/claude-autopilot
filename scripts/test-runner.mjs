@@ -4,6 +4,10 @@ import { spawnSync } from 'node:child_process';
 
 const files = [];
 for await (const f of glob('tests/**/*.test.ts')) {
+  // RLS tests require a live Supabase stack + env credentials; they run
+  // from a dedicated workflow (.github/workflows/db-tests.yml) via
+  // `npm run test:rls`, not from the general test runner.
+  if (f.startsWith('tests/rls/') || f.startsWith('tests\\rls\\')) continue;
   files.push(f);
 }
 files.sort();

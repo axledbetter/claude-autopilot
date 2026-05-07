@@ -1,0 +1,20 @@
+project_id = "claude-autopilot"
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[api]
+port = 54321
+schemas = ["public", "audit", "storage"]
+
+[storage]
+enabled = true
+file_size_limit = "50MiB"
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000/**"]
+jwt_expiry = 3600

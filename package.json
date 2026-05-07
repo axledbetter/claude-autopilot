@@ -1,7 +1,10 @@
 {
   "name": "@delegance/claude-autopilot",
-  "version": "6.2.2",
+  "version": "6.3.0-pre.1",
   "type": "module",
+  "publishConfig": {
+    "tag": "next"
+  },
   "description": "Autonomous development pipeline for Claude Code: brainstorm → spec → plan → implement → migrate → validate → PR → review → merge. Multi-model, local-first, every phase a skill you can intervene in.",
   "keywords": [
     "claude-autopilot",
@@ -53,12 +56,17 @@
   "scripts": {
     "test": "node scripts/test-runner.mjs",
     "test:adapters:live": "node --test --import=tsx tests/adapters/live/vercel.cert.ts tests/adapters/live/fly.cert.ts tests/adapters/live/render.cert.ts",
+    "test:rls": "node --test --import=tsx tests/rls/*.test.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json && node scripts/post-build-rewrite-imports.mjs",
     "prepublishOnly": "npm run build && npm test",
-    "autoregress": "tsx scripts/autoregress.ts"
+    "autoregress": "tsx scripts/autoregress.ts",
+    "db:start": "bash scripts/db/start-supabase.sh",
+    "db:stop": "bash scripts/db/stop-supabase.sh",
+    "db:reset": "bash scripts/db/reset-supabase.sh"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.97.0",
     "ajv": "^8",
     "ajv-formats": "^3.0.1",
     "dotenv": ">=16",
@@ -66,7 +74,8 @@
     "minimatch": ">=9",
     "proper-lockfile": "^4.1.2",
     "shell-quote": "^1.8.3",
-    "tsx": ">=4"
+    "tsx": ">=4",
+    "ulid": "^3.0.2"
   },
   "optionalDependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
@@ -79,6 +88,7 @@
     "@types/node": "^25",
     "@types/proper-lockfile": "^4.1.4",
     "@types/shell-quote": "^1.7.5",
+    "supabase": "^2.20.0",
     "typescript": "^6"
   },
   "peerDependencies": {
