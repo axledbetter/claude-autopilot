@@ -30,23 +30,28 @@ jobs:
           version: latest
 
       - name: Start local Supabase
+        # Run all supabase commands from the repo root with --workdir db.
+        # Don't `cd db` — that compounds with --workdir to chdir into db/db.
         run: |
-          cd db && supabase start
-          # Print URLs + keys for the test step
+          supabase start --workdir db
           supabase status --workdir db --output json > supabase-status.json
 
       - name: Apply migrations
-        run: |
-          cd db && supabase db reset --no-seed
+        run: supabase db reset --no-seed --workdir db
 
       - name: Run RLS tests
         env:
           SUPABASE_URL: http://127.0.0.1:54321
         run: |
-          export SUPABASE_ANON_KEY=$(jq -r '.ANON_KEY' db/supabase-status.json)
-          export SUPABASE_SERVICE_ROLE_KEY=$(jq -r '.SERVICE_ROLE_KEY' db/supabase-status.json)
+          export SUPABASE_ANON_KEY=$(jq -r '.ANON_KEY // .anon_key' supabase-status.json)
+          export SUPABASE_SERVICE_ROLE_KEY=$(jq -r '.SERVICE_ROLE_KEY // .service_role_key' supabase-status.json)
+          if [ -z "$SUPABASE_ANON_KEY" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "Failed to extract keys from supabase status output:" >&2
+            cat supabase-status.json >&2
+            exit 1
+          fi
           npm run test:rls
 
       - name: Stop Supabase
         if: always()
-        run: cd db && supabase stop --no-backup || true
+        run: supabase stop --no-backup --workdir db || true
