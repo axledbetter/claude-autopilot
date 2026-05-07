@@ -2,6 +2,37 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 6.2.2 — `claude-autopilot autopilot --json` envelope + cache version policy (2026-05-07)
+
+**Headline.** Closes out the v6.2.x track. `claude-autopilot autopilot --json` now emits exactly one machine-readable envelope on stdout — successful runs, pre-run failures, and mid-pipeline failures all produce the same shape so CI consumers can branch on `.exitCode` / `.failedPhase` / `.errorCode` directly without parsing stderr NDJSON. The cache contract gains a `MIN_SUPPORTED..MAX_SUPPORTED` schema-version window so a stale run dir from a future binary fails with a clear error instead of an opaque shape crash. The migration guide gets a new "v6.1 → v6.2: one runId across the pipeline" section.
+
+**Motivation — Codex review of the v6.2 spec (3 WARNING + 3 NOTE).** The v6.2 orchestrator spec reserved `--json` for v6.2.2; the spec for this PR (Codex 5.3-reviewed) folded back three warnings (strict equality on schemaVersion blocks rolling deploys, exactly-once envelope needs uncaughtException coverage, exit-code taxonomy ambiguous for pre-run failures) and three notes (six-phases vs four-phases migration text, `errorCode` union too loose, stdout purity test under stderr load).
+
+**What's in (the 9 deliverables from the spec's "Scope" section).**
+
+- **Outer JSON envelope** for `claude-autopilot autopilot --json`. New `AutopilotJsonEnvelope` shape (`version: '1'`, `verb: 'autopilot'`, `runId | null`, `status`, `exitCode`, `phases[]`, `totalCostUSD`, `durationMs`, `errorCode?`, `errorMessage?`, `failedAtPhase?`, `failedPhaseName?`). Pre-run failures get `runId: null` + populated `errorCode`. Mid-pipeline failures get `failedAtPhase` + `failedPhaseName`.
+- **Bounded `AutopilotErrorCode` enum.** Exact strings: `invalid_config | budget_exceeded | lock_held | corrupted_state | partial_write | needs_human | phase_failed | internal_error`. CI consumers can rely on these specific values; new codes ship as minor versions of the envelope schema. Per codex NOTE #5.
+- **Single-write latch + uncaughtException / unhandledRejection handlers.** Module-scoped boolean in `src/cli/json-envelope.ts` flips BEFORE writing so subsequent calls no-op. The orchestrator's `runAutopilotWithJsonEnvelope` installs process-level fatal handlers that consult the latch — if an envelope already shipped, they exit silently; otherwise they emit a fallback `internal_error` envelope before exiting `1`. Test seam `__testInstallProcessHandlers: false` keeps the handlers from leaking across the suite. Per codex WARNING #2.
+- **Deterministic exit-code-to-errorCode mapping** via `computeAutopilotExitCode`. `0` success / `1` `invalid_config | phase_failed | internal_error` / `2` `lock_held | corrupted_state | partial_write` / `78` `budget_exceeded | needs_human`. Per codex WARNING #3.
+- **Cache contract version policy** in `src/core/run-state/state.ts` + the replay path in `events.ts`. New exports `RUN_STATE_MIN_SUPPORTED_SCHEMA_VERSION = 1` and `RUN_STATE_MAX_SUPPORTED_SCHEMA_VERSION = RUN_STATE_SCHEMA_VERSION`. `replayState()` throws `corrupted_state` when the persisted `schema_version` falls outside the window, with a message naming both bounds for operator triage. Future minor versions can additively expand the schema while preserving forward-read compatibility (bump writer, leave reader); major bumps reset `MIN_SUPPORTED` to break with the past explicitly. Per codex WARNING #1.
+- **Migration guide section.** New "v6.1 → v6.2: one runId across the pipeline" section in `docs/v6/migration-guide.md` walks through the per-verb → orchestrator collapse, the `--json` envelope shape (success / pre-run failure / mid-pipeline failure examples), the `AutopilotErrorCode` taxonomy table, and the cache version policy. Flags the v6.2.0 vs v6.2.1 phase-set difference per codex NOTE #4 — examples assume the v6.2.1 6-phase set (`scan → spec → plan → implement → migrate → pr`).
+- **Channel discipline preserved.** The envelope is the only thing on stdout in `--json` mode (orchestrator runs with `__silent: true`). NDJSON events continue to flow to stderr unchanged via the existing v6 Phase 5 helpers.
+- **Dispatcher wiring.** `src/cli/index.ts` plumbs `--json` through to `runAutopilotWithJsonEnvelope`; pre-run validation failures (`--mode`, `--budget`) emit envelopes too so CI never sees free-text errors when `--json` is on.
+
+**Tests.** Baseline 1534 → 1548 (+14 net new):
+
+- 9 envelope tests in `tests/cli/autopilot-json-envelope.test.ts` covering the 6 spec scenarios (success, pre-run failure, mid-pipeline failure, no-ANSI on stdout, stdout purity under stderr load, single-write latch + uncaughtException) plus 1 latch sanity test and 2 exit-code/enum mapping tests.
+- 5 schema-version range tests in `tests/run-state/state.test.ts` covering the bounds export plus accept-in-range, reject-below-MIN, reject-above-MAX, and message-names-both-bounds.
+
+**Engine-off path unchanged.** The schema-version range check applies inside `replayState()` (engine-on territory). Engine-off invocations don't read run dirs and are byte-for-byte identical to v6.2.1.
+
+**Out of scope (deliberate, see spec for full list).**
+- `--json` envelope on individual wrapped verbs other than `autopilot`. They already emit per-verb envelopes via the v6 Phase 5 helper; no change needed.
+- Streaming JSON (newline-delimited progress events on stdout). v6.3 — would need a major channel-discipline change.
+- Schema migration tooling. v6.x has only one schema version; migration tooling is reserved for the v7 layout change.
+
+**Spec.** docs/specs/v6.2.2-json-envelope-and-docs.md (3 WARNING + 3 NOTE folded from the Codex 5.3 review).
+
 ## 6.2.1 — Side-effect phase idempotency contracts (`migrate` + `pr`) (2026-05-07)
 
 **Headline.** Side-effecting phases now satisfy a registry-enforced two-step contract — record a deterministic "I'm starting this work" breadcrumb BEFORE the side-effect, then one reconciliation ref per durable artifact AFTER. With the contract in place, `migrate` and `pr` enter the orchestrator's `--mode=full` registry, expanding the v6.2.0 `scan → spec → plan → implement` pipeline to the full **6-phase** flow `scan → spec → plan → implement → migrate → pr` under one runId.

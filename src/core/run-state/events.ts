@@ -310,9 +310,48 @@ const EMPTY_PHASE_SHELL = (
  *
  *  Throws GuardrailError(corrupted_state) if the log has internal
  *  contradictions that prevent a coherent snapshot (e.g. seq gaps,
- *  phase.success without a prior phase.start). */
+ *  phase.success without a prior phase.start), OR if the persisted
+ *  `schema_version` falls outside this binary's supported window
+ *  (`RUN_STATE_MIN_SUPPORTED_SCHEMA_VERSION..RUN_STATE_MAX_SUPPORTED_SCHEMA_VERSION`).
+ *  Per v6.2.2 spec — the prior shape would fail with a cryptic
+ *  `cannot read property 'phases' of undefined` instead of an actionable
+ *  "this run dir is from a newer/older version" message. */
 export function replayState(runDir: string): RunState {
   const { events } = readEvents(runDir);
+  // v6.2.2 — version-window check. The bounds live in `state.ts` per the
+  // spec, but a top-level import would close a cycle (state.ts already
+  // imports `replayState` from this file). The values are derived from
+  // RUN_STATE_SCHEMA_VERSION (already imported above), so we recompute them
+  // locally — `state.ts` exposes the same shape via re-export.
+  const minSupported = 1;
+  const maxSupported = RUN_STATE_SCHEMA_VERSION;
+  // Surface schema_version from the durable record. Each event carries the
+  // writer's `schema_version`; the run.start event is the canonical
+  // observation point because it's always first and always present after
+  // createRun. If no events exist (fresh empty dir) we have nothing to check
+  // and fall through to the existing empty-state path inside foldEvents.
+  if (events.length > 0) {
+    const observed = (events[0] as { schema_version?: number }).schema_version;
+    if (
+      typeof observed === 'number' &&
+      (observed < minSupported || observed > maxSupported)
+    ) {
+      throw new GuardrailError(
+        `run dir at ${runDir} has schema_version ${observed}; this binary supports schema_version ${minSupported}..${maxSupported}. ` +
+        `Use the version of claude-autopilot that created this run dir, or delete the run dir to start fresh.`,
+        {
+          code: 'corrupted_state',
+          provider: 'run-state',
+          details: {
+            runDir,
+            observed,
+            minSupported,
+            maxSupported,
+          },
+        },
+      );
+    }
+  }
   return foldEvents(runDir, events);
 }
 

@@ -857,15 +857,33 @@ switch (subcommand) {
     // v6.2.0 — multi-phase orchestrator. One runId across all phases.
     // Engine-on REQUIRED (rejected at pre-flight if --no-engine / env=off
     // / config=false). v6.2.0 ships --mode=full (scan → spec → plan →
-    // implement); --mode=fix and --mode=review land in v6.2.1+.
-    // --json envelope lands in v6.2.2.
-    const { runAutopilot } = await import('./autopilot.ts');
+    // implement); v6.2.1 extends to scan → spec → plan → implement →
+    // migrate → pr; v6.2.2 adds the `--json` outer envelope.
+    const { runAutopilot, runAutopilotWithJsonEnvelope } = await import('./autopilot.ts');
+    const json = boolFlag('json');
     const modeArg = flag('mode');
     if (modeArg !== undefined && modeArg !== 'full') {
+      // In --json mode emit the spec envelope instead of stderr text so
+      // CI consumers get a deterministic shape even on this synchronous
+      // pre-run validation failure.
+      if (json) {
+        const { writeAutopilotEnvelope } = await import('./json-envelope.ts');
+        writeAutopilotEnvelope({
+          runId: null,
+          status: 'failed',
+          exitCode: 1,
+          phases: [],
+          totalCostUSD: 0,
+          durationMs: 0,
+          errorCode: 'invalid_config',
+          errorMessage: `--mode "${modeArg}" not supported (use --mode=full)`,
+        });
+        process.exit(1);
+      }
       console.error(
-        `\x1b[31m[claude-autopilot] invalid_config: --mode "${modeArg}" not supported in v6.2.0 (use --mode=full)\x1b[0m`,
+        `\x1b[31m[claude-autopilot] invalid_config: --mode "${modeArg}" not supported (use --mode=full)\x1b[0m`,
       );
-      console.error(`\x1b[2m  --mode=fix and --mode=review land in v6.2.1+; use --phases=<csv> for custom lists\x1b[0m`);
+      console.error(`\x1b[2m  --mode=fix and --mode=review land in v6.2.x+; use --phases=<csv> for custom lists\x1b[0m`);
       process.exit(1);
     }
     const phasesArg = flag('phases');
@@ -877,6 +895,20 @@ switch (subcommand) {
     if (budgetRaw !== undefined) {
       const parsed = Number.parseFloat(budgetRaw);
       if (!Number.isFinite(parsed) || parsed <= 0) {
+        if (json) {
+          const { writeAutopilotEnvelope } = await import('./json-envelope.ts');
+          writeAutopilotEnvelope({
+            runId: null,
+            status: 'failed',
+            exitCode: 1,
+            phases: [],
+            totalCostUSD: 0,
+            durationMs: 0,
+            errorCode: 'invalid_config',
+            errorMessage: `--budget must be a positive number, got "${budgetRaw}"`,
+          });
+          process.exit(1);
+        }
         console.error(
           `\x1b[31m[claude-autopilot] invalid_config: --budget must be a positive number, got "${budgetRaw}"\x1b[0m`,
         );
@@ -885,6 +917,17 @@ switch (subcommand) {
       budgetUSD = parsed;
     }
     const cliEngine = parseEngineCliFlag();
+    if (json) {
+      const exitCode = await runAutopilotWithJsonEnvelope({
+        cwd: process.cwd(),
+        mode: 'full',
+        ...(phases !== undefined ? { phases } : {}),
+        ...(budgetUSD !== undefined ? { budgetUSD } : {}),
+        ...(cliEngine !== undefined ? { cliEngine } : {}),
+        envEngine: process.env.CLAUDE_AUTOPILOT_ENGINE,
+      });
+      process.exit(exitCode);
+    }
     const result = await runAutopilot({
       cwd: process.cwd(),
       mode: 'full',

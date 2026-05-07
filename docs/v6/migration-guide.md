@@ -43,6 +43,85 @@ engine:
 
 ---
 
+## v6.1 → v6.2: one runId across the pipeline
+
+If your CI / shell script today looks like:
+
+```bash
+claude-autopilot scan
+claude-autopilot spec
+claude-autopilot plan
+claude-autopilot implement
+claude-autopilot migrate
+claude-autopilot pr
+```
+
+each invocation creates its own runId. Your `$25` budget cap applies per phase, not per pipeline. A failure in `implement` leaves three orphan run dirs and your `runs watch` window only ever shows one phase at a time.
+
+Replace with:
+
+```bash
+claude-autopilot autopilot --mode full --budget 25
+```
+
+**One runId across all six phases.** `runs watch <id>` shows the full pipeline ticking down a single budget. Resume from a mid-pipeline failure short-circuits the completed phases via their persisted `phase.success` events — no re-running of `scan`/`spec`/`plan` after an `implement` crash.
+
+**Phase set caveat.** v6.2.0 shipped `--mode=full` as a 4-phase pipeline (`scan → spec → plan → implement`); v6.2.1 added the side-effect idempotency contracts that gate `migrate` and `pr` and extended `--mode=full` to the full **6-phase** flow `scan → spec → plan → implement → migrate → pr`. The `runs watch` and `--json` envelope examples in the rest of these docs assume the v6.2.1 phase set. If you're pinned to v6.2.0, drop `migrate` and `pr` from your mental model.
+
+**Per-verb invocations continue to work.** v6.2 does NOT deprecate them. The orchestrator is sugar — its phases are the same builders the per-verb commands use, wired together through `runPhaseWithLifecycle`. Mixed pipelines (`autopilot --phases=scan,spec,plan` plus a manually-driven `implement`) work too.
+
+### `--json` envelope (v6.2.2+)
+
+```bash
+claude-autopilot autopilot --mode full --budget 25 --json
+```
+
+Stdout receives **exactly one** envelope on completion (success OR failure):
+
+```json
+{"version":"1","verb":"autopilot","runId":"01HQK8...","status":"success","exitCode":0,"phases":[{"name":"scan","status":"success","costUSD":0.42,"durationMs":12340},{"name":"spec","status":"success","costUSD":1.10,"durationMs":18200},{"name":"plan","status":"success","costUSD":0.85,"durationMs":14500},{"name":"implement","status":"success","costUSD":1.10,"durationMs":22000},{"name":"migrate","status":"success","costUSD":0,"durationMs":4200},{"name":"pr","status":"success","costUSD":0,"durationMs":3100}],"totalCostUSD":3.47,"durationMs":74440}
+```
+
+Pre-run failures (engine off, unknown phase) ALSO emit a single envelope on stdout — `runId: null`, `phases: []`, `errorCode: 'invalid_config'`:
+
+```json
+{"version":"1","verb":"autopilot","runId":null,"status":"failed","exitCode":1,"phases":[],"totalCostUSD":0,"durationMs":12,"errorCode":"invalid_config","errorMessage":"engine disabled via CLAUDE_AUTOPILOT_ENGINE=off; autopilot requires engine-on"}
+```
+
+Mid-pipeline failures carry `failedAtPhase` + `failedPhaseName`:
+
+```json
+{"version":"1","verb":"autopilot","runId":"01HQK9...","status":"failed","exitCode":78,"phases":[{"name":"scan","status":"success","costUSD":0.42,"durationMs":12340},{"name":"spec","status":"success","costUSD":1.10,"durationMs":18200},{"name":"plan","status":"failed","costUSD":0.85,"durationMs":14500}],"totalCostUSD":2.37,"durationMs":45040,"errorCode":"budget_exceeded","errorMessage":"phase \"plan\" exceeded run budget $2.50","failedAtPhase":2,"failedPhaseName":"plan"}
+```
+
+The `errorCode` field uses a bounded enum — CI consumers can safely branch on these specific strings:
+
+| `errorCode` | Meaning | Exit code |
+|---|---|---|
+| `invalid_config` | pre-run validation, `--phases` parse, engine off | `1` |
+| `budget_exceeded` | run-scope budget cap hit | `78` |
+| `lock_held` | engine lock collision (another run owns the cache) | `2` |
+| `corrupted_state` | `state.json` mismatch / schemaVersion out of range | `2` |
+| `partial_write` | `events.ndjson` torn write | `2` |
+| `needs_human` | interactive prompt would fire in `--json` | `78` |
+| `phase_failed` | generic phase failure (LLM error, network, …) | `1` |
+| `internal_error` | catch-all for the uncaughtException handler | `1` |
+
+NDJSON events continue to flow to stderr unchanged — the envelope is a stdout-only artifact, so existing `events.ndjson` consumers see no behavior change.
+
+### Cache contract version policy (v6.2.2+)
+
+Run dirs at `.guardrail-cache/runs/<ulid>/` carry a `schema_version` on every event. v6.2.2 enforces a min/max compatibility window when replaying state:
+
+- `RUN_STATE_MIN_SUPPORTED_SCHEMA_VERSION = 1` — lowest version this binary can replay.
+- `RUN_STATE_MAX_SUPPORTED_SCHEMA_VERSION` — equal to the writer's `RUN_STATE_SCHEMA_VERSION` (current: `1`).
+
+A run dir whose `schema_version` is outside that window throws `corrupted_state` with a message naming both bounds: "this binary supports schema_version 1..1; use the version of claude-autopilot that created this run dir, or delete the run dir to start fresh." Future minor versions can additively expand the schema while preserving forward-read compatibility — bump `RUN_STATE_SCHEMA_VERSION` (writer) without bumping `MIN_SUPPORTED` (reader). Major bumps (v7) reset `MIN_SUPPORTED` to break with the past explicitly.
+
+If you keep long-lived run dirs across `claude-autopilot` upgrades, the message is your signal to either pin the older binary OR start fresh — there is no in-place migrator until v7.
+
+---
+
 ## What changes when the engine is on
 
 (In v6.1+, the engine is on by default. The right-hand column describes every bare invocation; the left-hand column describes the v5.x shape that you opt back into via `--no-engine` / `CLAUDE_AUTOPILOT_ENGINE=off` / `engine.enabled: false`. Both forms are deprecated and removed in v7.)
