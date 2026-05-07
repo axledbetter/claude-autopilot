@@ -17,6 +17,8 @@ const RPC_ERROR_HTTP: Record<string, { status: number; error: string }> = {
   P0005: { status: 409, error: 'duplicate chunk content mismatch' },
   P0006: { status: 422, error: 'wrong seq' },
   P0007: { status: 409, error: 'prev hash mismatch' },
+  P0008: { status: 409, error: 'chunk row missing on persist' },
+  P0009: { status: 409, error: 'chunk hash mismatch on persist' },
 };
 
 interface RouteParams {
@@ -122,13 +124,21 @@ export async function PUT(req: Request, { params }: RouteParams): Promise<Respon
     }
   }
 
-  // Phase 3: mark persisted + advance session. RPC is idempotent.
+  // Phase 3: mark persisted + advance session. RPC is idempotent and
+  // validates (jti, caller, chunk hash) before advancing chain state
+  // (codex PR CRITICAL — defense in depth on chain advance).
   const { error: persistErr } = await supabase.rpc('mark_chunk_persisted', {
-    p_session_id: s.id,
+    p_jti: claims.jti,
+    p_caller_user_id: claims.sub,
     p_seq: seq,
     p_this_hash: thisHash,
   });
-  if (persistErr) return NextResponse.json({ error: 'persist rpc error' }, { status: 500 });
+  if (persistErr) {
+    const code = (persistErr as { code?: string }).code;
+    const mapped = code ? RPC_ERROR_HTTP[code] : undefined;
+    if (mapped) return NextResponse.json({ error: mapped.error }, { status: mapped.status });
+    return NextResponse.json({ error: 'persist rpc error' }, { status: 500 });
+  }
 
   return NextResponse.json({ seq, hash: thisHash, bytes: bodyBuf.length }, { status: 201 });
 }

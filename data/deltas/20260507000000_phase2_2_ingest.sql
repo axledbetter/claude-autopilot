@@ -112,7 +112,7 @@ BEGIN
   SELECT id, run_id, user_id, organization_id, next_expected_seq,
          chain_tip_hash, consumed_at, expires_at
     INTO s
-    FROM upload_sessions
+    FROM public.upload_sessions
     WHERE jti = p_jti
     FOR UPDATE;
 
@@ -129,12 +129,17 @@ BEGIN
     RAISE EXCEPTION 'ownership_mismatch' USING ERRCODE = 'P0004';
   END IF;
 
-  -- Recovery path: if a pending row already exists at (session_id, seq),
-  -- accept the retry iff (hash, bytes, storage_path) match the request.
+  -- Recovery path: if a row already exists at (session_id, seq), accept
+  -- the retry iff (hash, bytes, storage_path) match the request.
+  -- Status branching:
+  --   'pending'   → resume the persist path (Storage PUT + mark_persisted)
+  --   'persisted' → already-persisted, route can skip Storage and persist
+  -- (codex PR WARNING — recovery path now status-aware)
   SELECT seq, hash, bytes, storage_path, status
     INTO existing
-    FROM upload_session_chunks
-    WHERE session_id = s.id AND seq = p_seq;
+    FROM public.upload_session_chunks
+    WHERE session_id = s.id AND seq = p_seq
+    FOR UPDATE;
 
   IF FOUND THEN
     IF existing.hash <> p_this_hash OR existing.bytes <> p_bytes OR existing.storage_path <> p_storage_path THEN
@@ -154,47 +159,76 @@ BEGIN
     RAISE EXCEPTION 'wrong_prev_hash' USING ERRCODE = 'P0007';
   END IF;
 
-  INSERT INTO upload_session_chunks (session_id, seq, hash, bytes, storage_path, status)
+  INSERT INTO public.upload_session_chunks (session_id, seq, hash, bytes, storage_path, status)
     VALUES (s.id, p_seq, p_this_hash, p_bytes, p_storage_path, 'pending');
 
   RETURN QUERY SELECT s.id, p_seq, p_this_hash;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+-- codex PR WARNING — search_path hardened on SECURITY DEFINER
 
 REVOKE ALL ON FUNCTION claim_chunk_slot(TEXT, TEXT, UUID, INTEGER, TEXT, TEXT, INTEGER, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION claim_chunk_slot(TEXT, TEXT, UUID, INTEGER, TEXT, TEXT, INTEGER, TEXT) TO service_role;
 
+-- codex PR CRITICAL — mark_chunk_persisted now validates the chunk row's
+-- hash against p_this_hash before advancing the session, and is scoped to
+-- the session owner via p_jti + p_caller_user_id (codex PR WARNING).
+-- Without these checks, a buggy/malicious service call could advance the
+-- chain to an arbitrary hash.
 CREATE OR REPLACE FUNCTION mark_chunk_persisted(
-  p_session_id UUID,
+  p_jti TEXT,
+  p_caller_user_id UUID,
   p_seq INTEGER,
   p_this_hash TEXT
 ) RETURNS VOID AS $$
 DECLARE
   s RECORD;
+  c RECORD;
 BEGIN
-  SELECT id, next_expected_seq, chain_tip_hash
+  SELECT id, user_id, next_expected_seq, chain_tip_hash, consumed_at
     INTO s
-    FROM upload_sessions
-    WHERE id = p_session_id
+    FROM public.upload_sessions
+    WHERE jti = p_jti
     FOR UPDATE;
 
-  IF NOT FOUND THEN RAISE EXCEPTION 'session_not_found'; END IF;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'session_not_found' USING ERRCODE = 'P0001';
+  END IF;
+  IF s.user_id <> p_caller_user_id THEN
+    RAISE EXCEPTION 'ownership_mismatch' USING ERRCODE = 'P0004';
+  END IF;
+  IF s.consumed_at IS NOT NULL THEN
+    RAISE EXCEPTION 'session_consumed' USING ERRCODE = 'P0002';
+  END IF;
 
-  -- Conditional update — only advance if state is still at the expected
-  -- pre-advance values. If a concurrent retry already advanced, this is a
-  -- no-op (idempotent).
-  UPDATE upload_session_chunks
+  -- Lock + validate the chunk row before advancing chain state.
+  SELECT seq, hash, status
+    INTO c
+    FROM public.upload_session_chunks
+    WHERE session_id = s.id AND seq = p_seq
+    FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'chunk_not_found' USING ERRCODE = 'P0008';
+  END IF;
+  IF c.hash <> p_this_hash THEN
+    RAISE EXCEPTION 'chunk_hash_mismatch' USING ERRCODE = 'P0009';
+  END IF;
+
+  UPDATE public.upload_session_chunks
     SET status = 'persisted'
-    WHERE session_id = p_session_id AND seq = p_seq;
+    WHERE session_id = s.id AND seq = p_seq;
 
+  -- Conditional advance: only if state is still at the pre-advance value.
+  -- Concurrent retry that already advanced is a no-op (idempotent).
   IF s.next_expected_seq = p_seq THEN
-    UPDATE upload_sessions
+    UPDATE public.upload_sessions
       SET next_expected_seq = p_seq + 1,
           chain_tip_hash = p_this_hash
-      WHERE id = p_session_id;
+      WHERE id = s.id;
   END IF;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
-REVOKE ALL ON FUNCTION mark_chunk_persisted(UUID, INTEGER, TEXT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION mark_chunk_persisted(UUID, INTEGER, TEXT) TO service_role;
+REVOKE ALL ON FUNCTION mark_chunk_persisted(TEXT, UUID, INTEGER, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION mark_chunk_persisted(TEXT, UUID, INTEGER, TEXT) TO service_role;

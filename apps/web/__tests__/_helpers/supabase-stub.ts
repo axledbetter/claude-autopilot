@@ -205,24 +205,36 @@ export class SupabaseStub {
     }
 
     if (fn === 'mark_chunk_persisted') {
-      const sessions = this.tables.get('upload_sessions') ?? [];
-      const s = sessions.find((r) => r.id === args.p_session_id);
-      if (!s) return { data: null, error: { message: 'session_not_found' } };
+      // codex PR CRITICAL — must validate jti + caller + chunk hash
+      // before advancing chain state.
+      return this.withSessionLock(args.p_jti as string, async () => {
+        const sessions = this.tables.get('upload_sessions') ?? [];
+        const s = sessions.find((r) => r.jti === args.p_jti);
+        if (!s) return { data: null, error: { code: 'P0001', message: 'session_not_found' } };
+        if (s.user_id !== args.p_caller_user_id) {
+          return { data: null, error: { code: 'P0004', message: 'ownership_mismatch' } };
+        }
+        if (s.consumed_at) {
+          return { data: null, error: { code: 'P0002', message: 'session_consumed' } };
+        }
 
-      return this.withSessionLock(s.jti as string, async () => {
-        const chunks = (this.tables.get('upload_session_chunks') ?? []).map((c) => {
-          if (c.session_id === args.p_session_id && c.seq === args.p_seq) {
-            return { ...c, status: 'persisted' };
-          }
-          return c;
-        });
-        this.tables.set('upload_session_chunks', chunks);
+        const chunks = this.tables.get('upload_session_chunks') ?? [];
+        const c = chunks.find((row) => row.session_id === s.id && row.seq === args.p_seq);
+        if (!c) return { data: null, error: { code: 'P0008', message: 'chunk_not_found' } };
+        if (c.hash !== args.p_this_hash) {
+          return { data: null, error: { code: 'P0009', message: 'chunk_hash_mismatch' } };
+        }
 
-        const sessionsCurrent = this.tables.get('upload_sessions') ?? [];
-        const sCurrent = sessionsCurrent.find((r) => r.id === args.p_session_id);
-        if (sCurrent && sCurrent.next_expected_seq === args.p_seq) {
-          const updated = sessionsCurrent.map((r) =>
-            r.id === args.p_session_id
+        const updatedChunks = chunks.map((row) =>
+          row.session_id === s.id && row.seq === args.p_seq
+            ? { ...row, status: 'persisted' }
+            : row,
+        );
+        this.tables.set('upload_session_chunks', updatedChunks);
+
+        if (s.next_expected_seq === args.p_seq) {
+          const updated = sessions.map((r) =>
+            r.id === s.id
               ? { ...r, next_expected_seq: (args.p_seq as number) + 1, chain_tip_hash: args.p_this_hash }
               : r,
           );
