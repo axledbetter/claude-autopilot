@@ -1276,8 +1276,37 @@ switch (subcommand) {
         });
         break;
       }
+      case 'watch': {
+        // v6.1 — `runs watch <id>` tails events.ndjson with a live cost meter.
+        // The other umbrella verbs use a unified `RunsCliResult` shape so the
+        // dispatcher can treat them uniformly; `runs-watch.ts` returns the
+        // same shape.
+        const sinceRaw = flag('since');
+        const since = sinceRaw !== undefined ? parseInt(sinceRaw, 10) : undefined;
+        if (sinceRaw !== undefined && (Number.isNaN(since) || (since as number) < 0)) {
+          process.stderr.write(`\x1b[31m[claude-autopilot] --since must be a non-negative integer\x1b[0m\n`);
+          process.exit(1);
+        }
+        const noFollow = boolFlag('no-follow');
+        const noColor = boolFlag('no-color');
+        // Filter the value-flag value out of the positional lookup —
+        // matches the same defensive pattern used in `runs show` (Bugbot
+        // PR #88 MEDIUM). Without this, `runs watch --since 5 <ULID>`
+        // would resolve runId to "5".
+        const runId = args.slice(2).find(a => !a.startsWith('--') && a !== sinceRaw);
+        const { runRunsWatch } = await import('./runs-watch.ts');
+        result = await runRunsWatch({
+          runId: runId ?? '',
+          cwd,
+          ...(since !== undefined ? { since } : {}),
+          noFollow,
+          json,
+          noColor,
+        });
+        break;
+      }
       default: {
-        process.stderr.write(`\x1b[31m[claude-autopilot] runs: unknown sub-verb "${sub}" — valid: list, show, gc, delete, doctor\x1b[0m\n`);
+        process.stderr.write(`\x1b[31m[claude-autopilot] runs: unknown sub-verb "${sub}" — valid: list, show, gc, delete, doctor, watch\x1b[0m\n`);
         process.exit(1);
       }
     }

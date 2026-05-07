@@ -87,7 +87,7 @@ export const HELP_GROUPS: HelpGroup[] = [
     name: 'Engine',
     tagline: 'v6 run state engine — list, inspect, GC, resume',
     verbs: [
-      { verb: 'runs', summary: 'Inspect run state: runs list | show <id> | resume <id> | gc | delete <id> | doctor' },
+      { verb: 'runs', summary: 'Inspect run state: runs list | show <id> | watch <id> | resume <id> | gc | delete <id> | doctor' },
     ],
   },
   {
@@ -241,6 +241,7 @@ export const HELP_OPTIONS: Record<string, string> = {
   runs: `Sub-verbs (runs):
   runs list                              List runs newest-first
   runs show <id>                         Show a run's state + last events
+  runs watch <id>                        Tail events.ndjson with a live cost meter
   runs gc                                Delete completed runs older than N days
   runs delete <id>                       Delete a single run (terminal-status only)
   runs doctor                            Replay events vs. state.json; report drift
@@ -255,6 +256,19 @@ Options (runs show):
   --events             Tail events.ndjson after the state summary
   --events-tail <n>    How many tail events to show (default 20)
   --json               Emit a structured JSON envelope on stdout
+
+Options (runs watch):
+  <id>                 ULID of the run to watch
+  --since <seq>        Replay forward from a specific event seq (resume after disconnect)
+  --no-follow          Render the current state once and exit (snapshot mode)
+  --json               Emit raw NDJSON to stdout (one event per line) — ANSI suppressed
+  --no-color           Force ANSI off even on a TTY
+
+  Behavior: tails events.ndjson via fs.watchFile (1s poll) and pretty-renders
+            each new event with a running cost/budget meter. Exits when the
+            run terminates (run.complete / run.failed / run.aborted) or on
+            Ctrl-C. Exit codes: 0 success, 1 invalid input or stream error,
+            2 not_found.
 
 Options (runs gc):
   --older-than-days <n>  Cutoff in days (default 30)

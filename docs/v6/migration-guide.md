@@ -100,6 +100,42 @@ claude-autopilot runs doctor --fix                  # rewrite state.json from ev
 
 Every verb accepts `--json` and emits a v1 envelope (`{ schema_version: 1, command, status, exit, ... }`) on stdout when set. Channel discipline is strict — see [strict --json mode](#strict-json-mode) below.
 
+## Live cost meter — `runs watch`
+
+**v6.1+.** Tail a run's events.ndjson with a pretty-rendered live cost/budget meter — the "watch your $25 budget tick down while autopilot ships a PR" moment. Drop `runs watch` into a second terminal while the run is executing in the first; exits cleanly when the run terminates or on Ctrl-C.
+
+```bash
+claude-autopilot runs watch <ulid>                  # live tail, exits on run.complete
+claude-autopilot runs watch <ulid> --since 42       # replay forward from seq 42
+claude-autopilot runs watch <ulid> --no-follow      # snapshot once and exit (CI / scripting)
+claude-autopilot runs watch <ulid> --json           # raw NDJSON to stdout (one event per line, ANSI off)
+claude-autopilot runs watch <ulid> --no-color       # force ANSI off on a TTY
+```
+
+Example output (ANSI-stripped):
+
+```
+* run 01HZK7P3D8Q9V00000000000AB
+  phases: spec -> plan -> implement -> pr
+  budget: $0.00 / $25.00 (0%)
+[12:00:01] phase.start         spec
+[12:00:42] phase.cost          spec           +$0.07  (in: 1.2k, out: 3.4k)  total: $0.07
+[12:00:45] phase.success       spec           OK 44.2s
+[12:08:33] phase.externalRef   pr             -> github-pr#123
+[12:08:34] run.complete        status=success  totalCostUSD=$4.20  duration=8m32s
+
+done  run 01HZK7P3D8Q9V00000000000AB
+  status=success  totalCostUSD=$4.20  duration=8m33s
+```
+
+**Color thresholds on the budget bar:** green <50%, yellow 50-90%, red >90%. Per-event coloring scans visually so the cost line catches your eye while the rest stays calm.
+
+**Tail strategy:** `fs.watchFile` polls every 1s. Inotify/FSEvents notifications were unreliable for tiny ndjson appends across our test matrix (sometimes never fired, sometimes fired twice per write); the 1s polling cadence is plenty for a human-facing meter. Recovers from external file truncation by re-folding from start.
+
+**Exit codes:** `0` clean exit (run completed or Ctrl-C), `1` invalid input or stream error, `2` not_found.
+
+**Piping to other tools:** `--json` emits one event per line in NDJSON format with ANSI suppressed. Pipe to `jq` to filter, to a dashboard, or to `tee` for archival.
+
 ## Budget config
 
 Add a `budgets:` block to `guardrail.config.yaml`. Two-layer enforcement (advisory + mandatory) applies the moment the engine wraps a phase that has a `BudgetConfig`:

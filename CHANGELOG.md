@@ -2,6 +2,79 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## v6.1.0-pre — `runs watch <id>` live cost meter (2026-05-07)
+
+**The YC-demo moment.** v6.0.x hardened the events.ndjson stream across
+all 10 wrapped phases; v6.1 makes that stream visible in real time.
+`runs watch <runId>` tails events.ndjson via `fs.watchFile` (1s poll —
+inotify/FSEvents are unreliable for tiny appends across our matrix) and
+pretty-renders each event with a running cost/budget meter so a user
+running `claude-autopilot autopilot ...` in one terminal can `runs watch`
+in another and watch their $25 budget tick down while phases ship code.
+
+**Demo transcript.** Live tail of a fixture run, ANSI-stripped:
+
+```
+* run 01HZK7P3D8Q9V00000000000AB
+  phases: spec -> plan -> implement -> pr
+  budget: $0.00 / $25.00 (0%)
+[12:00:01] phase.start         spec
+[12:00:42] phase.cost          spec           +$0.07  (in: 1.2k, out: 3.4k)  total: $0.07
+[12:00:45] phase.success       spec           OK 44.2s
+[12:00:46] phase.start         plan
+[12:01:12] phase.cost          plan           +$0.21  (in: 4.1k, out: 8.2k)  total: $0.28
+[12:01:15] phase.success       plan           OK 29.0s
+[12:08:33] phase.externalRef   pr             -> github-pr#123
+[12:08:34] run.complete        status=success  totalCostUSD=$4.20  duration=8m32s
+
+done  run 01HZK7P3D8Q9V00000000000AB
+  status=success  totalCostUSD=$4.20  duration=8m33s
+```
+
+**Modes.**
+
+- `runs watch <id>` — live tail, exits on `run.complete` / Ctrl-C
+- `runs watch <id> --since <seq>` — replay forward from a specific seq
+  (resume after disconnect)
+- `runs watch <id> --no-follow` — render snapshot once and exit (CI /
+  scripting)
+- `runs watch <id> --json` — emit raw NDJSON to stdout (one event per
+  line) for piping to `jq` or external dashboards. ANSI suppressed.
+- `runs watch <id> --no-color` — force ANSI off even on a TTY
+
+**Pretty rendering.** Color thresholds on the budget bar — green <50%,
+yellow 50-90%, red >90%. Per-event coloring: cyan for phase.start, yellow
+for phase.cost, green for phase.success, red for phase.failed, magenta
+for phase.externalRef + lock.takeover + replay.override, bold-green for
+run.complete success, bold-red for run.complete failed/aborted. ANSI
+auto-strips when stdout is not a TTY (CI), when `--no-color` or `--json`
+is set, or when `NO_COLOR` env var is present.
+
+**Pure renderer.** `src/cli/runs-watch-renderer.ts` is referentially
+transparent — `renderEventLine(event, runningTotal, opts)` is the core
+primitive, exported and 100% pure. Tests run as string-equality
+assertions in <300ms.
+
+**Engine modules untouched.** This is purely a consumer of the existing
+event stream — no changes to `src/core/run-state/**`, no changes to the
+10 wrapped phase verbs, no changes to `runPhaseWithLifecycle`.
+
+**Tests.** +43 new tests:
+- `tests/cli/runs-watch-renderer.test.ts` — 29 pure-renderer cases
+  covering every event-line variant, the three budget-bar color
+  thresholds, ANSI on/off symmetry, and the final-summary block
+- `tests/cli/runs-watch.test.ts` — 14 verb-level cases covering
+  `--no-follow` snapshot, `--since` replay, `--json` mode, run-not-found
+  (exit 2), invalid-ULID, live tail picks up appended events,
+  budget rendering with/without `BudgetConfig`, plural `budgets` config
+  alias, ANSI behavior, and run-complete short-circuit on already-
+  terminated runs
+
+**CLI plumbing.** New sub-verb on the `runs` umbrella: `runs watch <id>`.
+Help block surfaces `--since`, `--no-follow`, `--json`, `--no-color`
+plus a behavior summary + exit-code key. Exit codes: 0 success / clean
+exit, 1 invalid input or stream error, 2 not_found.
+
 ## v6.0.9 — wrap `pr` through `runPhaseWithLifecycle` (2026-05-06)
 
 **First side-effecting phase wrapped.** v6.0.1 → v6.0.5 wrapped read-only
