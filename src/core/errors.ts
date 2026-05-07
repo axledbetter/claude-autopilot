@@ -8,7 +8,11 @@ export type ErrorCode =
   // v6 Run State Engine — persistence layer error codes.
   | 'lock_held'        // another writer owns the run's advisory lock
   | 'corrupted_state'  // state.json is unreadable/invalid and not recoverable from events
-  | 'partial_write';   // events.ndjson tail had a truncated JSON line
+  | 'partial_write'    // events.ndjson tail had a truncated JSON line
+  // v6.2.1 — orchestrator resume preflight refused to auto-decide; the run
+  // requires explicit operator intervention (`--force-replay` or manual
+  // ledger inspection). Emitted as a `replay.override`-eligible refusal.
+  | 'needs_human';
 
 export interface GuardrailErrorOptions {
   code: ErrorCode;
@@ -31,6 +35,9 @@ const DEFAULT_RETRYABLE: Record<ErrorCode, boolean> = {
   lock_held: false,
   corrupted_state: false,
   partial_write: false,
+  // v6.2.1 — needs_human is by definition a stop-the-pipeline signal; the
+  // user (or `--force-replay`) decides whether to retry.
+  needs_human: false,
 };
 
 export class GuardrailError extends Error {

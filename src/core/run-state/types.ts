@@ -41,12 +41,22 @@ export type PhaseStatus =
 
 /** External operation reference — the persisted breadcrumb that makes replay
  *  decisions deterministic. Used heavily in Phase 6 (idempotency contracts);
- *  typed now so events can carry it without later schema churn. */
+ *  typed now so events can carry it without later schema churn.
+ *
+ *  v6.2.1 — `migration-batch` joins the union as the side-effect contract's
+ *  PRE-effect breadcrumb for the `migrate` phase. Semantics: a deterministic
+ *  id covers a planned migration batch and is emitted BEFORE the dispatcher
+ *  is invoked, so a partial crash leaves a resume target visible to the
+ *  orchestrator's preflight readback. The post-effect `migration-version`
+ *  refs (one per actually-applied migration) remain authoritative for
+ *  reconciliation; `migration-batch` exists purely so resume can tell
+ *  "we started this batch but didn't finish" apart from "we never started." */
 export type ExternalRefKind =
   | 'github-pr'
   | 'github-comment'
   | 'git-remote-push'
   | 'deploy'
+  | 'migration-batch'
   | 'migration-version'
   | 'rollback-target'
   | 'spec-file'
