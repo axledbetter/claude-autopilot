@@ -8,7 +8,6 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'],
-    exclude: ['tests/build/**'],
   },
   resolve: {
     alias: {
