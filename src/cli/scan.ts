@@ -91,8 +91,12 @@ export interface ScanCommandOptions {
  * everything the phase needs that's already been resolved by the outer scope
  * (file list, engine, focus hint, etc.) so the phase body itself is a thin
  * await on `runReviewPhase` + finding post-processing.
+ *
+ * Exported (along with `ScanOutput`) so the v6.2.0 orchestrator's phase
+ * registry (`src/core/run-state/phase-registry.ts`) can carry the typed
+ * I/O shape on its `PhaseRegistration<ScanInput, ScanOutput>` slot.
  */
-interface ScanInput {
+export interface ScanInput {
   files: string[];
   relFiles: string[];
   cwd: string;
@@ -108,7 +112,7 @@ interface ScanInput {
  *  the legacy stdout banner + exit code path. Keeping the shape JSON-
  *  serializable means runPhase persists it into phases/<name>.json so a
  *  future skip-already-applied can restore it without re-running the LLM. */
-interface ScanOutput {
+export interface ScanOutput {
   /** Total files actually sent to the review engine. */
   fileCount: number;
   /** Findings after ignore-rule filtering. Tagged with severity so a JSON
@@ -127,7 +131,40 @@ interface ScanOutput {
   rawOutputs?: string[];
 }
 
-export async function runScan(options: ScanCommandOptions = {}): Promise<number> {
+/**
+ * v6.2.0 — sentinel returned by `buildScanPhase` when the verb's pre-flight
+ * (no targets, no files found, dry-run, missing LLM key, …) decided it can
+ * exit early without running the engine. The CLI dispatcher treats this as
+ * "render-and-exit"; the orchestrator skips registry dispatch and returns
+ * the exit code straight through. Mirrors the legacy in-place `return N`
+ * branches inside `runScan` byte-for-byte.
+ */
+export interface BuildScanPhaseEarlyExit {
+  kind: 'early-exit';
+  exitCode: number;
+}
+
+export interface BuildScanPhaseResult {
+  kind: 'phase';
+  phase: RunPhase<ScanInput, ScanOutput>;
+  input: ScanInput;
+  config: GuardrailConfig;
+  renderResult: (output: ScanOutput) => number;
+}
+
+/**
+ * v6.2.0 — extract the `RunPhase<ScanInput, ScanOutput>` construction out of
+ * `runScan(options)` so the new top-level `autopilot` orchestrator can drive
+ * `runPhase` itself with a shared `phaseIdx` against the same run dir.
+ *
+ * The legacy `runScan(options)` keeps calling this builder internally (then
+ * `runPhaseWithLifecycle` for single-phase runs) so direct CLI behavior is
+ * byte-for-byte identical to v6.1. Parity is asserted by
+ * `tests/cli/scan-builder-parity.test.ts`.
+ */
+export async function buildScanPhase(
+  options: ScanCommandOptions,
+): Promise<BuildScanPhaseResult | BuildScanPhaseEarlyExit> {
   const cwd = options.cwd ?? process.cwd();
   const configPath = options.configPath ?? path.join(cwd, 'guardrail.config.yaml');
 
@@ -149,7 +186,7 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
     console.error(fmt('dim', '    guardrail scan src/auth/'));
     console.error(fmt('dim', '    guardrail scan --all'));
     console.error(fmt('dim', '    guardrail scan --ask "is there SQL injection?" src/db/'));
-    return 1;
+    return { kind: 'early-exit', exitCode: 1 };
   }
 
   // Deduplicate
@@ -157,13 +194,13 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
 
   if (files.length === 0) {
     console.log(fmt('yellow', '[scan] No code files found at the specified path(s)'));
-    return 0;
+    return { kind: 'early-exit', exitCode: 0 };
   }
 
   if (options.dryRun) {
     console.log(fmt('bold', `[scan] Would scan ${files.length} file(s):`));
     for (const f of files) console.log(fmt('dim', `  ${path.relative(cwd, f)}`));
-    return 0;
+    return { kind: 'early-exit', exitCode: 0 };
   }
 
   // Auto-detect stack if not in config
@@ -183,7 +220,7 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
         const suffix = note ? `  (${note})` : '';
         console.error(fmt('dim', `         ${name.padEnd(18)} ${url}${suffix}`));
       }
-      return 1;
+      return { kind: 'early-exit', exitCode: 1 };
     }
     const engineRef = typeof config.reviewEngine === 'string' ? config.reviewEngine
       : (config.reviewEngine?.adapter ?? 'auto');
@@ -195,7 +232,7 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
       });
     } catch (err) {
       console.error(fmt('red', `[scan] Could not load review engine: ${err instanceof Error ? err.message : String(err)}`));
-      return 1;
+      return { kind: 'early-exit', exitCode: 1 };
     }
   }
 
@@ -252,6 +289,21 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
     run: executeScanPhase,
   };
 
+  return {
+    kind: 'phase',
+    phase,
+    input: scanInput,
+    config,
+    renderResult: (output: ScanOutput) => renderScanOutput(output, scanInput),
+  };
+}
+
+export async function runScan(options: ScanCommandOptions = {}): Promise<number> {
+  const built = await buildScanPhase(options);
+  if (built.kind === 'early-exit') return built.exitCode;
+
+  const { phase, input, config, renderResult } = built;
+
   // v6.0.6 — lifecycle wiring (createRun → runPhase → run.complete + state
   // snapshot + lock release) lives in `runPhaseWithLifecycle`. The helper
   // owns the engine-on/engine-off branch and the failure banner; the caller
@@ -259,13 +311,13 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
   let output: ScanOutput;
   try {
     const result = await runPhaseWithLifecycle<ScanInput, ScanOutput>({
-      cwd,
+      cwd: input.cwd,
       phase,
-      input: scanInput,
+      input,
       config,
       cliEngine: options.cliEngine,
       envEngine: options.envEngine,
-      runEngineOff: () => executeScanPhase(scanInput),
+      runEngineOff: () => executeScanPhase(input),
     });
     output = result.output;
   } catch {
@@ -275,7 +327,7 @@ export async function runScan(options: ScanCommandOptions = {}): Promise<number>
     return 1;
   }
 
-  return renderScanOutput(output, scanInput);
+  return renderResult(output);
 }
 
 // ---------------------------------------------------------------------------

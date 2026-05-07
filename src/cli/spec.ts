@@ -61,8 +61,11 @@ export interface SpecCommandOptions {
  * Phase input — minimal. The CLI verb body is a print-and-exit advisory.
  * Captured as a struct so the engine path's phase body matches the
  * engine-off path call signature.
+ *
+ * Exported so the v6.2.0 orchestrator's phase registry can carry the typed
+ * I/O shape on its `PhaseRegistration<SpecInput, SpecOutput>` slot.
  */
-interface SpecInput {
+export interface SpecInput {
   cwd: string;
   silent: boolean;
 }
@@ -71,13 +74,40 @@ interface SpecInput {
  * Phase output — JSON-serializable acknowledgment. Mirrors the shape of
  * `BrainstormOutput`. Persisted as `result` on `phases/spec.json`.
  */
-interface SpecOutput {
+export interface SpecOutput {
   /** Always 'advisory' for v6.0.3 — the CLI verb is a Claude Code pointer. */
   kind: 'advisory';
   nextActions: string[];
 }
 
-export async function runSpec(options: SpecCommandOptions = {}): Promise<number> {
+/** v6.2.0 — see scan.ts for the kind='early-exit' rationale. Spec has no
+ *  early-exit branches today (it just creates a config struct and returns
+ *  an advisory) so this discriminant is included for shape parity with the
+ *  other builders. */
+export interface BuildSpecPhaseEarlyExit {
+  kind: 'early-exit';
+  exitCode: number;
+}
+
+export interface BuildSpecPhaseResult {
+  kind: 'phase';
+  phase: RunPhase<SpecInput, SpecOutput>;
+  input: SpecInput;
+  config: GuardrailConfig;
+  renderResult: (output: SpecOutput) => number;
+}
+
+/**
+ * v6.2.0 — extract the `RunPhase<SpecInput, SpecOutput>` construction out of
+ * `runSpec(options)` so the new top-level `autopilot` orchestrator can drive
+ * `runPhase` itself with a shared `phaseIdx` against the same run dir.
+ *
+ * Parity with `runSpec(options)` is asserted by
+ * `tests/cli/spec-builder-parity.test.ts`.
+ */
+export async function buildSpecPhase(
+  options: SpecCommandOptions,
+): Promise<BuildSpecPhaseResult | BuildSpecPhaseEarlyExit> {
   const cwd = options.cwd ?? process.cwd();
   const configPath = options.configPath ?? path.join(cwd, 'guardrail.config.yaml');
 
@@ -102,24 +132,39 @@ export async function runSpec(options: SpecCommandOptions = {}): Promise<number>
     run: async input => executeSpecPhase(input),
   };
 
+  return {
+    kind: 'phase',
+    phase,
+    input: specInput,
+    config,
+    renderResult: (output: SpecOutput) => renderSpecOutput(output, specInput),
+  };
+}
+
+export async function runSpec(options: SpecCommandOptions = {}): Promise<number> {
+  const built = await buildSpecPhase(options);
+  if (built.kind === 'early-exit') return built.exitCode;
+
+  const { phase, input, config, renderResult } = built;
+
   // v6.0.6 — lifecycle wiring lives in `runPhaseWithLifecycle`.
   let output: SpecOutput;
   try {
     const result = await runPhaseWithLifecycle<SpecInput, SpecOutput>({
-      cwd,
+      cwd: input.cwd,
       phase,
-      input: specInput,
+      input,
       config,
       cliEngine: options.cliEngine,
       envEngine: options.envEngine,
-      runEngineOff: () => executeSpecPhase(specInput),
+      runEngineOff: () => executeSpecPhase(input),
     });
     output = result.output;
   } catch {
     return 1;
   }
 
-  return renderSpecOutput(output, specInput);
+  return renderResult(output);
 }
 
 // ---------------------------------------------------------------------------

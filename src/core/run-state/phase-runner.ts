@@ -314,6 +314,7 @@ export async function runPhase<I, O>(
         reserveApplied: check.reserveApplied,
         capRemaining: check.capRemaining,
         reason: check.reason,
+        scope: check.scope,
       },
       { writerId, runId },
     );
