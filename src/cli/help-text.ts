@@ -135,7 +135,15 @@ export const HELP_OPTIONS: Record<string, string> = {
   <number>                   PR number to review (optional if on a PR branch)
   --no-post-comments         Skip posting/updating PR summary comment
   --no-inline-comments       Skip posting per-line inline annotations
-  --config <path>            Path to config file`,
+  --config <path>            Path to config file
+  --engine                   Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
+  --no-engine                Force the legacy stateless code path (overrides config / env)
+
+  Note: pr is side-effecting — it posts/updates a PR comment and inline
+        review comments via the gh CLI. Engine-on records a github-pr
+        externalRef; future replays gate on the spec's "side-effect
+        readback" rule (--force-replay required if a prior phase.success
+        exists for the same run).`,
   fix: `Options (fix):
   --severity <critical|warning|all>  Which findings to fix (default: critical)
   --dry-run                          Preview fixes without writing files
@@ -305,7 +313,7 @@ export const GLOBAL_FLAGS_BLOCK = `Global flags:
   --engine               Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
   --no-engine            Force the legacy stateless code path (overrides config / env)
                          Precedence: CLI > env (CLAUDE_AUTOPILOT_ENGINE) > config (engine.enabled) > built-in default
-                         v6.0.1: wired for \`scan\`. v6.0.2: wired for \`fix\` and \`costs\`. v6.0.3: wired for \`brainstorm\` and \`spec\`. v6.0.4: wired for \`plan\` and \`review\`. v6.0.5: wired for \`validate\`. v6.0.7: wired for \`implement\`. v6.0.8: wired for \`migrate\`. Other phases land in subsequent v6.0.x releases.`;
+                         v6.0.1: wired for \`scan\`. v6.0.2: wired for \`fix\` and \`costs\`. v6.0.3: wired for \`brainstorm\` and \`spec\`. v6.0.4: wired for \`plan\` and \`review\`. v6.0.5: wired for \`validate\`. v6.0.7: wired for \`implement\`. v6.0.8: wired for \`migrate\`. v6.0.9: wired for \`pr\`. ALL 10 phases now wrapped — v6.0.x feature-complete.`;
 
 /** Build the full two-level help text. Returned as a string so tests can assert against it without spawning. */
 export function buildHelpText(): string {
