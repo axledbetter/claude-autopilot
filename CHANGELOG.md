@@ -10,6 +10,43 @@
   (`src/core/ui/design-context-loader.ts`) — both gate on the same
   `hasFrontendFiles()` predicate so they only fire when frontend files change.
 
+## v6.0.7 — wrap `implement` through `runPhaseWithLifecycle` (2026-05-07)
+
+**Wraps the ninth pipeline phase.** Mechanical wrap following the v6.0.6
+helper recipe. Engine-off path is byte-for-byte unchanged (advisory print
+pointing at the Claude Code `claude-autopilot` skill); engine-on path
+creates a run dir + emits run.start / phase.start / phase.success /
+run.complete events. Concurrent dispatch — landed alongside v6.0.8
+(`migrate`) and v6.0.9 (`pr`).
+
+- New `src/cli/implement.ts` — `RunPhase<ImplementInput, ImplementOutput>`
+  with `idempotent: true, hasSideEffects: false`. **Documented deviation
+  from spec table:** the spec at line 159 of
+  `docs/specs/v6-run-state-engine.md` lists `implement` with
+  `idempotent: partial, hasSideEffects: yes, externalRefs: git-remote-push`.
+  That declaration assumes the verb itself writes commits and pushes them
+  to a remote. The v6.0.7 CLI verb does **not** write code, run tests,
+  commit, or push to a remote — all of that lives in the Claude Code
+  `claude-autopilot` skill (and its delegates: `subagent-driven-development`,
+  `commit-push-pr`, `using-git-worktrees`). The CLI verb is the engine-wrap
+  shell — its only side effect is writing the local
+  `.guardrail-cache/implement/<ts>-implement.md` log stub. If a future PR
+  inlines the implement loop into the CLI verb, the declarations flip to
+  match the spec table and a `ctx.emitExternalRef({ kind: 'git-remote-push',
+  id: '<commit-sha>' })` call lands after each push.
+- CLI dispatcher in `src/cli/index.ts` — wires `--engine` / `--no-engine` /
+  `--context` / `--plan` / `--output` / `--config` through the helper
+  alongside `process.env.CLAUDE_AUTOPILOT_ENGINE`. Mirrors the validate /
+  review / plan dispatcher shape.
+- Help text in `src/cli/help-text.ts` — adds `implement` to the Pipeline
+  group + per-verb Options block. Bumps `GLOBAL_FLAGS_BLOCK` to cite
+  v6.0.7 alongside v6.0.1 → v6.0.5.
+- New smoke test `tests/cli/implement-engine-smoke.test.ts` (6 cases) —
+  asserts state.json + events.ndjson lifecycle, idempotent /
+  hasSideEffects flags, env / CLI precedence, log file location.
+- Test count: 1408 → 1414 (+6). `npm test` clean. `npx tsc --noEmit`
+  clean except pre-existing fixture errors.
+
 ## v6.0.6 — `runPhaseWithLifecycle` helper (2026-05-06)
 
 **Tech-debt refactor, no behavior change.** v6.0.1 → v6.0.5 wrapped eight

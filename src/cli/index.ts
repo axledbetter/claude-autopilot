@@ -809,6 +809,38 @@ switch (subcommand) {
     break;
   }
 
+  case 'implement': {
+    // v6.0.7 — engine-wrap shell for the `implement` pipeline phase. The
+    // actual implement loop (read plan → dispatch subagents one per plan
+    // phase via `subagent-driven-development` → write code → run tests →
+    // commit → optionally push via `commit-push-pr`) lives in the Claude
+    // Code `claude-autopilot` skill; this verb provides a checkpointable
+    // phase shell so v6 pipeline runs can record an `implement` entry.
+    // Mirrors the plan / review / validate dispatcher shape. See the long
+    // deviation note in src/cli/implement.ts for the idempotent /
+    // hasSideEffects / git-remote-push declaration rationale.
+    const { runImplement } = await import('./implement.ts');
+    const json = boolFlag('json');
+    const config = flag('config');
+    const context = flag('context');
+    const plan = flag('plan');
+    const outputPath = flag('output');
+    const cliEngine = parseEngineCliFlag();
+    const code = await runUnderJsonMode(
+      { command: 'implement', active: json },
+      () => runImplement({
+        ...(config !== undefined ? { configPath: config } : {}),
+        ...(context !== undefined ? { context } : {}),
+        ...(plan !== undefined ? { plan } : {}),
+        ...(outputPath !== undefined ? { outputPath } : {}),
+        ...(cliEngine !== undefined ? { cliEngine } : {}),
+        envEngine: process.env.CLAUDE_AUTOPILOT_ENGINE,
+      }),
+    );
+    process.exit(code);
+    break;
+  }
+
   case 'report': {
     const outputPath = flag('output');
     const trend = boolFlag('trend');
