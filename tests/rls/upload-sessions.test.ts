@@ -49,11 +49,18 @@ describe('upload_sessions storage', () => {
   });
 
   it('Authenticated user CANNOT UPDATE consumed_at (single-use enforcement)', async () => {
+    // Postgres RLS USING(false) on UPDATE silently filters all rows → 0
+    // rows affected, no error returned. Defense is correct; we verify by
+    // reading back and confirming consumed_at stayed null. Same shape as
+    // entitlements no-client-write.
     const { data: row } = await serviceClient.from('upload_sessions')
       .select('id').eq('user_id', alice.id).limit(1).single();
-    const { error } = await alice.client.from('upload_sessions')
-      .update({ consumed_at: new Date().toISOString() }).eq('id', row!.id);
-    assert.notEqual(error, null, 'client should not be able to mark session consumed');
+    if (!row) throw new Error('test setup: no upload_session row to update');
+    await alice.client.from('upload_sessions')
+      .update({ consumed_at: new Date().toISOString() }).eq('id', row.id);
+    const { data: after } = await serviceClient.from('upload_sessions')
+      .select('consumed_at').eq('id', row.id).single();
+    assert.equal(after?.consumed_at, null, 'client must not be able to mark session consumed');
   });
 
   it('expired_at < consumed_at is rejected by CHECK constraint', async () => {

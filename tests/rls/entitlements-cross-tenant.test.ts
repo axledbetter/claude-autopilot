@@ -68,9 +68,15 @@ describe('entitlements RLS', () => {
   });
 
   it('Authenticated user CANNOT write entitlements directly (Stripe webhook only)', async () => {
-    const { error } = await alice.client.from('entitlements').update({ plan: 'enterprise' })
+    // Postgres RLS USING(false) on UPDATE filters all rows out → 0 rows
+    // affected, no error returned. The defense is correct (no upgrade
+    // happens); we verify by reading back and confirming the plan didn't
+    // change. Same shape as `upload_sessions` single-use enforcement.
+    await alice.client.from('entitlements').update({ plan: 'enterprise' })
       .eq('organization_id', aliceOrg);
-    assert.notEqual(error, null, 'client should not be able to upgrade their own plan');
+    const { data } = await serviceClient.from('entitlements')
+      .select('plan').eq('organization_id', aliceOrg).single();
+    assert.equal(data?.plan, 'small', 'client must not be able to upgrade their own plan');
   });
 
   after(async () => {
