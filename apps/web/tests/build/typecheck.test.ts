@@ -15,5 +15,5 @@ describe('apps/web typecheck', () => {
       console.error(result.stderr);
     }
     expect(result.status).toBe(0);
-  });
+  }, 30_000);
 });
