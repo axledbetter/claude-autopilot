@@ -280,6 +280,12 @@ export interface BudgetCheckEvent extends RunEventBase {
    *  `estimatedHigh` and `reserveApplied`. May be negative on hard-fail. */
   capRemaining: number;
   reason: string;
+  /** v6.2.0 — which scope produced the decision. `'phase'` (legacy
+   *  default) is the single-phase wrapper path; `'run'` is the
+   *  orchestrator's cross-phase mode. Optional only for back-compat
+   *  with older events.ndjson files; events emitted on v6.2.0+ always
+   *  carry a value. */
+  scope?: 'phase' | 'run';
 }
 
 /** Phase 6 — emitted when a `forceReplay` override flips a needs-human (or

@@ -114,11 +114,18 @@ export function buildPhaseContext(input: BuildPhaseContextInput): PhaseContext {
 }
 
 /** Helper for phase-runner.ts: aggregate every phase.cost event for a given
- *  phase index from an in-memory event stream. Returned in USD. */
-export function sumPhaseCost(events: RunEvent[], phaseIdx: number): number {
+ *  phase index from an in-memory event stream. Returned in USD.
+ *
+ *  v6.2.0 — pass `'*'` (the cross-phase sentinel) to sum cost across the
+ *  whole run (every `phase.cost` event regardless of phaseIdx). The
+ *  orchestrator uses this for run-scope budget enforcement; per-phase
+ *  callers keep passing a numeric phaseIdx for the legacy semantics. */
+export function sumPhaseCost(events: RunEvent[], phaseIdx: number | '*'): number {
   let total = 0;
   for (const ev of events) {
-    if (ev.event === 'phase.cost' && ev.phaseIdx === phaseIdx) total += ev.costUSD;
+    if (ev.event === 'phase.cost') {
+      if (phaseIdx === '*' || ev.phaseIdx === phaseIdx) total += ev.costUSD;
+    }
   }
   return total;
 }

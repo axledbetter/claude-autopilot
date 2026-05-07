@@ -48,6 +48,27 @@ export interface BudgetConfig {
    *  reserve at least this much from the cap" floor. Defaults to
    *  `DEFAULT_CONSERVATIVE_PHASE_RESERVE_USD` when omitted. */
   conservativePhaseReserveUSD?: number;
+  /** v6.2.0 — budget scope. `'phase'` (default) keeps the legacy
+   *  per-phase semantics where each `runPhase` invocation reasons against
+   *  its own phase budget (back-compat for single-phase wrappers like
+   *  `runPhaseWithLifecycle`). `'run'` is the orchestrator's
+   *  cross-phase mode: the actualSoFar reservoir already sums every
+   *  prior `phase.cost` event in the run, so `perRunUSD` is policed
+   *  monotonically against the WHOLE pipeline's spend.
+   *
+   *  In practice the policy math is identical between the two scopes —
+   *  Layer 1 + Layer 2 both consume `actualSoFarUSD` regardless. The
+   *  scope flag exists so the `budget.check` event tells observers
+   *  which mode produced the decision (so a CI dashboard can attribute
+   *  a reject to "run scope" vs "single-phase scope") and so future
+   *  policy changes (e.g. divergent perPhase reserves under run scope)
+   *  have a place to land without an event-shape break.
+   *
+   *  Per spec docs/specs/v6.2-multi-phase-orchestrator.md "Budget
+   *  enforcement": `checkPhaseBudget` gains `scope: 'phase' | 'run'`
+   *  (default 'phase' for back-compat). Orchestrator passes
+   *  `scope: 'run'`; per-phase callers keep the default. */
+  scope?: 'phase' | 'run';
 }
 
 /** The decision the runner consumes. Mirrors the `budget.check` event
@@ -67,6 +88,11 @@ export interface BudgetCheck {
    *  `estimatedHigh` and `reserveApplied`. May be negative on hard-fail. */
   capRemaining: number;
   reason: string;
+  /** v6.2.0 — which scope produced the decision. Echoes `BudgetConfig.scope`
+   *  back into the `budget.check` event so observers can attribute
+   *  cross-phase rejections to the orchestrator vs single-phase wrappers
+   *  passing the legacy default. */
+  scope: 'phase' | 'run';
 }
 
 export interface CheckPhaseBudgetOpts {
@@ -94,6 +120,15 @@ export function checkPhaseBudget(opts: CheckPhaseBudgetOpts): BudgetCheck {
     actualSoFarUSD,
     nonInteractive,
   } = opts;
+
+  // v6.2.0 — `'phase'` (default for back-compat) vs `'run'` (orchestrator).
+  // The math is intentionally identical between the two; `actualSoFarUSD`
+  // is already the cross-phase sum produced by `sumRunCost` in
+  // phase-runner.ts. The flag exists so the `budget.check` event tells
+  // observers which scope generated the decision and so future policy
+  // tweaks (e.g. divergent perPhase reserves under run scope) have a
+  // place to land without an event-shape break.
+  const scope: 'phase' | 'run' = budget.scope ?? 'phase';
 
   const reserveFloor =
     typeof budget.conservativePhaseReserveUSD === 'number'
@@ -132,6 +167,7 @@ export function checkPhaseBudget(opts: CheckPhaseBudgetOpts): BudgetCheck {
         `advisory estimate would exceed run cap — actual ` +
         `$${fmtUSD(actualSoFarUSD)} + estimate.high ` +
         `$${fmtUSD(estimatedHigh)} > perRunUSD $${fmtUSD(budget.perRunUSD)}`,
+      scope,
     };
   }
 
@@ -154,6 +190,7 @@ export function checkPhaseBudget(opts: CheckPhaseBudgetOpts): BudgetCheck {
         `run cap exceeded — actual $${fmtUSD(actualSoFarUSD)} + reserve ` +
         `$${fmtUSD(reserveApplied)} = $${fmtUSD(projected)} > perRunUSD ` +
         `$${fmtUSD(budget.perRunUSD)}`,
+      scope,
     };
   }
 
@@ -172,6 +209,7 @@ export function checkPhaseBudget(opts: CheckPhaseBudgetOpts): BudgetCheck {
       reason:
         `per-phase cap exceeded — reserve $${fmtUSD(reserveApplied)} > ` +
         `perPhaseUSD $${fmtUSD(budget.perPhaseUSD)}`,
+      scope,
     };
   }
 
@@ -188,6 +226,7 @@ export function checkPhaseBudget(opts: CheckPhaseBudgetOpts): BudgetCheck {
       : `within budget (no estimate, applied $${fmtUSD(reserveApplied)} ` +
         `reserve floor) — projected $${fmtUSD(projected)} of ` +
         `$${fmtUSD(budget.perRunUSD)}`,
+    scope,
   };
 }
 
