@@ -17,6 +17,11 @@ export interface MockServerOptions {
     rejectFirstFinalize?: boolean; // first POST to finalize: 503
     expireTokenAfterSeq?: number;  // after this seq, return 401 once
     duplicateChunkSeq?: number;    // PUT this seq returns 409 "duplicate" once
+    /** Persistent 401 on every chunk PUT — simulates revoked API key /
+     *  permanently invalid upload token. Used for the bugbot regression:
+     *  the uploader must NOT loop forever; it must give up after one
+     *  re-bootstrap attempt. */
+    persistChunk401?: boolean;
     inflightSession?: { runId: string; token: string; jti: string; nextExpectedSeq: number };
   };
 }
@@ -120,6 +125,12 @@ export function makeMockServer(opts: MockServerOptions): MockServerHandle {
       if (!auth) return jsonResponse(401, { error: 'unauthenticated' });
       const runId = decodeURIComponent(m[1]!);
       const seq = Number.parseInt(m[2]!, 10);
+
+      // Persistent 401 — simulates revoked API key. Used for the bugbot
+      // regression test that asserts the uploader doesn't loop forever.
+      if (sc.persistChunk401) {
+        return jsonResponse(401, { error: 'unauthorized' });
+      }
 
       // Token-expire scenario.
       if (sc.expireTokenAfterSeq !== undefined && !state.expireTriggered && seq > sc.expireTokenAfterSeq) {

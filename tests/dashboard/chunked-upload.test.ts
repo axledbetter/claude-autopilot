@@ -155,4 +155,24 @@ describe('uploadRun', () => {
     assert.ok(events.includes('finalized'));
     assert.ok(events.filter((e) => e === 'chunk-uploaded').length === 2);
   });
+
+  it('bugbot HIGH — bounds 401 re-bootstrap; gives up after MAX attempts', async () => {
+    const { runId, runDir } = await makeRun({ eventsBytes: 1024 });
+    runs.push(runDir);
+    const mock = makeMockServer({
+      apiKeys: { [KEY]: { userId: 'user1', runs: [runId] } },
+      scenarios: { persistChunk401: true },
+    });
+    const start = Date.now();
+    const res = await uploadRun(runId, runDir, {
+      apiKey: KEY,
+      baseUrl: 'http://test.invalid',
+      fetchImpl: mock.fetch,
+    });
+    const elapsed = Date.now() - start;
+    assert.strictEqual(res.ok, false);
+    assert.match(res.error ?? '', /unauthorized after.*re-bootstrap/i);
+    // Sanity: must NOT have looped forever (under a second on a 1KB chunk).
+    assert.ok(elapsed < 5_000, `uploader looped for ${elapsed}ms — expected <5000ms`);
+  });
 });

@@ -253,6 +253,8 @@ export async function uploadRun(
 
     let token = session.uploadToken;
     let chainRoot = prev;
+    let reauthAttempts = 0;        // bugbot HIGH — bound the 401 re-bootstrap retry
+    const MAX_REAUTH_ATTEMPTS = 1;
     for (let seq = startSeq; seq < chunks.length; seq++) {
       checkAborted(signal);
       const chunk = chunks[seq];
@@ -277,7 +279,17 @@ export async function uploadRun(
         continue;
       }
       if (res.status === 401) {
-        // Token might be expired — re-bootstrap once and retry this seq.
+        // bugbot HIGH — bound retries. Token might be expired, OR the API
+        // key is revoked (bootstrap succeeds but minted tokens are still
+        // 401). Without a counter, the loop spins forever.
+        if (reauthAttempts >= MAX_REAUTH_ATTEMPTS) {
+          const text = await res.text().catch(() => '');
+          throw new UploadError(
+            `chunk ${seq} unauthorized after ${reauthAttempts} re-bootstrap attempt(s); check API key validity. ${text}`,
+            res.status,
+          );
+        }
+        reauthAttempts++;
         const reboot = await bootstrapSession(
           baseUrl, opts.apiKey, runId, expectedChunkCount, fetchImpl, signal,
         );

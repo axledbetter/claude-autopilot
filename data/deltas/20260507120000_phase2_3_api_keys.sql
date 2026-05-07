@@ -6,7 +6,7 @@ CREATE TABLE api_keys (
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   key_hash TEXT NOT NULL UNIQUE CHECK (key_hash ~ '^[0-9a-f]{64}$'),
   prefix_display TEXT NOT NULL CHECK (prefix_display ~ '^clp_[0-9a-f]{12}$'),
-  label TEXT,
+  label TEXT CHECK (label IS NULL OR char_length(label) <= 100),  -- codex PR NOTE
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_used_at TIMESTAMPTZ,
   revoked_at TIMESTAMPTZ
@@ -19,8 +19,15 @@ ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
 CREATE POLICY api_keys_select_own ON api_keys
   FOR SELECT USING (user_id = auth.uid());
 
-CREATE POLICY api_keys_update_own ON api_keys
-  FOR UPDATE USING (user_id = auth.uid());
+-- Codex PR CRITICAL — un-revoke vulnerability. The earlier policy allowed
+-- authed users to UPDATE any column on their own rows (column grants
+-- limited it to revoked_at). But UPDATE revoked_at = NULL on a previously
+-- revoked key would re-activate it. Fix: USING requires the row currently
+-- be active; WITH CHECK requires the row become revoked.
+CREATE POLICY api_keys_revoke_own ON api_keys
+  FOR UPDATE
+  USING (user_id = auth.uid() AND revoked_at IS NULL)
+  WITH CHECK (user_id = auth.uid() AND revoked_at IS NOT NULL);
 
 -- INSERT is service-role only (mint goes through /api/dashboard/api-keys/mint).
 -- No INSERT policy → blocked for authed users by default.
@@ -99,8 +106,17 @@ BEGIN
     VALUES (p_user_id, p_key_hash, p_prefix_display, p_label)
     RETURNING id INTO new_id;
 
-  INSERT INTO public.api_key_mint_nonces (user_id, nonce, api_key_id)
-    VALUES (p_user_id, p_nonce, new_id);
+  -- Codex PR WARNING — concurrent mint with same (user_id, nonce) can
+  -- both pass the IF EXISTS check above. Catch the unique-violation on
+  -- the nonce insert and re-raise as our typed P0010 error so the route
+  -- maps it to 409 instead of 500.
+  BEGIN
+    INSERT INTO public.api_key_mint_nonces (user_id, nonce, api_key_id)
+      VALUES (p_user_id, p_nonce, new_id);
+  EXCEPTION
+    WHEN unique_violation THEN
+      RAISE EXCEPTION 'nonce_conflict' USING ERRCODE = 'P0010';
+  END;
 
   RETURN QUERY SELECT new_id;
 END;
