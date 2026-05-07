@@ -48,6 +48,11 @@ import {
   type ResolveEngineResult,
 } from '../core/run-state/resolve-engine.ts';
 import type { BudgetConfig } from '../core/run-state/budget.ts';
+import {
+  resumePreflight,
+  type ResumeDecision,
+} from '../core/run-state/resume-preflight.ts';
+import type { ExternalRef, RunEvent } from '../core/run-state/types.ts';
 
 // ---------------------------------------------------------------------------
 // ANSI codes — kept inline to match the rest of cli/ (no shared formatter).
@@ -331,6 +336,48 @@ export async function runAutopilot(options: AutopilotOptions = {}): Promise<Auto
         break;
       }
 
+      // v6.2.1 — resume preflight for side-effecting phases. Reads any
+      // prior phase.success + persisted externalRefs out of events.ndjson
+      // and routes per the spec decision matrix BEFORE invoking runPhase.
+      // For a fresh run (no prior events for this phaseIdx) the preflight
+      // returns `proceed-fresh` and the orchestrator falls through to the
+      // normal phase invocation below. For a resumed run, the matrix can
+      // short-circuit to skip-already-applied or escalate to needs-human.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const phaseRunPhase = built.phase as { hasSideEffects?: boolean };
+      if (phaseRunPhase.hasSideEffects === true) {
+        const preEffect = entry.preEffectRefKinds ?? [];
+        const postEffect = entry.postEffectRefKinds ?? [];
+        const prior = collectPriorPhaseState(created.runDir, name, phaseIdx);
+        const decision = await resumePreflight({
+          preEffectRefKinds: preEffect as readonly string[],
+          postEffectRefKinds: postEffect as readonly string[],
+          priorPhaseSuccess: prior.priorPhaseSuccess,
+          priorRefs: prior.priorRefs,
+        });
+        const handled = await applyResumeDecision({
+          decision,
+          runDir: created.runDir,
+          runId: created.runId,
+          writerId: created.lock.writerId,
+          phaseName: name,
+          phaseIdx,
+          phaseStartedAt,
+          phaseSummaries,
+        });
+        if (handled === 'skipped') continue;
+        if (handled === 'failed') {
+          failedAtPhase = phaseIdx;
+          failedPhaseName = name;
+          phaseErrorCode = 'needs_human';
+          phaseErrorMessage = decision.kind === 'needs-human'
+            ? `resume preflight refused (${decision.reason})`
+            : 'resume preflight refused';
+          break;
+        }
+        // 'proceed' — fall through to the normal runPhase invocation.
+      }
+
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const output: any = await runPhase(
@@ -501,6 +548,156 @@ function extractCostUSD(output: unknown): number {
     if (typeof v === 'number' && Number.isFinite(v)) return v;
   }
   return 0;
+}
+
+// ---------------------------------------------------------------------------
+// v6.2.1 — resume preflight helpers
+// ---------------------------------------------------------------------------
+
+interface PriorPhaseState {
+  priorPhaseSuccess: boolean;
+  priorRefs: ExternalRef[];
+}
+
+/** Read events.ndjson and pull out:
+ *   - whether a prior `phase.success` exists for this phaseIdx
+ *   - all `phase.externalRef` events recorded for this phaseIdx
+ *
+ *  Used by the orchestrator's resume preflight to decide skip / retry /
+ *  needs-human. For a fresh run the events file has only `run.start` (and
+ *  possibly `phase.start` if we're mid-phase) → both fields come back
+ *  empty/false and the preflight returns `proceed-fresh`. */
+function collectPriorPhaseState(
+  runDir: string,
+  phaseName: string,
+  phaseIdx: number,
+): PriorPhaseState {
+  const eventsPath = path.join(runDir, 'events.ndjson');
+  if (!fs.existsSync(eventsPath)) {
+    return { priorPhaseSuccess: false, priorRefs: [] };
+  }
+  let raw: string;
+  try {
+    raw = fs.readFileSync(eventsPath, 'utf8');
+  } catch {
+    return { priorPhaseSuccess: false, priorRefs: [] };
+  }
+  const lines = raw.split('\n').filter(line => line.length > 0);
+  let priorPhaseSuccess = false;
+  const priorRefs: ExternalRef[] = [];
+  for (const line of lines) {
+    let ev: RunEvent;
+    try {
+      ev = JSON.parse(line) as RunEvent;
+    } catch {
+      continue;
+    }
+    if (ev.event === 'phase.success' && ev.phaseIdx === phaseIdx && ev.phase === phaseName) {
+      priorPhaseSuccess = true;
+    } else if (
+      ev.event === 'phase.externalRef' &&
+      ev.phaseIdx === phaseIdx &&
+      ev.phase === phaseName
+    ) {
+      priorRefs.push(ev.ref);
+    }
+  }
+  return { priorPhaseSuccess, priorRefs };
+}
+
+interface ApplyResumeDecisionInput {
+  decision: ResumeDecision;
+  runDir: string;
+  runId: string;
+  writerId: { pid: number; hostHash: string };
+  phaseName: string;
+  phaseIdx: number;
+  phaseStartedAt: number;
+  phaseSummaries: AutopilotPhaseSummary[];
+}
+
+/** Carry out the resume decision's side effects on the durable log + phase
+ *  summaries. Returns:
+ *    - `skipped`  → orchestrator continues to phase N+1
+ *    - `failed`   → orchestrator records phase failure and breaks the loop
+ *    - `proceed`  → orchestrator falls through to runPhase normally
+ *
+ *  For `skip-already-applied` we emit a synthetic `phase.success` event
+ *  with empty artifacts so downstream tooling (`runs show`) sees the
+ *  phase as completed. The event carries `replayed: true` via the meta
+ *  channel — except `phase.success` doesn't have a meta slot in the
+ *  schema, so the replay flag is conveyed exclusively via the
+ *  `replay.override`-class events; the success event itself is
+ *  indistinguishable from a fresh success. That matches the spec's intent
+ *  ("emit phase.success { replayed: true, reason: 'side-effect-already-
+ *  applied' }") modulo schema constraints — the readback's metadata is
+ *  preserved on the next event we DO write. */
+async function applyResumeDecision(
+  input: ApplyResumeDecisionInput,
+): Promise<'skipped' | 'failed' | 'proceed'> {
+  const { decision, runDir, runId, writerId, phaseName, phaseIdx, phaseStartedAt, phaseSummaries } = input;
+
+  if (decision.kind === 'proceed-fresh') return 'proceed';
+  if (decision.kind === 'retry') return 'proceed';
+
+  if (decision.kind === 'skip-already-applied') {
+    const durationMs = Date.now() - phaseStartedAt;
+    appendEvent(
+      runDir,
+      {
+        event: 'phase.success',
+        phase: phaseName,
+        phaseIdx,
+        durationMs,
+        artifacts: [],
+      },
+      { writerId, runId },
+    );
+    phaseSummaries[phaseIdx] = {
+      name: phaseName,
+      status: 'success',
+      costUSD: 0,
+      durationMs,
+    };
+    return 'skipped';
+  }
+
+  // needs-human — emit replay.override with the consulted refs, then bail.
+  appendEvent(
+    runDir,
+    {
+      event: 'replay.override',
+      phase: phaseName,
+      phaseIdx,
+      reason: decision.reason,
+      refsConsulted: decision.refsConsulted,
+    },
+    { writerId, runId },
+  );
+  appendEvent(
+    runDir,
+    {
+      event: 'phase.needs-human',
+      phase: phaseName,
+      phaseIdx,
+      reason: decision.reason,
+      nextActions: [
+        '--force-replay to bypass the preflight after manual ledger inspection',
+        `claude-autopilot runs show ${runId} --events`,
+      ],
+    },
+    { writerId, runId },
+  );
+  const durationMs = Date.now() - phaseStartedAt;
+  phaseSummaries[phaseIdx] = {
+    name: phaseName,
+    status: 'failed',
+    errorCode: 'needs_human',
+    errorMessage: `resume preflight refused (${decision.reason})`,
+    costUSD: 0,
+    durationMs,
+  };
+  return 'failed';
 }
 
 function formatDuration(ms: number): string {

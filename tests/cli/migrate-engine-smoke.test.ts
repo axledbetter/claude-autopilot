@@ -172,7 +172,7 @@ describe('migrate --engine smoke (v6.0.8)', () => {
     }
   });
 
-  it('engine on: each applied migration emits a `migration-version` externalRef scoped by env', async () => {
+  it('engine on: each applied migration emits a `migration-version` externalRef scoped by env (plus v6.2.1 pre-effect `migration-batch` breadcrumb)', async () => {
     const cwd = tmpProject();
     try {
       await runMigrate({
@@ -190,12 +190,22 @@ describe('migrate --engine smoke (v6.0.8)', () => {
 
       const events = readEvents(runDir!);
       const externalRefs = events.filter(e => e.event === 'phase.externalRef');
-      assert.equal(externalRefs.length, 2, 'expected one externalRef per applied migration');
+      // v6.2.1 — 1 pre-effect `migration-batch` breadcrumb + N post-effect
+      // `migration-version` reconciliation refs (one per applied migration).
+      assert.equal(externalRefs.length, 3, 'expected 1 pre-effect batch + 2 post-effect version refs');
       const refs = externalRefs.map(e => e.event === 'phase.externalRef' ? e.ref : null).filter(Boolean);
+
+      // First ref MUST be the pre-effect breadcrumb — emitted BEFORE dispatch
+      // so a partial crash leaves a resume target. See spec section "audit
+      // results — current state".
+      assert.equal(refs[0]!.kind, 'migration-batch', 'first ref must be the pre-effect batch breadcrumb');
+      assert.ok(refs[0]!.id.startsWith('qa:'), `batch ref id should be env-scoped: ${refs[0]!.id}`);
+
+      // Remaining refs are the post-effect reconciliation refs.
       assert.deepEqual(
-        refs.map(r => r!.kind),
+        refs.slice(1).map(r => r!.kind),
         ['migration-version', 'migration-version'],
-        'all externalRefs should be migration-version',
+        'all post-effect refs should be migration-version',
       );
       assert.ok(
         refs.some(r => r!.id === 'qa:20260306000000_alpha'),
@@ -210,13 +220,13 @@ describe('migrate --engine smoke (v6.0.8)', () => {
       const state = readState(runDir!);
       const phase = state.phases[0]!;
       assert.ok(phase.externalRefs, 'phase should have externalRefs persisted in state');
-      assert.equal(phase.externalRefs.length, 2);
+      assert.equal(phase.externalRefs.length, 3);
     } finally {
       cleanup(cwd);
     }
   });
 
-  it('engine on: skipped status (no pending migrations) records phase.success with zero externalRefs', async () => {
+  it('engine on: skipped status (no pending migrations) records phase.success with only the v6.2.1 pre-effect `migration-batch` breadcrumb', async () => {
     const cwd = tmpProject();
     try {
       const out = await runMigrate({
@@ -235,7 +245,14 @@ describe('migrate --engine smoke (v6.0.8)', () => {
       assert.ok(runDir);
       const events = readEvents(runDir!);
       const externalRefs = events.filter(e => e.event === 'phase.externalRef');
-      assert.equal(externalRefs.length, 0, 'no externalRefs when no migrations applied');
+      // v6.2.1 — even on skipped (zero applied migrations), the pre-effect
+      // breadcrumb is emitted before the dispatcher decides "nothing to do."
+      // The contract is "did we start this work?" — and we did. Post-effect
+      // refs remain empty because nothing was applied.
+      assert.equal(externalRefs.length, 1, 'pre-effect batch ref present even when nothing applied');
+      const ref0 = externalRefs[0]!;
+      if (ref0.event !== 'phase.externalRef') throw new Error('discriminant');
+      assert.equal(ref0.ref.kind, 'migration-batch');
       const state = readState(runDir!);
       assert.equal(state.status, 'success');
       assert.equal(state.phases[0]!.status, 'succeeded');
