@@ -32,6 +32,7 @@ export const HELP_GROUPS: HelpGroup[] = [
     verbs: [
       { verb: 'init', summary: 'Scaffold guardrail.config.yaml + auto-detect migrate stack (writes .autopilot/stack.md)' },
       { verb: 'setup', summary: 'Auto-detect stack, write config, install pre-push hook' },
+      { verb: 'autopilot', summary: 'Multi-phase orchestrator — run scan → spec → plan → implement under one runId (v6.2.0)' },
       { verb: 'brainstorm', summary: 'Pipeline entry point (Claude Code skill — see /brainstorm)' },
       { verb: 'spec', summary: 'Spec-writing pointer (Claude Code skill — see /brainstorm)' },
       { verb: 'plan', summary: 'Pipeline plan phase (engine-wrap shell — see superpowers:writing-plans skill)' },
@@ -195,6 +196,30 @@ export const HELP_OPTIONS: Record<string, string> = {
         is an engine-wrap shell; engine-on still produces a run-state
         snapshot (state.json + events.ndjson) for pipeline introspection.
         SARIF emission lives in \`claude-autopilot run --format sarif\`.`,
+  autopilot: `Options (autopilot):
+  --mode <full>        Pipeline mode (v6.2.0 ships 'full' only — scan → spec → plan → implement)
+  --phases <a,b,c>     Explicit phase list (comma-separated; overrides --mode)
+  --budget <usd>       Run-scope budget cap (USD). Cross-phase — actualSoFar accumulates across phases.
+  --engine             Run under the v6 Run State Engine (REQUIRED — engine-off is rejected)
+  --no-engine          REJECTED — orchestrator requires engine-on (rejected at pre-flight, exit 1)
+
+  Behavior: drives N pipeline phases under ONE runId so a \`runs watch <id>\`
+            window covers the whole pipeline. Sequential — no parallel
+            execution. Non-interactive — pause budget decisions hard-fail.
+            Exit codes: 0 success, 78 budget_exceeded, 2 engine error
+            (lock_held / corrupted_state / partial_write), 1 everything else.
+            Resume a failed pipeline via \`claude-autopilot run resume <id>\`.
+
+  v6.2.0 ships scan / spec / plan / implement only. \`migrate\` and \`pr\`
+  land in v6.2.1 once their per-phase idempotency contracts (preflight
+  readback + externalRef recorded BEFORE side-effect) are wired. The
+  --mode=fix and --mode=review modes land in v6.2.1+; --json envelope
+  lands in v6.2.2.
+
+  Examples:
+    claude-autopilot autopilot
+    claude-autopilot autopilot --budget 25
+    claude-autopilot autopilot --phases=scan,spec,plan`,
   implement: `Options (implement):
   --context <text>     Optional context note injected into the implement log
   --plan <path>        Plan file the implement phase consumed (e.g. docs/plans/<slug>.md)

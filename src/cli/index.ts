@@ -201,8 +201,8 @@ These are aliases for the flat subcommands; they still work without the 'advance
 // gc, delete, doctor) are dispatched inside its case block. The singular
 // `run resume` form is handled BEFORE the default `run` -> review dispatch
 // kicks in (see disambiguation block just below).
-const SUBCOMMANDS = ['init', 'run', 'runs', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'migrate', 'migrate-doctor', 'deploy', 'brainstorm', 'spec', 'plan', 'review', 'validate', 'internal', 'help', '--help', '-h'] as const;
-const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity', 'prompt', 'context-file', 'path', 'adapter', 'ref', 'sha', 'spec', 'context'];
+const SUBCOMMANDS = ['init', 'run', 'runs', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'migrate', 'migrate-doctor', 'deploy', 'brainstorm', 'spec', 'plan', 'implement', 'review', 'validate', 'autopilot', 'internal', 'help', '--help', '-h'] as const;
+const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity', 'prompt', 'context-file', 'path', 'adapter', 'ref', 'sha', 'spec', 'context', 'mode', 'phases', 'budget'];
 
 // Bare invocation — no subcommand, no flags → show welcome guide
 if (args.length === 0) {
@@ -850,6 +850,50 @@ switch (subcommand) {
       }),
     );
     process.exit(code);
+    break;
+  }
+
+  case 'autopilot': {
+    // v6.2.0 — multi-phase orchestrator. One runId across all phases.
+    // Engine-on REQUIRED (rejected at pre-flight if --no-engine / env=off
+    // / config=false). v6.2.0 ships --mode=full (scan → spec → plan →
+    // implement); --mode=fix and --mode=review land in v6.2.1+.
+    // --json envelope lands in v6.2.2.
+    const { runAutopilot } = await import('./autopilot.ts');
+    const modeArg = flag('mode');
+    if (modeArg !== undefined && modeArg !== 'full') {
+      console.error(
+        `\x1b[31m[claude-autopilot] invalid_config: --mode "${modeArg}" not supported in v6.2.0 (use --mode=full)\x1b[0m`,
+      );
+      console.error(`\x1b[2m  --mode=fix and --mode=review land in v6.2.1+; use --phases=<csv> for custom lists\x1b[0m`);
+      process.exit(1);
+    }
+    const phasesArg = flag('phases');
+    const phases = phasesArg
+      ? phasesArg.split(',').map(s => s.trim()).filter(s => s.length > 0)
+      : undefined;
+    const budgetRaw = flag('budget');
+    let budgetUSD: number | undefined;
+    if (budgetRaw !== undefined) {
+      const parsed = Number.parseFloat(budgetRaw);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        console.error(
+          `\x1b[31m[claude-autopilot] invalid_config: --budget must be a positive number, got "${budgetRaw}"\x1b[0m`,
+        );
+        process.exit(1);
+      }
+      budgetUSD = parsed;
+    }
+    const cliEngine = parseEngineCliFlag();
+    const result = await runAutopilot({
+      cwd: process.cwd(),
+      mode: 'full',
+      ...(phases !== undefined ? { phases } : {}),
+      ...(budgetUSD !== undefined ? { budgetUSD } : {}),
+      ...(cliEngine !== undefined ? { cliEngine } : {}),
+      envEngine: process.env.CLAUDE_AUTOPILOT_ENGINE,
+    });
+    process.exit(result.exitCode);
     break;
   }
 
