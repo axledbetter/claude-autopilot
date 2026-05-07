@@ -37,6 +37,7 @@
 
 import type { GuardrailConfig } from '../config/types.ts';
 import type { RunPhase } from './phase-runner.ts';
+import type { ExternalRefKind } from './types.ts';
 
 import {
   buildScanPhase,
@@ -62,6 +63,18 @@ import {
   type ImplementOutput,
   type ImplementCommandOptions,
 } from '../../cli/implement.ts';
+import {
+  buildMigratePhase,
+  type MigrateInput,
+  type MigrateOutput,
+  type MigrateCommandOptions,
+} from '../../cli/migrate.ts';
+import {
+  buildPrPhase,
+  type PrInput,
+  type PrOutput,
+  type PrCommandOptions,
+} from '../../cli/pr.ts';
 
 // ---------------------------------------------------------------------------
 // Registry shape
@@ -98,11 +111,71 @@ export interface PhaseBuilt<I, O> {
  *  `PhaseBuilt` (the happy path) or a `PhaseEarlyExit` (pre-flight bailed).
  *  The generic `<I, O>` is preserved at the declaration site via
  *  `satisfies PhaseRegistration<I, O>` so the registry doesn't collapse
- *  to `PhaseRegistration<unknown, unknown>` on lookup. */
+ *  to `PhaseRegistration<unknown, unknown>` on lookup.
+ *
+ *  v6.2.1 — `preEffectRefKinds` and `postEffectRefKinds` capture the per-
+ *  phase idempotency contract. A side-effecting phase MUST declare both:
+ *  the registry rejects any `hasSideEffects: true` registration that omits
+ *  them. The orchestrator's resume preflight reads them back to decide
+ *  skip-already-applied vs retry vs needs-human. Read-only phases (scan /
+ *  spec / plan / implement-as-of-v6.2.0) omit both — they never enter the
+ *  preflight branch.
+ *
+ *  The kinds named here MUST be subsets of `ExternalRefKind`. The registry
+ *  doesn't statically verify the phase body emits them (would require
+ *  runtime introspection of `ctx.emitExternalRef` calls); it only requires
+ *  the contract DECLARATION so the orchestrator knows what to read back. */
 export interface PhaseRegistration<I, O, Opts = unknown> {
   build: (deps: Opts) => Promise<PhaseBuilt<I, O> | PhaseEarlyExit>;
   /** Human-readable name shown in CLI banners + `runs show` output. */
   displayName: string;
+  /** v6.2.1 — true iff the registered phase declares `hasSideEffects: true`
+   *  on its `RunPhase` shape. Required so the registry's `registerPhase`
+   *  helper can enforce the side-effect idempotency contract at registration
+   *  time without needing to instantiate the phase. Read-only phases
+   *  (scan / spec / plan / implement) omit this or set it to false. */
+  hasSideEffects?: boolean;
+  /** v6.2.1 — kinds the phase emits BEFORE invoking its side effect. Used
+   *  by the orchestrator's resume preflight to detect "we started this work
+   *  but didn't finish." Required when `hasSideEffects: true`. */
+  preEffectRefKinds?: readonly ExternalRefKind[];
+  /** v6.2.1 — kinds the phase emits AFTER its side effect completes
+   *  successfully. Used by the resume preflight's skip-already-applied
+   *  check (all post-effect refs `merged`/`live` ⇒ skip). Required when
+   *  `hasSideEffects: true`; may be empty when the pre-effect ref doubles
+   *  as the reconciliation ref (e.g. `pr`'s `github-pr` is recorded
+   *  pre-effect with the same id `gh` reports post-create). */
+  postEffectRefKinds?: readonly ExternalRefKind[];
+}
+
+/**
+ * v6.2.1 — registry-time guard that enforces the side-effect idempotency
+ * contract. Throws `Error` (caught by the registry-rejection test) when a
+ * `hasSideEffects: true` registration omits the contract arrays.
+ *
+ * Why a runtime throw and not a type-level check: the contract arrays are
+ * declarative metadata, not type-derivable from the builder signature. A
+ * structural type constraint would require duplicating each builder's
+ * shape into a wider type — overkill for a one-line registry-time check
+ * that runs once at module load.
+ */
+export function registerPhase<I, O, Opts = unknown>(
+  reg: PhaseRegistration<I, O, Opts>,
+): PhaseRegistration<I, O, Opts> {
+  if (reg.build === undefined) {
+    throw new Error(`registry: missing build for ${reg.displayName}`);
+  }
+  if (reg.hasSideEffects) {
+    const pre = reg.preEffectRefKinds;
+    const post = reg.postEffectRefKinds;
+    if (!pre || pre.length === 0 || !post) {
+      throw new Error(
+        `registry: side-effect phase ${reg.displayName} missing idempotency contract — ` +
+        `declare preEffectRefKinds + postEffectRefKinds`,
+      );
+    }
+  }
+  return reg;
 }
 
 // ---------------------------------------------------------------------------
@@ -115,37 +188,66 @@ export interface PhaseRegistration<I, O, Opts = unknown> {
  *
  *  Adding a new phase: extract its `build<Phase>Phase()` builder out of the
  *  CLI verb (parity test required — see spec WARNING #4), then register
- *  here. The orchestrator picks it up automatically. */
+ *  here. The orchestrator picks it up automatically.
+ *
+ *  v6.2.1 — `migrate` and `pr` enter the registry. Both are side-effecting,
+ *  so each declares its idempotency contract via `preEffectRefKinds` /
+ *  `postEffectRefKinds`. `registerPhase()` runs at module load and throws
+ *  if a side-effect entry omits the contract — that's the registry-time
+ *  enforcement gate the v6.2.1 spec requires. Read-only phases (scan /
+ *  spec / plan / implement) omit both arrays. */
 export const PHASE_REGISTRY = {
-  scan: {
+  scan: registerPhase({
     build: buildScanPhase,
     displayName: 'Scan',
-  } satisfies PhaseRegistration<ScanInput, ScanOutput, ScanCommandOptions>,
-  spec: {
+  }) satisfies PhaseRegistration<ScanInput, ScanOutput, ScanCommandOptions>,
+  spec: registerPhase({
     build: buildSpecPhase,
     displayName: 'Spec',
-  } satisfies PhaseRegistration<SpecInput, SpecOutput, SpecCommandOptions>,
-  plan: {
+  }) satisfies PhaseRegistration<SpecInput, SpecOutput, SpecCommandOptions>,
+  plan: registerPhase({
     build: buildPlanPhase,
     displayName: 'Plan',
-  } satisfies PhaseRegistration<PlanInput, PlanOutput, PlanCommandOptions>,
-  implement: {
+  }) satisfies PhaseRegistration<PlanInput, PlanOutput, PlanCommandOptions>,
+  implement: registerPhase({
     build: buildImplementPhase,
     displayName: 'Implement',
-  } satisfies PhaseRegistration<ImplementInput, ImplementOutput, ImplementCommandOptions>,
+  }) satisfies PhaseRegistration<ImplementInput, ImplementOutput, ImplementCommandOptions>,
+  migrate: registerPhase({
+    build: buildMigratePhase,
+    displayName: 'Migrate',
+    hasSideEffects: true,
+    preEffectRefKinds: ['migration-batch'],
+    postEffectRefKinds: ['migration-version'],
+  }) satisfies PhaseRegistration<MigrateInput, MigrateOutput, MigrateCommandOptions>,
+  pr: registerPhase({
+    build: buildPrPhase,
+    displayName: 'PR',
+    hasSideEffects: true,
+    // The github-pr ref is recorded pre-effect with the same id gh reports
+    // post-create — it serves both purposes. postEffectRefKinds is empty
+    // by design, not by omission. The contract guard accepts an empty
+    // array; only `undefined` triggers the rejection.
+    preEffectRefKinds: ['github-pr'],
+    postEffectRefKinds: [],
+  }) satisfies PhaseRegistration<PrInput, PrOutput, PrCommandOptions>,
 } as const;
 
 /** Literal union of registered phase names. Adding a new phase to
  *  PHASE_REGISTRY automatically extends this type. */
 export type PhaseName = keyof typeof PHASE_REGISTRY;
 
-/** The default `--mode=full` ordering for v6.2.0. The remaining pipeline
- *  steps (`migrate`, `pr`) land in v6.2.1 per the spec's PR breakdown. */
+/** The default `--mode=full` ordering. v6.2.0 shipped scan → spec → plan →
+ *  implement; v6.2.1 extends with migrate → pr (per spec section "Phase
+ *  ordering"). After v6.2.1 ships, `claude-autopilot autopilot` runs the
+ *  full 6-phase pipeline under one runId. */
 export const DEFAULT_FULL_PHASES: readonly PhaseName[] = [
   'scan',
   'spec',
   'plan',
   'implement',
+  'migrate',
+  'pr',
 ] as const;
 
 /** Look up a phase entry by name. Returns the registration with its full
