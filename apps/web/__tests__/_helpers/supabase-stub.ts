@@ -116,6 +116,10 @@ class TableQuery {
     }
 
     if (this.op.kind === 'update') {
+      // Test seam: simulate DB write failure on demand.
+      if (this.stub.forceUpdateError.has(this.table)) {
+        return { data: null, error: { message: `simulated update failure on ${this.table}` } };
+      }
       const updated: Row[] = [];
       const next = rows.map((r) => {
         if (this.filters.every((f) => f(r))) {
@@ -143,11 +147,13 @@ export class SupabaseStub {
   tables = new Map<string, Row[]>();
   storage = new Map<string, Buffer>();
   rowLocks = new Map<string, Mutex>();   // key: `upload_sessions:${jti}`
+  forceUpdateError = new Set<string>();   // tables whose UPDATE should return a synthetic error
 
   reset(): void {
     this.tables.clear();
     this.storage.clear();
     this.rowLocks.clear();
+    this.forceUpdateError.clear();
   }
 
   seed(table: string, rows: Row[]): void {

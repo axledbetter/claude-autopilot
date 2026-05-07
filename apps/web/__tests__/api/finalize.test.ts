@@ -169,4 +169,22 @@ describe('finalize — structural + concurrency', () => {
     );
     expect(r.status).toBe(409);
   });
+
+  it('test 27: terminal DB write failure surfaces 500 (bugbot HIGH)', async () => {
+    const s = seedComplete();
+    // Tell the stub to force-fail any UPDATE on the runs table.
+    stub.forceUpdateError.add('runs');
+    try {
+      const stateJson = { runId: s.runId };
+      const r = await FINALIZE(
+        fReq(s.token, s.runId, { chainRoot: s.chainRoot, expectedChunkCount: s.chunkCount, stateJson }),
+        { params: { runId: s.runId } },
+      );
+      expect(r.status).toBe(500);
+      const body = await r.json();
+      expect(body.error).toMatch(/failed to mark run verified/);
+    } finally {
+      stub.forceUpdateError.clear();
+    }
+  });
 });

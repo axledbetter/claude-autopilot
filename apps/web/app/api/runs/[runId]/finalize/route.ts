@@ -150,7 +150,10 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
       }
     }
 
-    await supabase.from('runs').update({
+    // Bugbot HIGH — three terminal writes must surface errors. Without
+    // these checks, a DB failure leaves runs unverified / sessions stuck
+    // in-flight while the client believes the upload finalized.
+    const { error: runsErr } = await supabase.from('runs').update({
       events_chain_root: body.chainRoot,
       state_sha256: stateHash,
       events_blob_path: null,
@@ -159,10 +162,18 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
       source_verified: true,
       upload_session_id: s.id,
     }).eq('id', p.runId);
+    if (runsErr) {
+      return NextResponse.json({ error: 'failed to mark run verified' }, { status: 500 });
+    }
 
-    await supabase.from('upload_sessions').update({ consumed_at: new Date().toISOString() }).eq('id', s.id);
+    const { error: consumeErr } = await supabase.from('upload_sessions')
+      .update({ consumed_at: new Date().toISOString() })
+      .eq('id', s.id);
+    if (consumeErr) {
+      return NextResponse.json({ error: 'failed to consume session' }, { status: 500 });
+    }
 
-    await supabase.from('audit_events').insert({
+    const { error: auditErr } = await supabase.from('audit_events').insert({
       organization_id: s.organization_id,
       actor_user_id: s.user_id,
       action: 'run.uploaded',
@@ -173,6 +184,9 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
       prev_hash: null,
       this_hash: stateHash,
     });
+    if (auditErr) {
+      return NextResponse.json({ error: 'failed to write audit event' }, { status: 500 });
+    }
 
     return NextResponse.json({
       runId: p.runId, sourceVerified: true, eventsChainRoot: body.chainRoot, manifestPath: indexPath,
