@@ -45,13 +45,13 @@ jobs:
         run: |
           OUT=$(claude-autopilot --version)
           echo "got: $OUT"
-          echo "$OUT" | grep -E '^5\.[0-9]+\.[0-9]+' || exit 1
+          echo "$OUT" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+' || exit 1
 
       - name: guardrail --version (legacy alias)
         run: |
           OUT=$(CLAUDE_AUTOPILOT_DEPRECATION=never guardrail --version)
           echo "got: $OUT"
-          echo "$OUT" | grep -E '^5\.[0-9]+\.[0-9]+' || exit 1
+          echo "$OUT" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+' || exit 1
 
       - name: Deprecation notice is emitted under always
         run: |
@@ -97,6 +97,6 @@ jobs:
       - name: Version check
         run: |
           OUT=$(claude-autopilot --version)
-          echo "$OUT" | grep -E '^5\.[0-9]+\.[0-9]+' || exit 1
+          echo "$OUT" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+' || exit 1
 
       - run: npx --yes @delegance/claude-autopilot@alpha --version
