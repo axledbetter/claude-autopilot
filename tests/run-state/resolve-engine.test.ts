@@ -78,13 +78,14 @@ describe('resolveEngineEnabled — built-in default (no inputs)', () => {
     assert.equal(ENGINE_DEFAULT_V6_1, true);
   });
 
-  it('preserves the deprecated ENGINE_DEFAULT_V6_0 alias (now points at the v6.1 value)', () => {
-    // The v6.0 export name is kept as an alias for any out-of-tree
-    // consumer that imported it; v7 will drop it. Today it equals the
-    // v6.1 default (`true`) so behavior is consistent regardless of which
-    // symbol a downstream caller imported.
-    assert.equal(ENGINE_DEFAULT_V6_0, true);
-    assert.equal(ENGINE_DEFAULT_V6_0, ENGINE_DEFAULT_V6_1);
+  it('preserves the deprecated ENGINE_DEFAULT_V6_0 with its historical value (false)', () => {
+    // The v6.0 export name is kept for any out-of-tree consumer that
+    // imported it; v7 will drop it. The constant's semantic meaning —
+    // "v6.0 default was off" — does NOT change just because v6.1 flipped
+    // the active default. Consumers who pinned this symbol get the value
+    // the name promises (false), not the new active default.
+    assert.equal(ENGINE_DEFAULT_V6_0, false);
+    assert.notEqual(ENGINE_DEFAULT_V6_0, ENGINE_DEFAULT_V6_1);
   });
 
   it('honors a provided builtInDefault: false override (back-compat for explicit pinning)', () => {

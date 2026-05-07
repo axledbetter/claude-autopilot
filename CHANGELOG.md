@@ -75,11 +75,13 @@ is the canonical reference for what flipped, why, and the v7 follow-up.
   coverage.
 
 **Files changed.**
-- `src/core/run-state/resolve-engine.ts` — default constant
-  `ENGINE_DEFAULT_V6_1 = true`; `ENGINE_DEFAULT_V6_0` kept as a
-  deprecated alias pointing at the new value. New
-  `emitEngineOffDeprecationWarning` helper + `shouldWarnEngineOffDeprecation`
-  predicate + `ENGINE_OFF_DEPRECATION_MESSAGE` stable copy.
+- `src/core/run-state/resolve-engine.ts` — new active default constant
+  `ENGINE_DEFAULT_V6_1 = true`. The deprecated `ENGINE_DEFAULT_V6_0`
+  export keeps its historical value (`false`) so out-of-tree consumers
+  who pinned that symbol get what the name promises; both constants are
+  removed in v7. New `emitEngineOffDeprecationWarning` helper +
+  `shouldWarnEngineOffDeprecation` predicate +
+  `ENGINE_OFF_DEPRECATION_MESSAGE` stable copy.
 - `src/core/run-state/run-phase-with-lifecycle.ts` — wires the
   deprecation helper into the engine-off branch.
 - `docs/v6/migration-guide.md` — new "Migrating from v6.0 to v6.1"

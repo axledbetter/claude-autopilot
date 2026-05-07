@@ -65,14 +65,16 @@ export interface ResolveEngineOptions {
 
 /** v6.1+ ships with the engine ON by default — flipped from the v6.0
  *  default (`false`) per `docs/specs/v6.1-default-flip.md`. Exported so
- *  tests / future releases can pin a known value.
- *
- *  Historical alias `ENGINE_DEFAULT_V6_0` is preserved for any out-of-tree
- *  consumer that imported the v6.0 constant; it now points at the v6.1 value
- *  (i.e. `true`). v7 will drop the alias entirely. */
+ *  tests / future releases can pin a known value. */
 export const ENGINE_DEFAULT_V6_1 = true as const;
-/** @deprecated v6.0 alias. Now points at the v6.1 default (`true`). Removed in v7. */
-export const ENGINE_DEFAULT_V6_0 = ENGINE_DEFAULT_V6_1;
+/** Historical v6.0 default. Preserved verbatim — its semantic meaning
+ *  ("the v6.0 default was off") doesn't change just because the active
+ *  default flipped. Out-of-tree consumers that pinned this constant get
+ *  the value the name promises. Use `ENGINE_DEFAULT_V6_1` for the active
+ *  default. Removed in v7.
+ *  @deprecated Use `ENGINE_DEFAULT_V6_1` or omit `builtInDefault` to inherit
+ *  the active default. */
+export const ENGINE_DEFAULT_V6_0 = false as const;
 
 /** Parse a stringly-typed env value into a tri-state boolean.
  *  Accepts (case-insensitive): on, off, true, false, 1, 0, yes, no.
