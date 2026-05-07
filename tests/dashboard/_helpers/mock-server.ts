@@ -140,7 +140,10 @@ export function makeMockServer(opts: MockServerOptions): MockServerHandle {
       }
 
       const key = `${runId}/${seq}`;
-      const buf = Buffer.from(await new Response(init?.body as BodyInit).arrayBuffer());
+      // Use a permissive cast for the body — the global Response/RequestInit
+      // BodyInit type isn't reliably exported across Node 22 lib variants.
+      const body = init?.body ?? null;
+      const buf = Buffer.from(await new Response(body as ConstructorParameters<typeof Response>[0]).arrayBuffer());
       state.chunks.set(key, buf);
       state.chunkPutCounts.set(key, (state.chunkPutCounts.get(key) ?? 0) + 1);
       return jsonResponse(200, { ok: true });

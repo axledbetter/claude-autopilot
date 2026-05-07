@@ -130,7 +130,7 @@ async function readChunks(filePath: string): Promise<Buffer[]> {
 
 async function fetchWithRetry(
   url: string,
-  init: RequestInit & { signal?: AbortSignal },
+  init: RequestInit,
   fetchImpl: typeof fetch,
   signal: AbortSignal | undefined,
   is5xxRetryable: boolean,
