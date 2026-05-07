@@ -2,6 +2,31 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 6.3.0-pre.2 (2026-05-07)
+
+**v7.0 Phase 2.1 — Next.js scaffold + Supabase Auth (Free tier sign-in).**
+
+First sub-PR of v7.0 Phase 2 (Ingest API + CLI integration). Pure foundation; no API endpoints related to ingest, no CLI dashboard verbs.
+
+**What landed:**
+- `apps/web/` Next.js 16 App Router app with React 19 + Tailwind v4
+- npm workspaces (`workspaces: ["apps/*", "packages/*"]`) — CLI deps stay where they are; web deps live in `apps/web/package.json`
+- `tsconfig.base.json` shared between CLI and web; `apps/web/` uses `bundler` module resolution, CLI keeps `NodeNext`
+- Supabase Auth Google sign-in via PKCE callback (`/api/auth/callback`)
+- Sign-out (`/api/auth/sign-out`) clears only configured project ref's cookies — never `sb-*` wildcard
+- `safeRedirect` whitelist with documented change policy
+- Scoped middleware matcher: refreshes session on page + `/api/auth/*` routes ONLY; excludes static assets, `/api/health`, and non-auth `/api/*` (ingest endpoints in 2.2 handle their own auth)
+- Health endpoint `/api/health` for platform health checks
+- 22 web tests via Vitest (10 redirect + 5 callback + 2 signout + 4 matcher + 1 typecheck-guard)
+- `web-tests.yml` workflow runs typecheck + Next.js build + tests on every PR
+- `npm-tarball-check.yml` workflow asserts `apps/` is excluded from the published CLI tarball
+- `vercel.json` configured for monorepo build with `apps/web/` root
+
+**Spec:** `docs/specs/v7.0-phase2.1-nextjs-scaffold.md` (PR #116)
+**Plan:** `docs/superpowers/plans/2026-05-07-v7.0-phase2.1-nextjs-scaffold.md`
+
+Pre-release on the npm `next` tag. `latest` stays on `6.2.2`.
+
 ## 6.3.0-pre.1 (2026-05-07)
 
 **v7.0 Phase 1 — Foundation: schema + RLS + cross-tenant negative tests.**
