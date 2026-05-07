@@ -90,8 +90,11 @@ export interface ImplementCommandOptions {
 /**
  * Phase input — captured as a struct so the engine path's phase body matches
  * the engine-off path call signature.
+ *
+ * Exported so the v6.2.0 orchestrator's phase registry can carry the typed
+ * I/O shape on its `PhaseRegistration<ImplementInput, ImplementOutput>` slot.
  */
-interface ImplementInput {
+export interface ImplementInput {
   cwd: string;
   context: string | null;
   plan: string | null;
@@ -104,7 +107,7 @@ interface ImplementInput {
  * could restore this without re-invoking the implement loop by reading the
  * persisted log path.
  */
-interface ImplementOutput {
+export interface ImplementOutput {
   /** Absolute path to the written implement log file. */
   implementLogPath: string;
   /** Echoed for the render layer / future skip-already-applied. */
@@ -113,7 +116,33 @@ interface ImplementOutput {
   plan: string | null;
 }
 
-export async function runImplement(options: ImplementCommandOptions = {}): Promise<number> {
+/** v6.2.0 — see scan.ts for the kind='early-exit' rationale. Implement has
+ *  no early-exit branches today; the discriminant is included for shape
+ *  parity with the other builders. */
+export interface BuildImplementPhaseEarlyExit {
+  kind: 'early-exit';
+  exitCode: number;
+}
+
+export interface BuildImplementPhaseResult {
+  kind: 'phase';
+  phase: RunPhase<ImplementInput, ImplementOutput>;
+  input: ImplementInput;
+  config: GuardrailConfig;
+  renderResult: (output: ImplementOutput) => number;
+}
+
+/**
+ * v6.2.0 — extract the `RunPhase<ImplementInput, ImplementOutput>`
+ * construction out of `runImplement(options)` so the new top-level
+ * `autopilot` orchestrator can drive `runPhase` itself with a shared
+ * `phaseIdx` against the same run dir.
+ *
+ * Parity asserted by `tests/cli/implement-builder-parity.test.ts`.
+ */
+export async function buildImplementPhase(
+  options: ImplementCommandOptions,
+): Promise<BuildImplementPhaseResult | BuildImplementPhaseEarlyExit> {
   const cwd = options.cwd ?? process.cwd();
   const configPath = options.configPath ?? path.join(cwd, 'guardrail.config.yaml');
 
@@ -165,19 +194,35 @@ export async function runImplement(options: ImplementCommandOptions = {}): Promi
     run: async input => executeImplementPhase(input),
   };
 
+  return {
+    kind: 'phase',
+    phase,
+    input: implementInput,
+    config,
+    renderResult: (output: ImplementOutput) =>
+      renderImplementOutput(output, implementInput),
+  };
+}
+
+export async function runImplement(options: ImplementCommandOptions = {}): Promise<number> {
+  const built = await buildImplementPhase(options);
+  if (built.kind === 'early-exit') return built.exitCode;
+
+  const { phase, input, config, renderResult } = built;
+
   // v6.0.6+ — lifecycle wiring lives in `runPhaseWithLifecycle`. The helper
   // owns the engine-on/engine-off branch and the failure banner; the caller
   // just supplies the phase, the input, and the engine-off escape hatch.
   let output: ImplementOutput;
   try {
     const result = await runPhaseWithLifecycle<ImplementInput, ImplementOutput>({
-      cwd,
+      cwd: input.cwd,
       phase,
-      input: implementInput,
+      input,
       config,
       cliEngine: options.cliEngine,
       envEngine: options.envEngine,
-      runEngineOff: () => executeImplementPhase(implementInput),
+      runEngineOff: () => executeImplementPhase(input),
     });
     output = result.output;
   } catch {
@@ -187,7 +232,7 @@ export async function runImplement(options: ImplementCommandOptions = {}): Promi
     return 1;
   }
 
-  return renderImplementOutput(output, implementInput);
+  return renderResult(output);
 }
 
 // ---------------------------------------------------------------------------

@@ -44,8 +44,11 @@ export interface PlanCommandOptions {
  * Phase input — captured as a struct so the engine path's phase body matches
  * the engine-off path call signature. Resolved by the outer scope (config,
  * spec path, output path).
+ *
+ * Exported so the v6.2.0 orchestrator's phase registry can carry the typed
+ * I/O shape on its `PhaseRegistration<PlanInput, PlanOutput>` slot.
  */
-interface PlanInput {
+export interface PlanInput {
   cwd: string;
   specPath: string | null;
   outputPath: string;
@@ -57,7 +60,7 @@ interface PlanInput {
  * computes. A future skip-already-applied (Phase 6) could restore this
  * without re-running the planner by reading the persisted plan-file path.
  */
-interface PlanOutput {
+export interface PlanOutput {
   /** Absolute path to the written plan markdown file. */
   planFilePath: string;
   /** Whether the planner had a spec to consume. */
@@ -66,7 +69,32 @@ interface PlanOutput {
   specPath: string | null;
 }
 
-export async function runPlan(options: PlanCommandOptions = {}): Promise<number> {
+/** v6.2.0 — see scan.ts for the kind='early-exit' rationale. Plan has no
+ *  early-exit branches today; the discriminant is included for shape parity
+ *  with the other builders. */
+export interface BuildPlanPhaseEarlyExit {
+  kind: 'early-exit';
+  exitCode: number;
+}
+
+export interface BuildPlanPhaseResult {
+  kind: 'phase';
+  phase: RunPhase<PlanInput, PlanOutput>;
+  input: PlanInput;
+  config: GuardrailConfig;
+  renderResult: (output: PlanOutput) => number;
+}
+
+/**
+ * v6.2.0 — extract the `RunPhase<PlanInput, PlanOutput>` construction out of
+ * `runPlan(options)` so the new top-level `autopilot` orchestrator can drive
+ * `runPhase` itself with a shared `phaseIdx` against the same run dir.
+ *
+ * Parity asserted by `tests/cli/plan-builder-parity.test.ts`.
+ */
+export async function buildPlanPhase(
+  options: PlanCommandOptions,
+): Promise<BuildPlanPhaseResult | BuildPlanPhaseEarlyExit> {
   const cwd = options.cwd ?? process.cwd();
   const configPath = options.configPath ?? path.join(cwd, 'guardrail.config.yaml');
 
@@ -109,24 +137,39 @@ export async function runPlan(options: PlanCommandOptions = {}): Promise<number>
     run: async input => executePlanPhase(input),
   };
 
+  return {
+    kind: 'phase',
+    phase,
+    input: planInput,
+    config,
+    renderResult: (output: PlanOutput) => renderPlanOutput(output, planInput),
+  };
+}
+
+export async function runPlan(options: PlanCommandOptions = {}): Promise<number> {
+  const built = await buildPlanPhase(options);
+  if (built.kind === 'early-exit') return built.exitCode;
+
+  const { phase, input, config, renderResult } = built;
+
   // v6.0.6 — lifecycle wiring lives in `runPhaseWithLifecycle`.
   let output: PlanOutput;
   try {
     const result = await runPhaseWithLifecycle<PlanInput, PlanOutput>({
-      cwd,
+      cwd: input.cwd,
       phase,
-      input: planInput,
+      input,
       config,
       cliEngine: options.cliEngine,
       envEngine: options.envEngine,
-      runEngineOff: () => executePlanPhase(planInput),
+      runEngineOff: () => executePlanPhase(input),
     });
     output = result.output;
   } catch {
     return 1;
   }
 
-  return renderPlanOutput(output, planInput);
+  return renderResult(output);
 }
 
 // ---------------------------------------------------------------------------
