@@ -166,27 +166,41 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
       return NextResponse.json({ error: 'failed to mark run verified' }, { status: 500 });
     }
 
-    const { error: consumeErr } = await supabase.from('upload_sessions')
+    // Bugbot HIGH — CAS consume_at: only the first finalize for this
+    // session may set consumed_at. Without the .is('consumed_at', null)
+    // filter, two concurrent finalizes both pass the earlier "is null"
+    // check, both UPDATE here, and both INSERT audit_events — duplicating
+    // the run.uploaded audit row.
+    const { data: consumedRows, error: consumeErr } = await supabase.from('upload_sessions')
       .update({ consumed_at: new Date().toISOString() })
-      .eq('id', s.id);
+      .eq('id', s.id)
+      .is('consumed_at', null)
+      .select('id');
     if (consumeErr) {
       return NextResponse.json({ error: 'failed to consume session' }, { status: 500 });
     }
 
-    const { error: auditErr } = await supabase.from('audit_events').insert({
-      organization_id: s.organization_id,
-      actor_user_id: s.user_id,
-      action: 'run.uploaded',
-      subject_type: 'run',
-      subject_id: p.runId,
-      metadata: { chunkCount: chunks.length, totalBytes: manifest.totalBytes, chainRoot: body.chainRoot },
-      source_verified: true,
-      prev_hash: null,
-      this_hash: stateHash,
-    });
-    if (auditErr) {
-      return NextResponse.json({ error: 'failed to write audit event' }, { status: 500 });
+    const wonCas = Array.isArray(consumedRows) && consumedRows.length > 0;
+    if (wonCas) {
+      const { error: auditErr } = await supabase.from('audit_events').insert({
+        organization_id: s.organization_id,
+        actor_user_id: s.user_id,
+        action: 'run.uploaded',
+        subject_type: 'run',
+        subject_id: p.runId,
+        metadata: { chunkCount: chunks.length, totalBytes: manifest.totalBytes, chainRoot: body.chainRoot },
+        source_verified: true,
+        prev_hash: null,
+        this_hash: stateHash,
+      });
+      if (auditErr) {
+        return NextResponse.json({ error: 'failed to write audit event' }, { status: 500 });
+      }
     }
+    // If wonCas is false, a concurrent finalize already consumed the
+    // session and wrote the audit event. The Storage + runs writes here
+    // are idempotent (byte-equal manifest/state, deterministic state_sha256),
+    // so returning 200 is safe and matches the documented idempotent contract.
 
     return NextResponse.json({
       runId: p.runId, sourceVerified: true, eventsChainRoot: body.chainRoot, manifestPath: indexPath,

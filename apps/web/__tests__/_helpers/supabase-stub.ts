@@ -43,7 +43,12 @@ class TableQuery {
 
   constructor(private stub: SupabaseStub, private table: string) {}
 
-  select(_cols = '*'): this { this.op = { kind: 'select' }; return this; }
+  // Real supabase-js: .select() after .update()/.insert()/.delete() returns
+  // the rows mutated. Don't overwrite the op in that case.
+  select(_cols = '*'): this {
+    if (!this.op) this.op = { kind: 'select' };
+    return this;
+  }
   insert(payload: Row | Row[]): this { this.op = { kind: 'insert', payload }; return this; }
   update(payload: Row): this { this.op = { kind: 'update', payload }; return this; }
   delete(): this { this.op = { kind: 'delete' }; return this; }

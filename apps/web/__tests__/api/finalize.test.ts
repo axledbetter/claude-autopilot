@@ -170,6 +170,25 @@ describe('finalize — structural + concurrency', () => {
     expect(r.status).toBe(409);
   });
 
+  it('test 28: concurrent finalize → exactly one audit_event (bugbot HIGH CAS)', async () => {
+    const s = seedComplete();
+    const stateJson = { runId: s.runId };
+    const [a, b] = await Promise.all([
+      FINALIZE(
+        fReq(s.token, s.runId, { chainRoot: s.chainRoot, expectedChunkCount: s.chunkCount, stateJson }),
+        { params: { runId: s.runId } },
+      ),
+      FINALIZE(
+        fReq(s.token, s.runId, { chainRoot: s.chainRoot, expectedChunkCount: s.chunkCount, stateJson }),
+        { params: { runId: s.runId } },
+      ),
+    ]);
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    const audits = (stub.tables.get('audit_events') ?? []).filter((row) => row.action === 'run.uploaded');
+    expect(audits.length).toBe(1);
+  });
+
   it('test 27: terminal DB write failure surfaces 500 (bugbot HIGH)', async () => {
     const s = seedComplete();
     // Tell the stub to force-fail any UPDATE on the runs table.
