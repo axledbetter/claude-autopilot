@@ -1,0 +1,34 @@
+[
+  {
+    "description": "key ordering is deterministic regardless of source order",
+    "inputs": [
+      { "b": 1, "a": 2 },
+      { "a": 2, "b": 1 }
+    ],
+    "expected_sha256": "d3626ac30a87e6f7a6428233b3c68299976865fa5508e4267c5415c76af7a772"
+  },
+  {
+    "description": "integer-equivalent floats canonicalize to the same form",
+    "inputs": [
+      { "n": 1 },
+      { "n": 1.0 }
+    ],
+    "expected_sha256": "2bfd14f43d17fc7cea24e0917a8879b4b2f880b8baeec1b9d90fbaad655e71bd"
+  },
+  {
+    "description": "unicode escape \\u0041 normalizes to literal A",
+    "inputs": [
+      { "name": "Alice" },
+      { "name": "Alice" }
+    ],
+    "expected_sha256": "3cba1e3cf23c8ce24b7e08171d823fbd9a4929aafd9f27516e30699d3a42026a"
+  },
+  {
+    "description": "nested arrays and empty objects are stable",
+    "inputs": [
+      { "a": [1, 2, { "z": 0, "y": [] }] },
+      { "a": [1, 2, { "y": [], "z": 0 }] }
+    ],
+    "expected_sha256": "6f818b02f6ec5adb1523c9477cf5dc79b72f03163bcafa8f69cde846da89fd80"
+  }
+]
