@@ -18,6 +18,7 @@
     "pipeline"
   ],
   "license": "MIT",
+  "workspaces": ["apps/*", "packages/*"],
   "repository": {
     "type": "git",
     "url": "https://github.com/axledbetter/claude-autopilot.git"
