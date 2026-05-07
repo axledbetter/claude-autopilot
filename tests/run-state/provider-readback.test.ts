@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   __resetDeployAdapterResolver,
   __resetMigrationStateFetcher,
+  __resetMigrationBatchFetcher,
   getProviderReadbacks,
   makeDeployReadback,
   makeGithubReadback,
@@ -10,10 +11,12 @@ import {
   readbackForRef,
   registerDeployAdapterResolver,
   registerMigrationStateFetcher,
+  registerMigrationBatchFetcher,
   setProviderReadbacks,
   verifyRefs,
   type DeployStatusFetcher,
   type MigrationStateFetcher,
+  type MigrationBatchFetcher,
   type ProviderReadback,
 } from '../../src/core/run-state/provider-readback.ts';
 import type { ExternalRef } from '../../src/core/run-state/types.ts';
@@ -32,6 +35,7 @@ afterEach(() => {
   setProviderReadbacks(null);
   __resetDeployAdapterResolver();
   __resetMigrationStateFetcher();
+  __resetMigrationBatchFetcher();
 });
 
 describe('readbackForRef — registry lookup', () => {
@@ -337,5 +341,92 @@ describe('default registry sanity', () => {
     const list = getProviderReadbacks();
     const names = list.map(rb => rb.name).sort();
     assert.deepEqual(names, ['fly', 'github', 'render', 'supabase', 'vercel']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v6.2.1 — migration-batch readback. Maps the planned set + ledger state
+// onto the canonical state vocabulary: merged / open / failed / unknown.
+// ---------------------------------------------------------------------------
+
+describe('supabase migration-batch readback (v6.2.1)', () => {
+  it('all planned migrations applied → merged', async () => {
+    const fetcher: MigrationBatchFetcher = {
+      fetch: async () => ({
+        planned: [
+          { version: 'm1', state: 'applied' },
+          { version: 'm2', state: 'applied' },
+          { version: 'm3', state: 'applied' },
+        ],
+      }),
+    };
+    registerMigrationBatchFetcher(fetcher);
+    const rb = makeSupabaseReadback();
+    const r = await rb.verifyRef(ref({ kind: 'migration-batch', id: 'qa:hash' }));
+    assert.equal(r.existsOnPlatform, true);
+    assert.equal(r.currentState, 'merged');
+  });
+
+  it('some planned migrations pending → open', async () => {
+    registerMigrationBatchFetcher({
+      fetch: async () => ({
+        planned: [
+          { version: 'm1', state: 'applied' },
+          { version: 'm2', state: 'pending' },
+          { version: 'm3', state: 'pending' },
+        ],
+      }),
+    });
+    const rb = makeSupabaseReadback();
+    const r = await rb.verifyRef(ref({ kind: 'migration-batch', id: 'qa:hash' }));
+    assert.equal(r.currentState, 'open');
+  });
+
+  it('any errored migration → failed', async () => {
+    registerMigrationBatchFetcher({
+      fetch: async () => ({
+        planned: [
+          { version: 'm1', state: 'applied' },
+          { version: 'm2', state: 'errored' },
+        ],
+      }),
+    });
+    const rb = makeSupabaseReadback();
+    const r = await rb.verifyRef(ref({ kind: 'migration-batch', id: 'qa:hash' }));
+    assert.equal(r.currentState, 'failed');
+  });
+
+  it('empty planned set → merged (degenerate case, not a wedge)', async () => {
+    registerMigrationBatchFetcher({
+      fetch: async () => ({ planned: [] }),
+    });
+    const rb = makeSupabaseReadback();
+    const r = await rb.verifyRef(ref({ kind: 'migration-batch', id: 'qa:hash' }));
+    assert.equal(r.currentState, 'merged');
+  });
+
+  it('fetcher returns null → unknown (fail closed)', async () => {
+    registerMigrationBatchFetcher({ fetch: async () => null });
+    const rb = makeSupabaseReadback();
+    const r = await rb.verifyRef(ref({ kind: 'migration-batch', id: 'qa:hash' }));
+    assert.equal(r.currentState, 'unknown');
+  });
+
+  it('fetcher throws → unknown (fail closed)', async () => {
+    registerMigrationBatchFetcher({ fetch: async () => { throw new Error('boom'); } });
+    const rb = makeSupabaseReadback();
+    const r = await rb.verifyRef(ref({ kind: 'migration-batch', id: 'qa:hash' }));
+    assert.equal(r.currentState, 'unknown');
+  });
+
+  it('no fetcher registered → unknown', async () => {
+    const rb = makeSupabaseReadback();
+    const r = await rb.verifyRef(ref({ kind: 'migration-batch', id: 'qa:hash' }));
+    assert.equal(r.currentState, 'unknown');
+  });
+
+  it('default registry routes migration-batch refs to supabase readback', () => {
+    const rb = readbackForRef(ref({ kind: 'migration-batch', id: 'qa:hash' }));
+    assert.equal(rb?.name, 'supabase');
   });
 });
