@@ -61,9 +61,11 @@
 
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import * as crypto from 'node:crypto';
 import { loadConfig } from '../core/config/loader.ts';
 import type { GuardrailConfig } from '../core/config/types.ts';
 import { type RunPhase } from '../core/run-state/phase-runner.ts';
+import type { PhaseContext } from '../core/run-state/phase-context.ts';
 import { runPhaseWithLifecycle } from '../core/run-state/run-phase-with-lifecycle.ts';
 import { dispatch as runMigrateDispatch } from '../core/migrate/dispatcher.ts';
 import type { ResultArtifact } from '../core/migrate/types.ts';
@@ -106,8 +108,11 @@ export interface MigrateCommandOptions {
 /**
  * Phase input — captured as a struct so the engine path's phase body matches
  * the engine-off path's call signature.
+ *
+ * Exported so the v6.2.1 orchestrator's phase registry can carry the typed
+ * I/O shape on its `PhaseRegistration<MigrateInput, MigrateOutput>` slot.
  */
-interface MigrateInput {
+export interface MigrateInput {
   cwd: string;
   env: string;
   dryRun: boolean;
@@ -117,6 +122,11 @@ interface MigrateInput {
    *  dispatcher's manifest handshake. Resolved in the outer scope so the
    *  phase body stays a pure await on `dispatch()`. */
   runtimeVersion: string;
+  /** v6.2.1 — dispatcher seam plumbed into the phase body so the wrap can
+   *  emit the pre-effect breadcrumb BEFORE invoking the dispatcher. The
+   *  outer scope assembles either the real `runMigrateDispatch` or the
+   *  test-only `__testDispatch`; the phase body just calls `dispatchFn`. */
+  dispatchFn: (input: MigrateInput) => Promise<ResultArtifact>;
 }
 
 /**
@@ -124,8 +134,10 @@ interface MigrateInput {
  * `result` on phases/migrate.json. A future skip-already-applied (Phase 6)
  * could reconstruct the dispatch outcome without re-running by reading the
  * persisted externalRefs + this result.
+ *
+ * Exported alongside `MigrateInput` for the registry's typed I/O slot.
  */
-interface MigrateOutput {
+export interface MigrateOutput {
   /** Status from the result artifact (applied | skipped | error | ...). */
   status: ResultArtifact['status'];
   /** Reason code from the result artifact (migration-applied,
@@ -139,11 +151,41 @@ interface MigrateOutput {
   env: string;
 }
 
-export async function runMigrate(options: MigrateCommandOptions = {}): Promise<{
+/** v6.2.1 — early-exit / build-result discriminants (parity with the v6.2.0
+ *  builders in scan / spec / plan / implement). `migrate` has no early-exit
+ *  branches today but the discriminant is included for shape parity. */
+export interface BuildMigratePhaseEarlyExit {
+  kind: 'early-exit';
   exitCode: number;
-  /** Surfaced for the CLI dispatcher's `--json` payload callback. */
-  result: ResultArtifact | null;
-}> {
+}
+
+export interface BuildMigratePhaseResult {
+  kind: 'phase';
+  phase: RunPhase<MigrateInput, MigrateOutput>;
+  input: MigrateInput;
+  config: GuardrailConfig;
+  renderResult: (output: MigrateOutput) => number;
+}
+
+/**
+ * v6.2.1 — extract the `RunPhase<MigrateInput, MigrateOutput>` construction
+ * out of `runMigrate(options)` so the new top-level `autopilot` orchestrator
+ * can drive `runPhase` itself with a shared `phaseIdx` against the same run
+ * dir. Mirrors the v6.2.0 builder pattern in scan / spec / plan / implement.
+ *
+ * This builder ALSO closes the v6.2.1 idempotency contract gap on `migrate`:
+ * the phase body now emits a `migration-batch` externalRef BEFORE invoking
+ * the dispatcher. See the long rationale on `executeMigratePhase` below.
+ *
+ * The `lastResultArtifact` ref is the seam through which `runMigrate` gets
+ * the full `ResultArtifact` for its --json envelope (the JSON-serializable
+ * `MigrateOutput` is a compact subset; the full artifact has nonce,
+ * contractVersion, sideEffectsPerformed, etc.). Builder callers that don't
+ * need the artifact can ignore it.
+ */
+export async function buildMigratePhase(
+  options: MigrateCommandOptions,
+): Promise<BuildMigratePhaseResult | BuildMigratePhaseEarlyExit> {
   const cwd = options.cwd ?? process.cwd();
   const configPath = options.configPath ?? path.join(cwd, 'guardrail.config.yaml');
 
@@ -174,21 +216,6 @@ export async function runMigrate(options: MigrateCommandOptions = {}): Promise<{
     }
   }
 
-  const migrateInput: MigrateInput = {
-    cwd,
-    env: envName,
-    dryRun,
-    yesFlag,
-    nonInteractive,
-    runtimeVersion,
-  };
-
-  // Outer ref so the render path + the wrapper's --json envelope can
-  // surface the full ResultArtifact (the JSON-serializable MigrateOutput
-  // is a compact subset; the full artifact has nonce, contractVersion,
-  // sideEffectsPerformed, etc. that callers may want).
-  let resultArtifact: ResultArtifact | null = null;
-
   const dispatchFn = options.__testDispatch
     ?? (async (input: MigrateInput): Promise<ResultArtifact> => {
       return runMigrateDispatch({
@@ -201,11 +228,16 @@ export async function runMigrate(options: MigrateCommandOptions = {}): Promise<{
       });
     });
 
-  // The wrapped phase body — calls the dispatcher and emits a
-  // `migration-version` externalRef per applied migration. Engine-off
-  // callers invoke this directly; engine-on callers route through
-  // `runPhase()` which records ctx.emitExternalRef calls into
-  // events.ndjson.
+  const migrateInput: MigrateInput = {
+    cwd,
+    env: envName,
+    dryRun,
+    yesFlag,
+    nonInteractive,
+    runtimeVersion,
+    dispatchFn,
+  };
+
   const phase: RunPhase<MigrateInput, MigrateOutput> = {
     name: 'migrate',
     // See top-of-file rationale. The spec table at line 162 of
@@ -214,33 +246,46 @@ export async function runMigrate(options: MigrateCommandOptions = {}): Promise<{
     // wrap matches that declaration. The underlying skill IS
     // ledger-guarded against double-apply; that's a property of the
     // skill, not of the phase contract. With `hasSideEffects: true`
-    // and persisted `migration-version` externalRefs, Phase 6's
-    // resume gate reads back the live migration_state to decide
-    // skip-already-applied vs retry vs needs-human.
+    // and persisted `migration-batch` (pre-effect) + `migration-version`
+    // (post-effect) externalRefs, Phase 6's resume gate reads back the
+    // live migration_state to decide skip-already-applied vs retry vs
+    // needs-human.
     idempotent: false,
     hasSideEffects: true,
-    run: async (input, ctx) => {
-      const artifact = await dispatchFn(input);
+    run: async (input, ctx) => executeMigratePhase(input, ctx),
+  };
+
+  return {
+    kind: 'phase',
+    phase,
+    input: migrateInput,
+    config,
+    renderResult: (output: MigrateOutput) => renderMigrateOutput(output),
+  };
+}
+
+export async function runMigrate(options: MigrateCommandOptions = {}): Promise<{
+  exitCode: number;
+  /** Surfaced for the CLI dispatcher's `--json` payload callback. */
+  result: ResultArtifact | null;
+}> {
+  const built = await buildMigratePhase(options);
+  if (built.kind === 'early-exit') {
+    return { exitCode: built.exitCode, result: null };
+  }
+
+  const { phase, input: migrateInput, config, renderResult } = built;
+
+  // Outer ref so the render path + the wrapper's --json envelope can
+  // surface the full ResultArtifact. Updated by `executeMigratePhase` on
+  // every dispatch (engine-on and engine-off paths share the same body).
+  let resultArtifact: ResultArtifact | null = null;
+  const captureInput: MigrateInput = {
+    ...migrateInput,
+    dispatchFn: async (inp) => {
+      const artifact = await migrateInput.dispatchFn(inp);
       resultArtifact = artifact;
-
-      // Record one externalRef per applied migration. The id is shaped
-      // `<env>:<migration_name>` so multi-env pipelines (dev → qa → prod)
-      // can disambiguate the same migration across targets. Phase 6's
-      // read-back rule will compare this set to the live ledger.
-      for (const migration of artifact.appliedMigrations) {
-        ctx.emitExternalRef({
-          kind: 'migration-version',
-          id: `${input.env}:${migration}`,
-        });
-      }
-
-      return {
-        status: artifact.status,
-        reasonCode: artifact.reasonCode,
-        appliedMigrations: artifact.appliedMigrations,
-        nextActions: artifact.nextActions,
-        env: input.env,
-      };
+      return artifact;
     },
   };
 
@@ -251,9 +296,9 @@ export async function runMigrate(options: MigrateCommandOptions = {}): Promise<{
   let output: MigrateOutput;
   try {
     const lifecycleResult = await runPhaseWithLifecycle<MigrateInput, MigrateOutput>({
-      cwd,
+      cwd: migrateInput.cwd,
       phase,
-      input: migrateInput,
+      input: captureInput,
       config,
       cliEngine: options.cliEngine,
       envEngine: options.envEngine,
@@ -262,17 +307,7 @@ export async function runMigrate(options: MigrateCommandOptions = {}): Promise<{
       // has no event ledger to write into; externalRefs only matter on
       // the engine path. The artifact still lands on `resultArtifact`
       // for the --json payload callback in the CLI dispatcher.
-      runEngineOff: async () => {
-        const artifact = await dispatchFn(migrateInput);
-        resultArtifact = artifact;
-        return {
-          status: artifact.status,
-          reasonCode: artifact.reasonCode,
-          appliedMigrations: artifact.appliedMigrations,
-          nextActions: artifact.nextActions,
-          env: migrateInput.env,
-        };
-      },
+      runEngineOff: () => executeMigratePhase(captureInput, null),
     });
     output = lifecycleResult.output;
   } catch {
@@ -283,8 +318,87 @@ export async function runMigrate(options: MigrateCommandOptions = {}): Promise<{
   }
 
   return {
-    exitCode: renderMigrateOutput(output),
+    exitCode: renderResult(output),
     result: resultArtifact,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Phase body — emit the pre-effect `migration-batch` breadcrumb, dispatch,
+// then emit one post-effect `migration-version` ref per applied migration.
+//
+// v6.2.1 idempotency contract (per docs/specs/v6.2.1-side-effect-idempotency.md):
+//   1. PRE-effect breadcrumb: a `migration-batch` ref BEFORE `dispatchFn` so
+//      a partial crash leaves a resume target. The orchestrator's resume
+//      preflight reads this back to distinguish "we started this batch" from
+//      "we never started any batch."
+//   2. POST-effect reconciliation: one `migration-version` ref per applied
+//      migration AFTER dispatch returns successfully. These are authoritative
+//      for the readback's skip-already-applied decision.
+//
+// On the deterministic-id question: the spec prescribes
+//   `${env}:${sha256Hex(env + ':' + plannedMigrations.sort().join(','))}`
+// which would let two runs of the same batch share an id (better resume
+// semantics). That requires extracting `planMigrations(input)` from the
+// dispatcher to surface the planned set without applying. The current
+// dispatcher doesn't expose that pre-dispatch — every supported migrate skill
+// (Delegance Supabase, Rails, Alembic, …) discovers its planned set inside
+// the skill subprocess after the manifest handshake + envelope build, so a
+// pre-dispatch list would require an across-the-board skill protocol change
+// (a new "plan" verb that runs without side effects). That's out of scope
+// for v6.2.1 — the spec explicitly approves the fallback breadcrumb form
+// `${env}:pre-dispatch:${Date.now()}` ("less idempotent but still
+// recoverable"). The post-effect `migration-version` refs ARE deterministic
+// (`${env}:${migration}`) and remain authoritative for the readback's
+// skip-already-applied decision; the batch ref's role is purely "did we
+// start this work?" — non-deterministic ids don't break that contract.
+//
+// Cross-run dedup of the batch ref (e.g. recognizing two pre-dispatch
+// breadcrumbs as the same operation) is gated on the deterministic id form
+// and explicitly listed under v6.2.1 "out of scope."
+// ---------------------------------------------------------------------------
+
+async function executeMigratePhase(
+  input: MigrateInput,
+  ctx: PhaseContext | null,
+): Promise<MigrateOutput> {
+  // PRE-effect breadcrumb. Recorded BEFORE the dispatcher so that even a
+  // partial crash leaves a resume target. Engine-off path has no ctx; the
+  // breadcrumb is then a no-op (same precedent as pr.ts and every other
+  // wrapped verb's engine-off path).
+  if (ctx) {
+    // Fallback id form per the v6.2.1 spec — see the long rationale comment
+    // above. `crypto` is imported even though only the timestamp variant is
+    // used today; it's reserved for the deterministic-id upgrade once a
+    // `planMigrations()` extraction lands.
+    void crypto;
+    ctx.emitExternalRef({
+      kind: 'migration-batch',
+      id: `${input.env}:pre-dispatch:${Date.now()}`,
+    });
+  }
+
+  const artifact = await input.dispatchFn(input);
+
+  // POST-effect reconciliation refs — one per applied migration. The id is
+  // shaped `<env>:<migration_name>` so multi-env pipelines (dev → qa → prod)
+  // can disambiguate the same migration across targets. Phase 6's read-back
+  // rule compares this set to the live ledger.
+  if (ctx) {
+    for (const migration of artifact.appliedMigrations) {
+      ctx.emitExternalRef({
+        kind: 'migration-version',
+        id: `${input.env}:${migration}`,
+      });
+    }
+  }
+
+  return {
+    status: artifact.status,
+    reasonCode: artifact.reasonCode,
+    appliedMigrations: artifact.appliedMigrations,
+    nextActions: artifact.nextActions,
+    env: input.env,
   };
 }
 
