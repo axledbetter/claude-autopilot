@@ -61,39 +61,63 @@ export default async function DashboardOverview(): Promise<React.ReactElement> {
   monthStart.setUTCDate(1);
   monthStart.setUTCHours(0, 0, 0, 0);
 
-  // Pull recent runs + monthly aggregates in one shot.
-  const runFilter = svc.from('runs')
+  // Bugbot MEDIUM #2 — server-side aggregates via Phase 3 RPCs (paid tier
+  // can have 10K runs/month; pulling them all to count in JS doesn't scale).
+  // Best-effort: dev/stub may not have the RPCs.
+  let runsThisMonth = 0;
+  let storageUsed = 0;
+  try {
+    const { data: runsCount } = await svc.rpc('count_runs_this_month', {
+      p_user_id: user.id, p_organization_id: organizationId,
+    });
+    runsThisMonth = (runsCount as number) ?? 0;
+    const { data: bytes } = await svc.rpc('sum_retained_bytes', {
+      p_user_id: user.id, p_organization_id: organizationId, p_retention_days: 90,
+    });
+    storageUsed = (bytes as number) ?? 0;
+  } catch {
+    // RPCs unavailable — values stay at 0.
+  }
+
+  // Recent runs only — bounded to 5.
+  const { data: recentRunsRaw } = await svc.from('runs')
     .select('id, created_at, source_verified, cost_usd, duration_ms, run_status, total_bytes, visibility')
     .eq('user_id', user.id)
-    .order('created_at', { ascending: false });
-  const { data: runsRaw } = await runFilter;
-  const runs = (runsRaw as RunListRow[] | null) ?? [];
-  const monthRuns = runs.filter((r) => new Date(r.created_at) >= monthStart);
-  const recentRuns = runs.slice(0, 5);
-  const costMTD = monthRuns.reduce((s, r) => s + (r.cost_usd ?? 0), 0);
-  const storageUsed = runs.reduce((s, r) => s + (r.total_bytes ?? 0), 0);
+    .order('created_at', { ascending: false })
+    .range(0, 4);
+  const recentRuns = (recentRunsRaw as RunListRow[] | null) ?? [];
 
-  // Last-30-days cost chart.
+  // Last-30-days cost chart — bounded query.
+  // Bugbot MEDIUM #3 — map keys must include today. Loop ran 0..29 with
+  // since = now-30d, so it covered "30 days ago" through "yesterday" and
+  // dropped today's runs silently. Use 31 buckets (today + 30 prior days).
   const dayMs = 86400_000;
   const since = new Date(Date.now() - 30 * dayMs);
+  const { data: chartRunsRaw } = await svc.from('runs')
+    .select('created_at, cost_usd')
+    .eq('user_id', user.id)
+    .gte('created_at', since.toISOString());
+  const chartRuns = (chartRunsRaw as { created_at: string; cost_usd: number | null }[] | null) ?? [];
   const dailyMap = new Map<string, number>();
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i <= 30; i++) {
     const d = new Date(since.getTime() + i * dayMs);
     dailyMap.set(d.toISOString().slice(0, 10), 0);
   }
-  for (const r of runs) {
-    if (new Date(r.created_at) < since) continue;
+  for (const r of chartRuns) {
     const day = r.created_at.slice(0, 10);
     if (dailyMap.has(day)) dailyMap.set(day, (dailyMap.get(day) ?? 0) + (r.cost_usd ?? 0));
   }
   const chartData: DailyCost[] = Array.from(dailyMap.entries()).map(([date, cost_usd]) => ({ date, cost_usd }));
+  const costMTD = chartRuns
+    .filter((r) => new Date(r.created_at) >= monthStart)
+    .reduce((s, r) => s + (r.cost_usd ?? 0), 0);
 
   return (
     <div className="flex flex-col gap-8 max-w-5xl">
       <h1 className="text-2xl font-bold">Overview</h1>
 
       <div className="grid grid-cols-3 gap-4">
-        <Stat label="Runs this month" value={String(monthRuns.length)} />
+        <Stat label="Runs this month" value={String(runsThisMonth)} />
         <Stat label="Cost (MTD)" value={`$${costMTD.toFixed(2)}`} />
         <Stat label="Plan" value={entitlement.plan} />
       </div>
@@ -106,7 +130,7 @@ export default async function DashboardOverview(): Promise<React.ReactElement> {
       <PlanCard
         plan={entitlement.plan}
         organizationId={organizationId}
-        runsUsed={monthRuns.length}
+        runsUsed={runsThisMonth}
         runsCap={entitlement.runs_per_month_cap ?? 100}
         storageUsedBytes={storageUsed}
         storageCapBytes={entitlement.storage_bytes_cap ?? 5 * 1024 * 1024 * 1024}

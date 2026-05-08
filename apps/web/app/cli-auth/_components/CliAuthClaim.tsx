@@ -132,7 +132,13 @@ export default function CliAuthClaim({ cb, nonce, accountEmail }: Props): React.
       </p>
       <button
         type="button"
-        onClick={() => void mintAndDeliver()}
+        // Bugbot HIGH — primary button uses retry(), not mintAndDeliver().
+        // After a successful mint that failed at the loopback step, the
+        // nonce is consumed; re-minting would 409 and trash the in-memory
+        // key. retry() reuses `minted` if present and only mints when no
+        // key exists yet, so it's safe for both first-click (idle) and
+        // post-loopback-failure retry.
+        onClick={retry}
         disabled={status === 'minting' || status === 'delivering'}
         className="bg-blue-600 hover:bg-blue-500 text-white font-medium px-6 py-2 rounded disabled:opacity-50"
       >
