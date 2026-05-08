@@ -24,13 +24,16 @@ let cfgMod: typeof import('../../src/dashboard/config.ts');
 before(async () => {
   tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), 'ap-login-'));
   process.env.CLAUDE_AUTOPILOT_HOME = tmpHome;
-  process.env.AUTOPILOT_DASHBOARD_BASE_URL = 'http://test.invalid';
+  // Phase 4 — canonical env name. The deprecated AUTOPILOT_DASHBOARD_BASE_URL
+  // is still honored (with warning) but tests use the new name.
+  process.env.AUTOPILOT_PUBLIC_BASE_URL = 'http://test.invalid';
   mod = await import('../../src/cli/dashboard/login.ts');
   cfgMod = await import('../../src/dashboard/config.ts');
 });
 
 after(async () => {
   delete process.env.CLAUDE_AUTOPILOT_HOME;
+  delete process.env.AUTOPILOT_PUBLIC_BASE_URL;
   delete process.env.AUTOPILOT_DASHBOARD_BASE_URL;
   await fs.rm(tmpHome, { recursive: true, force: true });
 });
@@ -62,12 +65,46 @@ describe('runDashboardLogin', () => {
       }),
     });
     assert.strictEqual(res.status, 200);
+    // Phase 4 — POST response carries CORS header so the /cli-auth page
+    // can read the JSON under mode: 'cors'.
+    assert.strictEqual(res.headers.get('access-control-allow-origin'), 'http://test.invalid');
+    const okBody = await res.json() as { ok: boolean; nonce: string };
+    assert.strictEqual(okBody.ok, true);
+    assert.strictEqual(okBody.nonce, nonce);
     const result = await p;
     assert.strictEqual(result.config.apiKey, VALID_KEY);
     assert.strictEqual(result.config.fingerprint, FINGERPRINT);
 
     const onDisk = await cfgMod.readConfig();
     assert.deepStrictEqual(onDisk?.apiKey, VALID_KEY);
+  });
+
+  it('Phase 4 — OPTIONS preflight returns 204 with CORS headers', async () => {
+    let captured = '';
+    const p = mod.runDashboardLogin({
+      portRangeStart: 56140,
+      silent: true,
+      openBrowser: (url) => { captured = url; },
+      timeoutMs: 2000,
+    });
+    // Catch the inevitable timeout — we're only testing OPTIONS.
+    const settled = p.then((v) => ({ ok: true as const, v }), (err) => ({ ok: false as const, err: err as Error }));
+    await new Promise((r) => setTimeout(r, 50));
+    const cb = getCbFromUrl(captured);
+    const res = await fetch(cb, {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'http://test.invalid',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type',
+      },
+    });
+    assert.strictEqual(res.status, 204);
+    assert.strictEqual(res.headers.get('access-control-allow-origin'), 'http://test.invalid');
+    assert.match(res.headers.get('access-control-allow-methods') ?? '', /POST/);
+    assert.match(res.headers.get('access-control-allow-headers') ?? '', /content-type/);
+    // Drain the timeout so the test exits cleanly.
+    await settled;
   });
 
   it('rejects callback with mismatched nonce', async () => {

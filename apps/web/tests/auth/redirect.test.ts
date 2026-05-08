@@ -48,4 +48,36 @@ describe('safeRedirect', () => {
   it('rejects malformed percent-encoding gracefully', () => {
     expect(safeRedirect('%E0%A4%A')).toBe('/');  // truncated UTF-8 escape
   });
+
+  // Phase 4 — /cli-auth allowlist + query preservation.
+  it('accepts /cli-auth with cb + nonce query (already-decoded form)', () => {
+    const cb = 'http://127.0.0.1:56010/cli-callback';
+    const nonce = 'a'.repeat(32);
+    const path = `/cli-auth?cb=${cb}&nonce=${nonce}`;
+    // Decoded form passes through unchanged.
+    expect(safeRedirect(path)).toBe(path);
+    expect(safeRedirect(path)).toContain(cb);
+    expect(safeRedirect(path)).toContain(nonce);
+  });
+
+  it('preserves /cli-auth query string through encoded round-trip', () => {
+    const cb = 'http://127.0.0.1:56010/cli-callback';
+    const nonce = 'b'.repeat(32);
+    // Simulate a parent URL ?next=<encoded /cli-auth?cb=...&nonce=...>.
+    // safeRedirect's normalize step decodes once; the result must still
+    // carry both params after Supabase OAuth round-trip.
+    const cliAuthQuery = new URLSearchParams({ cb, nonce }).toString();
+    const next = `/cli-auth?${cliAuthQuery}`;
+    const encoded = encodeURIComponent(next);
+    const result = safeRedirect(encoded);
+    // Result is the once-decoded form. The cb param value remains
+    // percent-encoded (URLSearchParams encoded it once); a downstream
+    // URLSearchParams parse on result will decode it. Both forms verify
+    // that the params survived the round-trip.
+    expect(result.startsWith('/cli-auth')).toBe(true);
+    expect(result).toBe(next);
+    const params = new URLSearchParams(result.slice('/cli-auth?'.length));
+    expect(params.get('cb')).toBe(cb);
+    expect(params.get('nonce')).toBe(nonce);
+  });
 });
