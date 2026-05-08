@@ -130,4 +130,24 @@ describe('GET /api/dashboard/runs/:runId/artifact', () => {
     const r = await GET(req(randomUUID(), 'kind=manifest'), { params: { runId: randomUUID() } });
     expect(r.status).toBe(404);
   });
+
+  // Codex pass 3 CRITICAL — soft-deleted runs MUST NOT mint signed URLs
+  // even if visibility='public'. Service role client bypasses RLS, so the
+  // route enforces the deleted_at check.
+  it('codex-3: anon GET on soft-deleted public run → 404 (artifact not minted)', async () => {
+    const s = seedRun({ visibility: 'public' });
+    const row = stub.tables.get('runs')!.find((r) => r.id === s.runId)!;
+    row.deleted_at = new Date('2026-05-01').toISOString();
+    const r = await GET(req(s.runId, 'kind=manifest'), { params: { runId: s.runId } });
+    expect(r.status).toBe(404);
+  });
+
+  it('codex-3: owner GET on own soft-deleted run → 404', async () => {
+    const s = seedRun({ visibility: 'private' });
+    currentUser = { id: s.userId };
+    const row = stub.tables.get('runs')!.find((r) => r.id === s.runId)!;
+    row.deleted_at = new Date('2026-05-01').toISOString();
+    const r = await GET(req(s.runId, 'kind=state'), { params: { runId: s.runId } });
+    expect(r.status).toBe(404);
+  });
 });

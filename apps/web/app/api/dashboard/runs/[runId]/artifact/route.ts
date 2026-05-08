@@ -33,6 +33,7 @@ interface RunRow {
   state_blob_path: string | null;
   source_verified: boolean | null;
   upload_session_id: string | null;
+  deleted_at: string | null;
 }
 
 interface RouteParams {
@@ -75,11 +76,21 @@ export async function GET(req: Request, { params }: RouteParams): Promise<Respon
 
   const supabase = createServiceRoleClient();
   const { data: runData } = await supabase.from('runs')
-    .select('id, user_id, organization_id, visibility, events_index_path, state_blob_path, source_verified, upload_session_id')
+    .select('id, user_id, organization_id, visibility, events_index_path, state_blob_path, source_verified, upload_session_id, deleted_at')
     .eq('id', p.runId)
     .maybeSingle();
   if (!runData) return NextResponse.json({ error: 'not found' }, { status: 404 });
   const run = runData as RunRow;
+
+  // Codex pass 3 CRITICAL — soft-deleted runs MUST NOT mint signed URLs,
+  // even if visibility='public'. RLS anon policy already filters
+  // deleted_at IS NULL on the public viewer page, but this route uses the
+  // service-role client and skips RLS — so the check is enforced here.
+  // Truthy check handles both null (active row) and undefined (column not
+  // selected by older callers/stubs).
+  if (run.deleted_at) {
+    return NextResponse.json({ error: 'not found' }, { status: 404 });
+  }
 
   // Authorization.
   let allowed = false;

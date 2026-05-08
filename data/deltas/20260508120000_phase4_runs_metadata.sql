@@ -26,8 +26,19 @@ CREATE INDEX IF NOT EXISTS runs_cost_chart_org
 -- RLS is row-level only — column secrecy comes from the column-level
 -- GRANT below. Without the GRANT, anon could SELECT * and read internal
 -- metadata even though the policy USING() clause matches.
+--
+-- Codex pass 3 CRITICAL — policy is anon-only, NOT authenticated. The
+-- column-level GRANT below applies to anon; authenticated keeps the broad
+-- Phase 1 column grants. Adding `authenticated` to this row policy would
+-- let any logged-in user SELECT * on every other user's public runs and
+-- read internal columns (events_index_path, state_blob_path, user_id,
+-- events_chain_root, organization_id). Public sharing flows through the
+-- server-side anon Supabase client in /runs/[runShareId]/page.tsx, so
+-- authenticated browsers don't need this policy — they'll either own the
+-- row (existing owner/member policy fires) or hit the page anonymously
+-- via the same code path the public viewer uses.
 CREATE POLICY runs_select_public ON runs
-  FOR SELECT TO anon, authenticated
+  FOR SELECT TO anon
   USING (visibility = 'public' AND deleted_at IS NULL);
 
 -- Codex plan-pass CRITICAL — anon gets SELECT only on safe public columns,

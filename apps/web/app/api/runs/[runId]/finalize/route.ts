@@ -71,6 +71,35 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
       if (r.state_sha256 !== stateHash) {
         return NextResponse.json({ error: 'state hash mismatch on retry' }, { status: 409 });
       }
+      // Codex pass 3 CRITICAL — recover lost audit event. The original
+      // call could have succeeded at consume_at + runs UPDATE, then failed
+      // the audit_events INSERT (e.g. transient DB hiccup) and returned
+      // 500. The client retried; we now hit this idempotent branch and
+      // would return 200 without ever writing the audit row. Detect the
+      // missing audit and write it now so the run.uploaded event is
+      // never permanently lost.
+      const { data: existingAudit } = await supabase.from('audit_events')
+        .select('id')
+        .eq('subject_type', 'run')
+        .eq('subject_id', p.runId)
+        .eq('action', 'run.uploaded')
+        .maybeSingle();
+      if (!existingAudit) {
+        const { error: replayAuditErr } = await supabase.from('audit_events').insert({
+          organization_id: s.organization_id,
+          actor_user_id: s.user_id,
+          action: 'run.uploaded',
+          subject_type: 'run',
+          subject_id: p.runId,
+          metadata: { chainRoot: body.chainRoot, recoveredOnRetry: true },
+          source_verified: true,
+          prev_hash: null,
+          this_hash: stateHash,
+        });
+        if (replayAuditErr) {
+          return NextResponse.json({ error: 'failed to write audit event on retry' }, { status: 500 });
+        }
+      }
       return NextResponse.json({
         runId: p.runId, sourceVerified: true, eventsChainRoot: r.events_chain_root,
       }, { status: 200 });

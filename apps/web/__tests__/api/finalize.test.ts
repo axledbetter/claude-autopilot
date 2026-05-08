@@ -189,6 +189,40 @@ describe('finalize — structural + concurrency', () => {
     expect(audits.length).toBe(1);
   });
 
+  // Codex pass 3 CRITICAL — lost audit recovery in idempotent path.
+  // Simulate: original finalize call consumed the session and updated the
+  // runs row, but the audit_events INSERT failed (transient DB hiccup) so
+  // the route returned 500. Client retries; the second call hits the
+  // s.consumed_at branch and must detect the missing audit and write it.
+  it('codex-3: idempotent retry recovers lost audit event', async () => {
+    const s = seedComplete();
+    const stateJson = { runId: s.runId, complete: true };
+
+    // First call — succeeds end-to-end.
+    const a = await FINALIZE(
+      fReq(s.token, s.runId, { chainRoot: s.chainRoot, expectedChunkCount: s.chunkCount, stateJson }),
+      { params: { runId: s.runId } },
+    );
+    expect(a.status).toBe(200);
+    expect((stub.tables.get('audit_events') ?? []).filter((ev) => ev.action === 'run.uploaded').length).toBe(1);
+
+    // Simulate the lost-audit failure mode by manually deleting the audit
+    // row WITHOUT clearing consumed_at. State now mirrors "consume succeeded
+    // but audit insert failed and the original 500 caused the client to retry".
+    const audits = stub.tables.get('audit_events')!;
+    audits.splice(0, audits.length);
+
+    // Retry — must restore the audit.
+    const b = await FINALIZE(
+      fReq(s.token, s.runId, { chainRoot: s.chainRoot, expectedChunkCount: s.chunkCount, stateJson }),
+      { params: { runId: s.runId } },
+    );
+    expect(b.status).toBe(200);
+    const finalAudits = (stub.tables.get('audit_events') ?? []).filter((ev) => ev.action === 'run.uploaded');
+    expect(finalAudits.length).toBe(1);
+    expect((finalAudits[0]?.metadata as { recoveredOnRetry?: boolean }).recoveredOnRetry).toBe(true);
+  });
+
   it('test 27: terminal DB write failure surfaces 500 (bugbot HIGH)', async () => {
     const s = seedComplete();
     // Tell the stub to force-fail any UPDATE on the runs table.

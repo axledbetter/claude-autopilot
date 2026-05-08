@@ -91,6 +91,22 @@ describe('PATCH /api/dashboard/runs/:runId/visibility', () => {
     expect(r.status).toBe(422);
   });
 
+  // Codex pass 3 CRITICAL — soft-deleted runs MUST NOT be re-published.
+  it('codex-3: owner cannot re-publish soft-deleted run → 404', async () => {
+    const userId = randomUUID();
+    const runId = randomUUID();
+    currentUser = { id: userId };
+    stub.seed('runs', [{
+      id: runId, user_id: userId, visibility: 'private',
+      deleted_at: new Date('2026-05-01').toISOString(),
+    }]);
+    const r = await PATCH(req(runId, { visibility: 'public' }), { params: { runId } });
+    expect(r.status).toBe(404);
+    // Visibility unchanged.
+    const row = stub.tables.get('runs')!.find((x) => x.id === runId);
+    expect(row?.visibility).toBe('private');
+  });
+
   // Spec test 28 — Origin guard fires before any auth/lookup.
   it('test 28: mismatched Origin → 403 even with valid cookie session', async () => {
     const userId = randomUUID();
