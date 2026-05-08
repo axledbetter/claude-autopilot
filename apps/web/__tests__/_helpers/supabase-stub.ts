@@ -40,13 +40,31 @@ class Mutex {
 class TableQuery {
   private filters: Array<(row: Row) => boolean> = [];
   private op: { kind: 'select' | 'insert' | 'update' | 'delete'; payload?: unknown } | null = null;
+  private countOnly = false;
+  private rangeStart: number | null = null;
+  private rangeEnd: number | null = null;
+  private orderCol: string | null = null;
+  private orderAsc = true;
 
   constructor(private stub: SupabaseStub, private table: string) {}
 
   // Real supabase-js: .select() after .update()/.insert()/.delete() returns
   // the rows mutated. Don't overwrite the op in that case.
-  select(_cols = '*'): this {
+  select(_cols = '*', opts?: { count?: 'exact' | 'planned' | 'estimated'; head?: boolean }): this {
     if (!this.op) this.op = { kind: 'select' };
+    if (opts?.head === true) this.countOnly = true;
+    return this;
+  }
+
+  // Phase 4 — order/range support for paginated runs lists.
+  order(col: string, opts: { ascending?: boolean } = {}): this {
+    this.orderCol = col;
+    this.orderAsc = opts.ascending !== false;
+    return this;
+  }
+  range(start: number, end: number): this {
+    this.rangeStart = start;
+    this.rangeEnd = end;
     return this;
   }
   insert(payload: Row | Row[]): this { this.op = { kind: 'insert', payload }; return this; }
@@ -110,14 +128,36 @@ class TableQuery {
     if (!this.op) return { data: null, error: { message: 'no op' } };
 
     if (this.op.kind === 'select') {
-      const matched = rows.filter((r) => this.filters.every((f) => f(r)));
+      let matched = rows.filter((r) => this.filters.every((f) => f(r)));
+      // Phase 4 — head:true returns count without rows.
+      if (this.countOnly) {
+        return { data: null, error: null, count: matched.length } as StubResult<unknown> & { count: number };
+      }
+      if (this.orderCol) {
+        const col = this.orderCol;
+        const asc = this.orderAsc;
+        matched = [...matched].sort((a, b) => {
+          const av = a[col];
+          const bv = b[col];
+          if (av === bv) return 0;
+          if (av == null) return 1;
+          if (bv == null) return -1;
+          if (typeof av === 'string' && typeof bv === 'string') {
+            return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+          }
+          return asc ? ((av as number) - (bv as number)) : ((bv as number) - (av as number));
+        });
+      }
+      if (this.rangeStart != null && this.rangeEnd != null) {
+        matched = matched.slice(this.rangeStart, this.rangeEnd + 1);
+      }
       if (single) {
         if (matched.length === 0) {
           return maybe ? { data: null, error: null } : { data: null, error: { message: 'no rows' } };
         }
         return { data: matched[0], error: null };
       }
-      return { data: matched, error: null };
+      return { data: matched, error: null, count: matched.length } as StubResult<unknown> & { count: number };
     }
 
     if (this.op.kind === 'insert') {
@@ -212,12 +252,14 @@ export class SupabaseStub {
   storage = new Map<string, Buffer>();
   rowLocks = new Map<string, Mutex>();   // key: `upload_sessions:${jti}`
   forceUpdateError = new Set<string>();   // tables whose UPDATE should return a synthetic error
+  failSignedUrl = false;                  // when true, createSignedUrl returns an error
 
   reset(): void {
     this.tables.clear();
     this.storage.clear();
     this.rowLocks.clear();
     this.forceUpdateError.clear();
+    this.failSignedUrl = false;
   }
 
   seed(table: string, rows: Row[]): void {
@@ -406,7 +448,7 @@ export class SupabaseStub {
         return stub.callRpc(fn, args);
       },
       storage: {
-        from(_bucket: string) {
+        from(bucket: string) {
           return {
             async upload(path: string, body: Buffer | ArrayBuffer | Uint8Array, opts: { upsert?: boolean; contentType?: string } = {}) {
               if (!opts.upsert && stub.storage.has(path)) {
@@ -430,6 +472,14 @@ export class SupabaseStub {
                 arrayBuffer: async () => ab,
               };
               return { data: blobLike, error: null };
+            },
+            // Phase 4 — signed URL minter for the artifact route.
+            async createSignedUrl(path: string, ttlSeconds: number) {
+              if (stub.failSignedUrl) {
+                return { data: null, error: { message: 'simulated signed-url failure' } };
+              }
+              const signed = `https://stub.example/storage/v1/object/sign/${bucket}/${encodeURIComponent(path)}?token=test&ttl=${ttlSeconds}`;
+              return { data: { signedUrl: signed }, error: null };
             },
           };
         },

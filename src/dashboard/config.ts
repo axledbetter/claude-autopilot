@@ -69,6 +69,39 @@ export async function deleteConfig(): Promise<void> {
 }
 
 /**
+ * Phase 4 — resolve the dashboard / public base URL from env, with
+ * AUTOPILOT_PUBLIC_BASE_URL preferred and AUTOPILOT_DASHBOARD_BASE_URL
+ * accepted as a deprecated alias. Logs a one-time deprecation warning
+ * when only the older variable is set.
+ *
+ * Defaults to https://autopilot.dev when neither is present.
+ */
+let _deprecationWarned = false;
+
+export function getAutopilotBaseUrl(): string {
+  const canonical = process.env.AUTOPILOT_PUBLIC_BASE_URL;
+  const legacy = process.env.AUTOPILOT_DASHBOARD_BASE_URL;
+  if (canonical) return canonical;
+  if (legacy) {
+    if (!_deprecationWarned) {
+      _deprecationWarned = true;
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[autopilot] AUTOPILOT_DASHBOARD_BASE_URL is deprecated; ' +
+        'use AUTOPILOT_PUBLIC_BASE_URL instead. Both are accepted for now.',
+      );
+    }
+    return legacy;
+  }
+  return 'https://autopilot.dev';
+}
+
+// Test seam — reset the one-shot warning flag.
+export function _resetAutopilotBaseUrlWarning(): void {
+  _deprecationWarned = false;
+}
+
+/**
  * Returns a warning string if the config file is group/world-readable on
  * a POSIX filesystem; null otherwise (or on Windows, where mode bits
  * don't apply meaningfully).

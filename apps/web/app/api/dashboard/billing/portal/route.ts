@@ -12,6 +12,7 @@ import { cookies } from 'next/headers';
 import { getStripeClient } from '@/lib/billing/stripe';
 import { loadBillingConfig } from '@/lib/billing/plan-map';
 import { createServiceRoleClient } from '@/lib/supabase/service';
+import { assertSameOrigin } from '@/lib/dashboard/same-origin';
 
 export const runtime = 'nodejs';
 
@@ -37,6 +38,10 @@ async function resolveSession(): Promise<{ userId: string } | null> {
 }
 
 export async function POST(req: Request): Promise<Response> {
+  // Cookie-only — Origin guard unconditional.
+  const so = assertSameOrigin(req);
+  if (!so.ok) return NextResponse.json({ error: `forbidden: ${so.reason}` }, { status: 403 });
+
   let body: Body;
   try {
     body = await req.json() as Body;

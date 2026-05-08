@@ -2,6 +2,40 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 6.3.0-pre.6 (2026-05-08)
+
+**v7.0 Phase 4 — Free tier dashboard UI + `/cli-auth` page + public share-by-URL.** Closes the loop on Phase 3's commercially load-bearing 402: free users now SEE "you've used 87/100 this month" and one click away from upgrading.
+
+Eight new UI surfaces:
+1. `/dashboard` overview — auth-gated, server-rendered. Run count this month, cost MTD, current plan, recent runs (5), 30-day cost chart (inline SVG, no library).
+2. `/dashboard/runs` — paginated list (20/page, offset-based via `range()`).
+3. `/dashboard/runs/[runId]` — detail page with manifest-driven event replay (lazy chunk loading, hard 1000-event cap for MVP), state inspector, cost breakdown, visibility toggle.
+4. `/dashboard/billing` — current plan/caps/usage; Upgrade/Manage subscription buttons that POST to Phase 3 endpoints.
+5. `/dashboard/billing/success` — post-checkout polling page.
+6. `/cli-auth` (DEFERRED FROM 2.3) — completes the CLI dashboard login flow. Server-validates `cb` (loopback only, port 56000-56050) + `nonce` (32 hex). Authenticated user clicks "Sign in CLI" → mints API key via `/api/dashboard/api-keys/mint` → POSTs to loopback with `mode: 'cors'`. CLI loopback listener (Phase 2.3, EXTENDED) gains OPTIONS preflight + `Access-Control-Allow-Origin` matching the configured `AUTOPILOT_PUBLIC_BASE_URL`.
+7. `/runs/[runShareId]` — public share-by-URL. Server-side anon Supabase client (NOT createBrowserClient). Read-only events replay + state.
+8. `PATCH /api/dashboard/runs/:runId/visibility` — narrow owner-only endpoint with explicit owner check + assertSameOrigin guard. NOT direct UPDATE on runs from client.
+
+Plus required infrastructure:
+- **Authorized signed-URL minter** at `GET /api/dashboard/runs/:runId/artifact?kind=manifest|chunk|state[&seq=N]` — verifies owner OR `visibility='public'` BEFORE calling `storage.from('run-uploads').createSignedUrl(path, 60)`. Bucket stays fully private. Chunk seq bounded against `upload_session_chunks` count → 422 on out-of-range. Path derived ONLY from DB-trusted values via `chunkPath()` helper.
+- **assertSameOrigin guard** on cookie-authenticated mutating routes (mint, revoke, visibility, checkout, portal). Compares `Origin` header against `loadPublicBillingConfig().AUTOPILOT_PUBLIC_BASE_URL`. Skipped when API-key bearer auth is used.
+- **`/cli-auth` security headers via middleware** — `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, and CSP including exact `connect-src 'self' http://127.0.0.1:* http://localhost:*` for the loopback POST. Headers set in middleware.ts (Server Component `headers()` reads request, not response).
+- **Finalize handler** persists sanitized `cost_usd`/`duration_ms`/`run_status` from CLI state.json. TS-side bounds + enum validation BEFORE DB UPDATE so a buggy CLI doesn't trip the new CHECK and bring down the whole UPDATE. Wrapped in try/catch for graceful degradation during the rollout window before `/migrate` applies the new columns. Display-only — labeled "Reported by CLI", no entitlement/billing logic reads them.
+- **safeRedirect** allowlist accepts `/cli-auth` AND preserves the full `?cb=&nonce=` query string when bouncing through Supabase Auth.
+- **Env unification** — `AUTOPILOT_PUBLIC_BASE_URL` is now the canonical name everywhere (web AND CLI). The CLI's older `AUTOPILOT_DASHBOARD_BASE_URL` is a deprecated alias (warn-once on use).
+
+Component breakdown: `<RunListItem>` server, `<EventReplay>` client (manifest-driven, lazy chunks, 1000-event cap), `<StateInspector>` client (recursive tree, no JSON-tree library), `<CostChart>` server (inline SVG, ~80 LOC), `<PlanCard>` server with client `<UpgradeButtons>`/`<ManageSubscriptionButton>`, `<VisibilityToggle>` client (optimistic update + confirmation modal).
+
+30+ new tests: 6 visibility (incl. CSRF) + 14 artifact (9 base + 3 RLS + 2 seq-bounds) + 1 finalize-persists + 9 sanitize + 1 finalize-malformed-status + 3 cli-auth validate + 4 cli-auth headers + 1 cli-auth redirect round-trip + 2 cost-chart + 6 dashboard-pages integration + 4 origin-mismatch (mint/revoke/checkout/portal) + 1 CLI OPTIONS preflight = ~52 added tests across web + CLI.
+
+**Migration:** `data/deltas/20260508120000_phase4_runs_metadata.sql` — `runs.cost_usd NUMERIC(12,4)`, `duration_ms INTEGER`, `run_status TEXT` with CHECK enum; cost-chart partial indexes (user vs org); `runs_select_public` policy for anon/authenticated on `visibility='public'`; column-level GRANT to anon (only safe public columns, NOT `SELECT *`). Operator runs `/migrate` post-merge BEFORE the code deploy fully exercises the new columns; finalize handler graceful-drops if columns missing.
+
+**No new env vars** — all reuse Phase 2.1 + 2.3 + 3 vars. Consider standardizing `AUTOPILOT_PUBLIC_BASE_URL` in any custom CLI deployments (Phase 2.3's `AUTOPILOT_DASHBOARD_BASE_URL` still works but logs deprecation warning).
+
+**Operator follow-ups:**
+- Run `/migrate` to apply `data/deltas/20260508120000_phase4_runs_metadata.sql`.
+- (Optional) Configure Stripe Customer Portal in dashboard if not already (allows cancellation, payment update from `/dashboard/billing`).
+
 ## 6.3.0-pre.5 (2026-05-08)
 
 **v7.0 Phase 3 — Stripe entitlement enforcement.** Makes the cryptographic credibility boundary commercially load-bearing: every engine-on `autopilot --mode full` upload is now gated on the org's monthly run cap and retained-storage cap.

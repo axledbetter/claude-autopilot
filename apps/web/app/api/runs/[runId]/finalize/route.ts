@@ -5,6 +5,7 @@ import { sha256OfCanonical, canonicalJsonBytes } from '@/lib/upload/canonical';
 import { manifestPath, statePath, putObject, StorageWriteError } from '@/lib/upload/storage';
 import { existingBytesEqual } from '@/lib/upload/storage-verify';
 import { withSessionTransaction } from '@/lib/upload/transaction';
+import { sanitizeFinalizeMetadata } from '@/lib/runs/sanitize-finalize-metadata';
 
 interface Body { chainRoot: string; expectedChunkCount: number; stateJson: unknown }
 
@@ -69,6 +70,35 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
       }
       if (r.state_sha256 !== stateHash) {
         return NextResponse.json({ error: 'state hash mismatch on retry' }, { status: 409 });
+      }
+      // Codex pass 3 CRITICAL — recover lost audit event. The original
+      // call could have succeeded at consume_at + runs UPDATE, then failed
+      // the audit_events INSERT (e.g. transient DB hiccup) and returned
+      // 500. The client retried; we now hit this idempotent branch and
+      // would return 200 without ever writing the audit row. Detect the
+      // missing audit and write it now so the run.uploaded event is
+      // never permanently lost.
+      const { data: existingAudit } = await supabase.from('audit_events')
+        .select('id')
+        .eq('subject_type', 'run')
+        .eq('subject_id', p.runId)
+        .eq('action', 'run.uploaded')
+        .maybeSingle();
+      if (!existingAudit) {
+        const { error: replayAuditErr } = await supabase.from('audit_events').insert({
+          organization_id: s.organization_id,
+          actor_user_id: s.user_id,
+          action: 'run.uploaded',
+          subject_type: 'run',
+          subject_id: p.runId,
+          metadata: { chainRoot: body.chainRoot, recoveredOnRetry: true },
+          source_verified: true,
+          prev_hash: null,
+          this_hash: stateHash,
+        });
+        if (replayAuditErr) {
+          return NextResponse.json({ error: 'failed to write audit event on retry' }, { status: 500 });
+        }
       }
       return NextResponse.json({
         runId: p.runId, sourceVerified: true, eventsChainRoot: r.events_chain_root,
@@ -164,6 +194,30 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
     }).eq('id', p.runId);
     if (runsErr) {
       return NextResponse.json({ error: 'failed to mark run verified' }, { status: 500 });
+    }
+
+    // Phase 4 — persist display-only cost/duration/status from CLI state.json.
+    // Wrapped in try/catch so the rollout window between code-deploy and
+    // /migrate doesn't break finalize: if the new columns don't exist
+    // yet, drop the write and continue. Operators run /migrate within
+    // minutes of merge.
+    //
+    // Codex pass 2 WARNING — sanitize FIRST so a malformed run_status
+    // doesn't trip the new CHECK constraint and bring down the whole
+    // UPDATE.
+    try {
+      const sanitized = sanitizeFinalizeMetadata(body.stateJson);
+      const { error: metaErr } = await supabase.from('runs')
+        .update(sanitized as unknown as Record<string, unknown>)
+        .eq('id', p.runId);
+      if (metaErr) {
+        // Non-fatal — usually means columns not yet created.
+        // eslint-disable-next-line no-console
+        console.warn('[finalize] metadata write skipped:', metaErr.message);
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[finalize] metadata write skipped (exception):', (err as Error).message);
     }
 
     // Bugbot HIGH — CAS consume_at: only the first finalize for this

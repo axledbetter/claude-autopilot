@@ -40,10 +40,10 @@ beforeEach(() => {
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'stub';
 });
 
-function req(body: object): Request {
+function req(body: object, headers: Record<string, string> = {}): Request {
   return new Request('http://x/api/dashboard/billing/portal', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', origin: 'https://autopilot.dev', ...headers },
     body: JSON.stringify(body),
   });
 }
@@ -85,5 +85,16 @@ describe('POST /api/dashboard/billing/portal', () => {
   it('test 15: anon → 401', async () => {
     const r = await POST(req({ organizationId: randomUUID() }));
     expect(r.status).toBe(401);
+  });
+
+  it('test 28 (portal): mismatched Origin → 403', async () => {
+    const userId = randomUUID();
+    const orgId = randomUUID();
+    currentUser = { id: userId };
+    stub.seed('memberships', [{
+      organization_id: orgId, user_id: userId, role: 'owner', status: 'active',
+    }]);
+    const r = await POST(req({ organizationId: orgId }, { origin: 'https://attacker.example' }));
+    expect(r.status).toBe(403);
   });
 });

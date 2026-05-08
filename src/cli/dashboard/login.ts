@@ -18,6 +18,7 @@ import { spawn } from 'node:child_process';
 import {
   writeConfig,
   type DashboardConfig,
+  getAutopilotBaseUrl,
 } from '../../dashboard/config.ts';
 
 const PORT_START = 56000;
@@ -136,7 +137,10 @@ function openInBrowser(url: string): void {
 }
 
 export async function runDashboardLogin(opts: LoginOptions = {}): Promise<LoginResult> {
-  const baseUrl = opts.baseUrl ?? process.env.AUTOPILOT_DASHBOARD_BASE_URL ?? 'https://autopilot.dev';
+  // Phase 4 — unified env name. AUTOPILOT_PUBLIC_BASE_URL is canonical
+  // (matches apps/web). AUTOPILOT_DASHBOARD_BASE_URL is the deprecated
+  // Phase 2.3 alias and triggers a one-time warning.
+  const baseUrl = opts.baseUrl ?? getAutopilotBaseUrl();
   const timeoutMs = opts.timeoutMs ?? TIMEOUT_MS;
   const portStart = opts.portRangeStart ?? PORT_START;
   const portEnd = portStart + (PORT_END - PORT_START);
@@ -184,9 +188,28 @@ export async function runDashboardLogin(opts: LoginOptions = {}): Promise<LoginR
     }, { once: true });
   }
 
+  // Phase 4 CORS — the /cli-auth page POSTs to this loopback with
+  // mode: 'cors'. Without OPTIONS preflight + Access-Control-Allow-Origin
+  // matching the configured public base URL, the browser fetch fails
+  // silently (opaque response) and the user sees "loopback failed" with
+  // no signal here.
+  const allowedOrigin = baseUrl;
+
   server.on('request', (req: IncomingMessage, res: ServerResponse) => {
     void (async (): Promise<void> => {
       try {
+        // OPTIONS preflight — no body, no auth, just CORS headers.
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, {
+            'Access-Control-Allow-Origin': allowedOrigin,
+            'Access-Control-Allow-Methods': 'POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'content-type',
+            'Access-Control-Max-Age': '60',
+            Vary: 'Origin',
+          });
+          res.end();
+          return;
+        }
         if (req.method !== 'POST' || req.url !== '/cli-callback') {
           res.statusCode = 404;
           res.end('not found');
@@ -200,29 +223,36 @@ export async function runDashboardLogin(opts: LoginOptions = {}): Promise<LoginR
         }
         const body = await readJsonBody(req);
 
+        // Codex NOTE — CORS header on POST response so the browser can
+        // read the JSON body under mode: 'cors'.
+        const corsHeaders: Record<string, string> = {
+          'Access-Control-Allow-Origin': allowedOrigin,
+          Vary: 'Origin',
+        };
+
         if (typeof body.nonce !== 'string' || !nonceMatch(nonce, body.nonce)) {
-          res.statusCode = 403;
+          res.writeHead(403, { ...corsHeaders, 'content-type': 'text/plain' });
           res.end('nonce mismatch');
           clearTimeout(timer);
           settle(() => rejected?.(new Error('nonce mismatch')));
           return;
         }
         if (typeof body.apiKey !== 'string' || !KEY_RE.test(body.apiKey)) {
-          res.statusCode = 422;
+          res.writeHead(422, { ...corsHeaders, 'content-type': 'text/plain' });
           res.end('invalid apiKey');
           clearTimeout(timer);
           settle(() => rejected?.(new Error('invalid apiKey from callback')));
           return;
         }
         if (typeof body.fingerprint !== 'string' || !/^clp_[0-9a-f]{12}$/.test(body.fingerprint)) {
-          res.statusCode = 422;
+          res.writeHead(422, { ...corsHeaders, 'content-type': 'text/plain' });
           res.end('invalid fingerprint');
           clearTimeout(timer);
           settle(() => rejected?.(new Error('invalid fingerprint from callback')));
           return;
         }
         if (typeof body.accountEmail !== 'string') {
-          res.statusCode = 422;
+          res.writeHead(422, { ...corsHeaders, 'content-type': 'text/plain' });
           res.end('invalid accountEmail');
           clearTimeout(timer);
           settle(() => rejected?.(new Error('invalid accountEmail from callback')));
@@ -239,14 +269,17 @@ export async function runDashboardLogin(opts: LoginOptions = {}): Promise<LoginR
         };
         await writeConfig(cfg);
 
-        res.statusCode = 200;
-        res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ ok: true }));
+        res.writeHead(200, {
+          ...corsHeaders,
+          'content-type': 'application/json',
+        });
+        res.end(JSON.stringify({ ok: true, nonce }));
 
         clearTimeout(timer);
         settle(() => resolved?.({ config: cfg, port }));
       } catch (err) {
         res.statusCode = 500;
+        res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
         res.end((err as Error).message ?? 'error');
         clearTimeout(timer);
         settle(() => rejected?.(err instanceof Error ? err : new Error(String(err))));

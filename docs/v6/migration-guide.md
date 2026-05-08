@@ -513,3 +513,21 @@ with each mint request so the gate can preflight against the new run.
 org). The first member's runs count toward the same 100/mo as the
 second member's. Personal-tier users (no org) get their own
 `personal_entitlements` row.
+
+### v7.0 Phase 4 — dashboard UI + `/cli-auth` page + public share-by-URL (6.3.0-pre.6)
+
+`autopilot.dev/dashboard` is now a real product: log in via Supabase OAuth, see your runs, see your monthly usage vs cap, click Upgrade and land in Stripe Checkout. The deferred `/cli-auth` page (placeholder in 2.3) ships in this release — the CLI's `claude-autopilot dashboard login` flow is now end-to-end functional.
+
+**`/cli-auth` flow.** When you run `claude-autopilot dashboard login`, the CLI binds a loopback HTTP server (port 56000-56050), opens `https://autopilot.dev/cli-auth?cb=...&nonce=...` in your browser, and waits. The `/cli-auth` page server-validates the `cb` URL (loopback only) and `nonce` (32 hex chars), gates on Supabase auth (redirecting to `/?next=<encoded>` if needed), then renders a "Sign in CLI" button. Clicking mints an API key via `/api/dashboard/api-keys/mint` (held only in JS memory) and POSTs it back to the loopback. The CLI listener gained CORS support in this phase — OPTIONS preflight + `Access-Control-Allow-Origin` matching the configured base URL — so the browser fetch can read the response under `mode: 'cors'`.
+
+**Public share-by-URL.** Toggle a run's visibility to `public` from the run detail page (modal warns: "this includes the run's full state.json which may contain tool outputs and cost details"), then share `https://autopilot.dev/runs/<runId>`. The page renders without a login — RLS allows anon SELECT only on rows where `visibility='public'`, and column-level GRANTs limit anon to safe display fields (no internal storage paths or org IDs leak).
+
+**Storage stays private.** The `run-uploads` Supabase Storage bucket has no anon access. Every read goes through `GET /api/dashboard/runs/:runId/artifact?kind=manifest|chunk|state[&seq=N]`, which checks owner OR `visibility='public'` BEFORE minting a 60-second signed URL. Chunk seq is bounded against the actual chunk count (422 on out-of-range, no stale signed URLs).
+
+**Cost / duration / status are display estimates.** The CLI sends `cost_usd`, `duration_ms`, and `run_status` in `state.json`. Finalize sanitizes (bounds + enum) before the DB UPDATE so a buggy CLI can't trip the new CHECK constraint. UI labels these "Reported by CLI" — Stripe still owns billing.
+
+**Env unification.** Phase 2.3 introduced `AUTOPILOT_DASHBOARD_BASE_URL` for the CLI; Phase 3 introduced `AUTOPILOT_PUBLIC_BASE_URL` for the web. **Phase 4 standardizes on `AUTOPILOT_PUBLIC_BASE_URL` everywhere** — the CLI now reads this name first and falls back to the older one with a one-time deprecation warning. No action required if you set both, but new deployments should use the canonical name.
+
+**CSRF posture.** Cookie-authenticated mutating routes (mint, revoke, visibility, checkout, portal) now verify the `Origin` header against `AUTOPILOT_PUBLIC_BASE_URL`. API-key bearer callers (CLI, server-to-server) bypass the check — they don't reliably set Origin.
+
+**Operator follow-up.** Run `/migrate` to apply `data/deltas/20260508120000_phase4_runs_metadata.sql` (adds `runs.cost_usd / duration_ms / run_status` + the `runs_select_public` policy + column-level anon GRANT). The finalize handler graceful-drops the cost/duration/status writes if columns aren't created yet, so the migration can lag the deploy by a few minutes without breaking finalize.

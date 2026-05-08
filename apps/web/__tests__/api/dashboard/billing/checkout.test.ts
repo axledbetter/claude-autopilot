@@ -40,10 +40,10 @@ beforeEach(() => {
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'stub';
 });
 
-function req(body: object): Request {
+function req(body: object, headers: Record<string, string> = {}): Request {
   return new Request('http://x/api/dashboard/billing/checkout', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', origin: 'https://autopilot.dev', ...headers },
     body: JSON.stringify(body),
   });
 }
@@ -117,6 +117,20 @@ describe('POST /api/dashboard/billing/checkout', () => {
       const r = await POST(req({ organizationId: orgId, tier: 'mid', interval: 'monthly' }));
       expect(r.status, `status=${status}`).toBe(409);
     }
+  });
+
+  it('test 28 (checkout): mismatched Origin → 403', async () => {
+    const userId = randomUUID();
+    const orgId = randomUUID();
+    currentUser = { id: userId, email: 'a@b.com' };
+    stub.seed('memberships', [{
+      organization_id: orgId, user_id: userId, role: 'owner', status: 'active',
+    }]);
+    const r = await POST(req(
+      { organizationId: orgId, tier: 'small', interval: 'monthly' },
+      { origin: 'https://attacker.example' },
+    ));
+    expect(r.status).toBe(403);
   });
 
   it('bugbot MEDIUM: terminal statuses (canceled/unpaid/incomplete_expired) allow new checkout', async () => {
