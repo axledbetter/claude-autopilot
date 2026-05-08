@@ -263,6 +263,38 @@ export class SupabaseStub {
       return { data: rows.length - keep.length, error: null };
     }
 
+    if (fn === 'count_runs_this_month') {
+      // Phase 3 entitlement gate — count runs for the current calendar month
+      // (UTC). Mirrors the SQL `date_trunc('month', NOW() AT TIME ZONE 'UTC')`.
+      const monthStart = new Date();
+      monthStart.setUTCDate(1);
+      monthStart.setUTCHours(0, 0, 0, 0);
+      const orgId = args.p_organization_id as string | null;
+      const userId = args.p_user_id as string;
+      const rows = (this.tables.get('runs') ?? []).filter((r) => {
+        if (new Date(r.created_at as string) < monthStart) return false;
+        if (orgId != null) return r.organization_id === orgId;
+        return r.organization_id == null && r.user_id === userId;
+      });
+      return { data: rows.length, error: null };
+    }
+
+    if (fn === 'sum_retained_bytes') {
+      // Phase 3 — sum total_bytes of non-deleted runs within retention window.
+      const days = (args.p_retention_days as number | undefined) ?? 90;
+      const cutoff = new Date(Date.now() - days * 86400_000);
+      const orgId = args.p_organization_id as string | null;
+      const userId = args.p_user_id as string;
+      const rows = (this.tables.get('runs') ?? []).filter((r) => {
+        if (r.deleted_at != null) return false;
+        if (new Date(r.created_at as string) < cutoff) return false;
+        if (orgId != null) return r.organization_id === orgId;
+        return r.organization_id == null && r.user_id === userId;
+      });
+      const sum = rows.reduce((s, r) => s + (Number(r.total_bytes) || 0), 0);
+      return { data: sum, error: null };
+    }
+
     if (fn === 'mint_api_key_with_nonce') {
       // Phase 2.3 — atomic mint+nonce-record. Sweep stale nonces, reject
       // duplicate nonce, insert key + nonce in a single conceptual txn.
