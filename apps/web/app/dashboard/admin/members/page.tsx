@@ -33,41 +33,13 @@ export default async function MembersPage(
   const callerRole = (callerRow as { role: string } | null)?.role;
   if (!callerRole || !['admin', 'owner'].includes(callerRole)) notFound();
 
-  // Initial render — pull memberships + emails. Client refreshes from API on mutation.
-  const { data: memberRowsRaw } = await svc.from('memberships')
-    .select('id, user_id, role, status, joined_at')
-    .eq('organization_id', orgId)
-    .eq('status', 'active');
-  const memberRows = (memberRowsRaw as { id: string; user_id: string; role: string; status: string; joined_at: string }[] | null) ?? [];
-  const userIds = memberRows.map((m) => m.user_id);
-  const emailMap = new Map<string, string>();
-  if (userIds.length > 0) {
-    const sbAny = svc as unknown as {
-      schema?: (s: string) => { from: (t: string) => { select: (cols: string) => { in: (col: string, vals: string[]) => Promise<{ data: { id: string; email: string }[] | null }> } } };
-    };
-    let users: { id: string; email: string }[] | null = null;
-    if (typeof sbAny.schema === 'function') {
-      try {
-        const res = await sbAny.schema('auth').from('users').select('id, email').in('id', userIds);
-        users = res.data ?? null;
-      } catch { users = null; }
-    }
-    if (!users || users.length === 0) {
-      const res = await (svc.from('auth.users' as never) as unknown as {
-        select: (cols: string) => { in: (col: string, vals: string[]) => Promise<{ data: { id: string; email: string }[] | null }> };
-      }).select('id, email').in('id', userIds);
-      users = res.data ?? null;
-    }
-    for (const u of users ?? []) emailMap.set(u.id, u.email);
-  }
-  const initial: MemberRow[] = memberRows.map((m) => ({
-    id: m.id,
-    userId: m.user_id,
-    email: emailMap.get(m.user_id) ?? null,
-    role: m.role as MemberRow['role'],
-    status: m.status,
-    joinedAt: m.joined_at,
-  }));
+  // Initial render via the SECURITY DEFINER RPC (codex PR-pass CRITICAL —
+  // direct auth.users access not reliable in production).
+  const { data: rpcData } = await svc.rpc('list_org_members_with_emails', {
+    p_caller_user_id: user.id,
+    p_org_id: orgId,
+  });
+  const initial: MemberRow[] = (rpcData as { members: MemberRow[] } | null)?.members ?? [];
 
   return (
     <MembersList

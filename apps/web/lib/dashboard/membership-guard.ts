@@ -19,8 +19,10 @@ export type PgError = { code?: string | null; message?: string | null };
 const MAP: Record<string, number> = {
   not_admin: 403,
   not_owner: 403,
+  not_member: 404,
   user_not_found: 404,
   target_not_member: 404,
+  org_not_found: 404,
   already_member: 409,
   last_owner: 422,
   role_transition: 422,

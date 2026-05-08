@@ -7,7 +7,7 @@
 import { NextResponse } from 'next/server';
 import { createServiceRoleClient } from '@/lib/supabase/service';
 import { assertSameOrigin } from '@/lib/dashboard/same-origin';
-import { mapPostgresError, resolveSessionUserId } from '@/lib/dashboard/membership-guard';
+import { mapPostgresError, resolveSessionUserId, isValidUuid } from '@/lib/dashboard/membership-guard';
 
 interface RouteParams { params: Promise<{ orgId: string }> | { orgId: string } }
 interface Body { email: string; role: string }
@@ -17,6 +17,9 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
   if (!so.ok) return NextResponse.json({ error: `forbidden: ${so.reason}` }, { status: 403 });
 
   const p = await Promise.resolve(params) as { orgId: string };
+  if (!isValidUuid(p.orgId)) {
+    return NextResponse.json({ error: 'malformed_params' }, { status: 422 });
+  }
   let body: Body;
   try { body = await req.json() as Body; } catch { return NextResponse.json({ error: 'invalid_json' }, { status: 422 }); }
   if (!body || typeof body.email !== 'string' || typeof body.role !== 'string') {

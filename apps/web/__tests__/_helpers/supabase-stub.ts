@@ -445,6 +445,33 @@ export class SupabaseStub {
     // execution equivalent to FOR UPDATE.
     // ========================================================================
 
+    if (fn === 'list_org_members_with_emails') {
+      const callerUserId = args.p_caller_user_id as string;
+      const orgId = args.p_org_id as string;
+      const memberships = this.tables.get('memberships') ?? [];
+      const callerActive = memberships.some(
+        (m) => m.organization_id === orgId && m.user_id === callerUserId && m.status === 'active',
+      );
+      if (!callerActive) {
+        return { data: null, error: { code: 'P0001', message: 'not_member' } };
+      }
+      const users = this.tables.get('auth.users') ?? [];
+      const emailById = new Map<string, string>(
+        users.map((u) => [u.id as string, u.email as string]),
+      );
+      const members = memberships
+        .filter((m) => m.organization_id === orgId && m.status === 'active')
+        .map((m) => ({
+          id: m.id,
+          userId: m.user_id,
+          email: emailById.get(m.user_id as string) ?? null,
+          role: m.role,
+          status: m.status,
+          joinedAt: m.joined_at,
+        }));
+      return { data: { members }, error: null };
+    }
+
     if (fn === 'invite_member') {
       const callerUserId = args.p_caller_user_id as string;
       const orgId = args.p_org_id as string;
@@ -623,13 +650,12 @@ export class SupabaseStub {
       }
       const orgs = this.tables.get('organizations') ?? [];
       const org = orgs.find((o) => o.id === orgId);
-      const oldName = org?.name as string | undefined ?? null;
-      if (org) {
-        org.name = newName;
-      } else {
-        orgs.push({ id: orgId, name: newName });
-        this.tables.set('organizations', orgs);
+      // Codex PR-pass WARNING — explicit org existence check, mirrors SQL.
+      if (!org) {
+        return { data: null, error: { code: 'P0001', message: 'org_not_found' } };
       }
+      const oldName = org.name as string | undefined ?? null;
+      org.name = newName;
       const audits = this.tables.get('audit_events') ?? [];
       audits.push({
         organization_id: orgId,

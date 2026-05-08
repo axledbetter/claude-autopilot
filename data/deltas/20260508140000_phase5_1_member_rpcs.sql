@@ -297,6 +297,11 @@ BEGIN
     RAISE EXCEPTION 'bad_name' USING ERRCODE = 'P0001';
   END IF;
 
+  -- Codex PR-pass WARNING — explicit org existence check.
+  IF NOT EXISTS (SELECT 1 FROM organizations WHERE id = p_org_id) THEN
+    RAISE EXCEPTION 'org_not_found' USING ERRCODE = 'P0001';
+  END IF;
+
   -- Lock org memberships for caller-role check.
   PERFORM 1 FROM memberships
     WHERE organization_id = p_org_id
@@ -334,6 +339,55 @@ END;
 $$;
 
 -- ============================================================================
+-- list_org_members_with_emails — Phase 5.1 read RPC.
+--
+-- Codex PR-pass CRITICAL — direct REST access to auth.users via
+-- `supabase.schema('auth').from('users')` is unreliable in production
+-- (the auth schema is not normally exposed through PostgREST). Move the
+-- membership+email join into a SECURITY DEFINER RPC that authorizes the
+-- caller and joins inside Postgres.
+-- ============================================================================
+CREATE OR REPLACE FUNCTION public.list_org_members_with_emails(
+  p_caller_user_id uuid,
+  p_org_id uuid
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_caller_active boolean;
+  v_result jsonb;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM memberships
+     WHERE organization_id = p_org_id
+       AND user_id = p_caller_user_id
+       AND status = 'active'
+  ) INTO v_caller_active;
+  IF NOT v_caller_active THEN
+    RAISE EXCEPTION 'not_member' USING ERRCODE = 'P0001';
+  END IF;
+
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+    'id', m.id,
+    'userId', m.user_id,
+    'email', u.email,
+    'role', m.role,
+    'status', m.status,
+    'joinedAt', m.joined_at
+  )), '[]'::jsonb)
+    INTO v_result
+    FROM memberships m
+    LEFT JOIN auth.users u ON u.id = m.user_id
+   WHERE m.organization_id = p_org_id
+     AND m.status = 'active';
+
+  RETURN jsonb_build_object('members', v_result);
+END;
+$$;
+
+-- ============================================================================
 -- Privilege model — codex pass 2 CRITICAL #1
 -- Default GRANT EXECUTE TO PUBLIC is implicit. Explicit REVOKE blocks
 -- direct authenticated/anon RPC calls; only service-role (used by route
@@ -343,12 +397,14 @@ REVOKE ALL ON FUNCTION
   public.invite_member(uuid, uuid, text, text),
   public.change_member_role(uuid, uuid, uuid, text),
   public.remove_member(uuid, uuid, uuid),
-  public.update_org_name(uuid, uuid, text)
+  public.update_org_name(uuid, uuid, text),
+  public.list_org_members_with_emails(uuid, uuid)
   FROM PUBLIC, anon, authenticated;
 
 GRANT EXECUTE ON FUNCTION
   public.invite_member(uuid, uuid, text, text),
   public.change_member_role(uuid, uuid, uuid, text),
   public.remove_member(uuid, uuid, uuid),
-  public.update_org_name(uuid, uuid, text)
+  public.update_org_name(uuid, uuid, text),
+  public.list_org_members_with_emails(uuid, uuid)
   TO service_role;

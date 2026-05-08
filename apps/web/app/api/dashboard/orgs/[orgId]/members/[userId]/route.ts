@@ -8,7 +8,7 @@
 import { NextResponse } from 'next/server';
 import { createServiceRoleClient } from '@/lib/supabase/service';
 import { assertSameOrigin } from '@/lib/dashboard/same-origin';
-import { mapPostgresError, resolveSessionUserId } from '@/lib/dashboard/membership-guard';
+import { mapPostgresError, resolveSessionUserId, isValidUuid } from '@/lib/dashboard/membership-guard';
 
 interface RouteParams { params: Promise<{ orgId: string; userId: string }> | { orgId: string; userId: string } }
 interface PatchBody { role: string }
@@ -18,6 +18,9 @@ export async function PATCH(req: Request, { params }: RouteParams): Promise<Resp
   if (!so.ok) return NextResponse.json({ error: `forbidden: ${so.reason}` }, { status: 403 });
 
   const p = await Promise.resolve(params) as { orgId: string; userId: string };
+  if (!isValidUuid(p.orgId) || !isValidUuid(p.userId)) {
+    return NextResponse.json({ error: 'malformed_params' }, { status: 422 });
+  }
   let body: PatchBody;
   try { body = await req.json() as PatchBody; } catch { return NextResponse.json({ error: 'invalid_json' }, { status: 422 }); }
   if (!body || typeof body.role !== 'string') {
@@ -45,6 +48,9 @@ export async function DELETE(req: Request, { params }: RouteParams): Promise<Res
   if (!so.ok) return NextResponse.json({ error: `forbidden: ${so.reason}` }, { status: 403 });
 
   const p = await Promise.resolve(params) as { orgId: string; userId: string };
+  if (!isValidUuid(p.orgId) || !isValidUuid(p.userId)) {
+    return NextResponse.json({ error: 'malformed_params' }, { status: 422 });
+  }
   const callerUserId = await resolveSessionUserId();
   if (!callerUserId) return NextResponse.json({ error: 'unauthenticated' }, { status: 401 });
 

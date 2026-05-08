@@ -86,6 +86,24 @@ describe('PATCH /api/dashboard/orgs/:orgId', () => {
     expect(r.status).toBe(422);
   });
 
+  it('codex-pr: non-existent org → 404 org_not_found', async () => {
+    const orgId = randomUUID();
+    const owner = randomUUID();
+    stub.seed('memberships', [{ id: randomUUID(), organization_id: orgId, user_id: owner, role: 'owner', status: 'active', joined_at: new Date().toISOString() }]);
+    // No organizations row seeded.
+    currentUser = { id: owner };
+    const r = await PATCH(req(orgId, { name: 'New' }), { params: { orgId } });
+    expect(r.status).toBe(404);
+    expect((await r.json()).error).toBe('org_not_found');
+  });
+
+  it('codex-pr: malformed orgId → 422 malformed_params', async () => {
+    currentUser = { id: randomUUID() };
+    const r = await PATCH(req('not-a-uuid', { name: 'New' }), { params: { orgId: 'not-a-uuid' } });
+    expect(r.status).toBe(422);
+    expect((await r.json()).error).toBe('malformed_params');
+  });
+
   it('test 29: bad origin → 403', async () => {
     const orgId = randomUUID();
     const owner = seedOwner(orgId);
