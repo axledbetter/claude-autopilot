@@ -271,4 +271,56 @@ describe('POST /api/stripe/webhook', () => {
     expect(ent.payment_failed_at).toBeTruthy();
     expect(ent.plan).toBe('small');     // not downgraded yet
   });
+
+  it('test 9 (bugbot MEDIUM): subscription.updated with status=active clears stale payment_failed_at', async () => {
+    // Org has a stale payment_failed_at from a prior failure that has
+    // since been resolved. A subsequent customer.subscription.updated with
+    // status=active must clear the timestamp; otherwise checkEntitlement's
+    // 7-day grace falls back to free.
+    const orgId = randomUUID();
+    const subId = 'sub_test_9';
+    const oldFailedAt = new Date(Date.now() - 6 * 86400_000).toISOString();
+    stub.seed('entitlements', [{
+      organization_id: orgId,
+      plan: 'small',
+      runs_per_month_cap: 1000,
+      storage_bytes_cap: 50 * 1024 * 1024 * 1024,
+      stripe_subscription_status: 'past_due',
+      stripe_customer_id: 'cus_test_9',
+      stripe_subscription_id: subId,
+      current_period_end: new Date(Date.now() + 30 * 86400_000).toISOString(),
+      cancel_at_period_end: false,
+      cancel_at: null,
+      payment_failed_at: oldFailedAt,    // stale; would expire at day 7
+      last_stripe_event_at: null,
+    }]);
+    stub.seed('billing_customers', [{
+      organization_id: orgId,
+      stripe_customer_id: 'cus_test_9',
+      email: null,
+      created_at: new Date().toISOString(),
+    }]);
+    const event = {
+      id: 'evt_test_9',
+      type: 'customer.subscription.updated',
+      created: Math.floor(Date.now() / 1000),
+      data: {
+        object: {
+          id: subId,
+          customer: 'cus_test_9',
+          status: 'active',
+          cancel_at_period_end: false,
+          cancel_at: null,
+          current_period_end: Math.floor((Date.now() + 30 * 86400_000) / 1000),
+          items: { data: [{ price: { id: 'price_small_monthly_xxxxxxxxxxxx' } }] },
+          metadata: { organization_id: orgId },
+        },
+      },
+    };
+    const res = await POST(makeReq(event));
+    expect(res.status).toBe(200);
+    const ent = (stub.tables.get('entitlements') ?? []).find((e) => e.organization_id === orgId)!;
+    expect(ent.payment_failed_at).toBeNull();
+    expect(ent.stripe_subscription_status).toBe('active');
+  });
 });

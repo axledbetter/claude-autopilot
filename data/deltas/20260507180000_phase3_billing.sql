@@ -1,6 +1,34 @@
 -- Phase 3 — Stripe entitlement enforcement.
 -- Spec: docs/specs/v7.0-phase3-stripe-entitlements.md (PR #122).
 
+-- Stripe customer mapping per org.
+CREATE TABLE billing_customers (
+  organization_id UUID PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+  stripe_customer_id TEXT NOT NULL UNIQUE CHECK (stripe_customer_id ~ '^cus_'),
+  email TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE billing_customers ENABLE ROW LEVEL SECURITY;
+-- No policies; service-role-only.
+
+-- Augment entitlements.
+-- Bugbot HIGH (rebased branch) — column adds MUST come before any
+-- UPDATE/INSERT that references runs_per_month_cap or storage_bytes_cap.
+-- Postgres parses the whole script and validates column references at
+-- parse time, so backfill statements moved AFTER the ALTER TABLE here.
+ALTER TABLE entitlements
+  ADD COLUMN stripe_customer_id TEXT REFERENCES billing_customers(stripe_customer_id),
+  ADD COLUMN stripe_subscription_status TEXT
+    CHECK (stripe_subscription_status IS NULL OR stripe_subscription_status IN
+      ('trialing','active','past_due','canceled','unpaid','incomplete','incomplete_expired','paused')),
+  ADD COLUMN current_period_end TIMESTAMPTZ,
+  ADD COLUMN cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN cancel_at TIMESTAMPTZ,
+  ADD COLUMN payment_failed_at TIMESTAMPTZ,
+  ADD COLUMN runs_per_month_cap INTEGER,
+  ADD COLUMN storage_bytes_cap BIGINT,
+  ADD COLUMN last_stripe_event_at TIMESTAMPTZ;
+
 -- Codex plan-pass CRITICAL #1 — backfill existing rows BEFORE adding the
 -- CHECK constraint. Phase 1 may have created `entitlements` rows with NULL
 -- caps. Backfill them based on plan to satisfy the new constraint.
@@ -17,30 +45,6 @@ INSERT INTO entitlements (organization_id, plan, runs_per_month_cap, storage_byt
   SELECT id, 'free', 100, 5368709120
   FROM organizations
   WHERE id NOT IN (SELECT organization_id FROM entitlements);
-
--- Stripe customer mapping per org.
-CREATE TABLE billing_customers (
-  organization_id UUID PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
-  stripe_customer_id TEXT NOT NULL UNIQUE CHECK (stripe_customer_id ~ '^cus_'),
-  email TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-ALTER TABLE billing_customers ENABLE ROW LEVEL SECURITY;
--- No policies; service-role-only.
-
--- Augment entitlements.
-ALTER TABLE entitlements
-  ADD COLUMN stripe_customer_id TEXT REFERENCES billing_customers(stripe_customer_id),
-  ADD COLUMN stripe_subscription_status TEXT
-    CHECK (stripe_subscription_status IS NULL OR stripe_subscription_status IN
-      ('trialing','active','past_due','canceled','unpaid','incomplete','incomplete_expired','paused')),
-  ADD COLUMN current_period_end TIMESTAMPTZ,
-  ADD COLUMN cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE,
-  ADD COLUMN cancel_at TIMESTAMPTZ,
-  ADD COLUMN payment_failed_at TIMESTAMPTZ,
-  ADD COLUMN runs_per_month_cap INTEGER,
-  ADD COLUMN storage_bytes_cap BIGINT,
-  ADD COLUMN last_stripe_event_at TIMESTAMPTZ;
 
 -- Codex pass 2 — free orgs have explicit caps; only enterprise has NULLs.
 ALTER TABLE entitlements ADD CONSTRAINT entitlements_plan_caps_check CHECK (

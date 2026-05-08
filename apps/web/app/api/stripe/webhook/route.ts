@@ -242,6 +242,13 @@ async function applySubscriptionToEntitlement(
   }
 
   const eventTime = new Date(event.created * 1000).toISOString();
+  // Bugbot MEDIUM (rebased branch) — clear payment_failed_at when the
+  // subscription is back to a healthy state. Otherwise checkEntitlement's
+  // 7-day grace logic stays "active" forever and incorrectly downgrades a
+  // paid org to free once the original failure timestamp is >7 days old.
+  const healthyStatuses = new Set(['active', 'trialing']);
+  const clearPaymentFailed = healthyStatuses.has(sub.status);
+
   await supabase.from('entitlements').update({
     plan,
     runs_per_month_cap: runsCap,
@@ -253,6 +260,7 @@ async function applySubscriptionToEntitlement(
     current_period_end: sub.current_period_end
       ? new Date(sub.current_period_end * 1000).toISOString()
       : null,
+    ...(clearPaymentFailed ? { payment_failed_at: null } : {}),
     last_stripe_event_at: eventTime,
   }).eq('organization_id', orgId);
 }
