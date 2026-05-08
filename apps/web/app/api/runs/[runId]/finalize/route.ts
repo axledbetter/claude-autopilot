@@ -5,6 +5,7 @@ import { sha256OfCanonical, canonicalJsonBytes } from '@/lib/upload/canonical';
 import { manifestPath, statePath, putObject, StorageWriteError } from '@/lib/upload/storage';
 import { existingBytesEqual } from '@/lib/upload/storage-verify';
 import { withSessionTransaction } from '@/lib/upload/transaction';
+import { sanitizeFinalizeMetadata } from '@/lib/runs/sanitize-finalize-metadata';
 
 interface Body { chainRoot: string; expectedChunkCount: number; stateJson: unknown }
 
@@ -164,6 +165,30 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
     }).eq('id', p.runId);
     if (runsErr) {
       return NextResponse.json({ error: 'failed to mark run verified' }, { status: 500 });
+    }
+
+    // Phase 4 — persist display-only cost/duration/status from CLI state.json.
+    // Wrapped in try/catch so the rollout window between code-deploy and
+    // /migrate doesn't break finalize: if the new columns don't exist
+    // yet, drop the write and continue. Operators run /migrate within
+    // minutes of merge.
+    //
+    // Codex pass 2 WARNING — sanitize FIRST so a malformed run_status
+    // doesn't trip the new CHECK constraint and bring down the whole
+    // UPDATE.
+    try {
+      const sanitized = sanitizeFinalizeMetadata(body.stateJson);
+      const { error: metaErr } = await supabase.from('runs')
+        .update(sanitized as unknown as Record<string, unknown>)
+        .eq('id', p.runId);
+      if (metaErr) {
+        // Non-fatal — usually means columns not yet created.
+        // eslint-disable-next-line no-console
+        console.warn('[finalize] metadata write skipped:', metaErr.message);
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[finalize] metadata write skipped (exception):', (err as Error).message);
     }
 
     // Bugbot HIGH — CAS consume_at: only the first finalize for this

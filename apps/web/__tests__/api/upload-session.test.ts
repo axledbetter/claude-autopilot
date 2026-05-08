@@ -131,4 +131,50 @@ describe('POST /api/upload-session', () => {
     const res = await POST(makeReq({ runId, expectedChunkCount: 1, expectedBytes: 1024 }, { 'x-test-user': userId }));
     expect(res.status).toBe(201);
   });
+
+  // Phase 4 — Spec test 14: cost_usd / duration_ms / run_status persist on finalize.
+  it('test 14 (Phase 4): finalize persists cost/duration/status from valid state.json', async () => {
+    // Lazy import to avoid pulling finalize at module-eval time.
+    const { hashChunk, zeroHash } = await import('@/lib/upload/chain');
+    const { mintUploadToken } = await import('@/lib/upload/jwt');
+    const { POST: FINALIZE } = await import('@/app/api/runs/[runId]/finalize/route');
+
+    const userId = randomUUID();
+    const runId = '01HQK8' + 'B'.repeat(20);
+    const sessionId = randomUUID();
+    const jti = randomUUID();
+    const { token } = mintUploadToken({ userId, runId, orgId: null, jti });
+    const c0 = Buffer.from('{"event":"run.complete"}\n');
+    const h0 = hashChunk(zeroHash, c0);
+    stub.seed('runs', [{ id: runId, user_id: userId, organization_id: null }]);
+    stub.seed('upload_sessions', [{
+      id: sessionId, run_id: runId, user_id: userId, organization_id: null,
+      jti, token_hash: 'h', expires_at: new Date(Date.now() + 600_000).toISOString(),
+      consumed_at: null, next_expected_seq: 1, chain_tip_hash: h0,
+    }]);
+    stub.seed('upload_session_chunks', [{
+      session_id: sessionId, seq: 0, hash: h0, bytes: c0.length,
+      storage_path: `user/${userId}/${runId}/events/0.ndjson`, status: 'persisted',
+    }]);
+
+    const stateJson = {
+      runId,
+      cost_usd: 0.42,
+      duration_ms: 12_500,
+      run_status: 'completed',
+    };
+    const r = await FINALIZE(
+      new Request(`http://localhost/api/runs/${runId}/finalize`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chainRoot: h0, expectedChunkCount: 1, stateJson }),
+      }),
+      { params: { runId } },
+    );
+    expect(r.status).toBe(200);
+    const row = stub.tables.get('runs')!.find((x) => x.id === runId)!;
+    expect(row.cost_usd).toBe(0.42);
+    expect(row.duration_ms).toBe(12500);
+    expect(row.run_status).toBe('completed');
+  });
 });
