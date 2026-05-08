@@ -4,8 +4,14 @@ import { createServiceRoleClient } from '@/lib/supabase/service';
 import { resolveCaller } from '@/lib/upload/auth';
 import { mintUploadToken } from '@/lib/upload/jwt';
 import { zeroHash } from '@/lib/upload/chain';
+import { checkEntitlement } from '@/lib/billing/check-entitlement';
 
-interface Body { runId: string; expectedChunkCount: number }
+interface Body {
+  runId: string;
+  expectedChunkCount: number;
+  /** Phase 3 — storage cap preflight. CLI sends fs.stat(events.ndjson).size. */
+  expectedBytes?: number;
+}
 
 export async function POST(req: Request): Promise<Response> {
   let body: Body;
@@ -34,6 +40,25 @@ export async function POST(req: Request): Promise<Response> {
     allowed = membership !== null && membership !== undefined;
   }
   if (!allowed) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+
+  // Phase 3 — entitlement gate. Reject 402 with structured payload when
+  // the caller is over runs/mo or retained-storage cap.
+  const ent = await checkEntitlement({
+    organizationId: r.organization_id,
+    userId: caller.userId,
+    expectedBytes: typeof body.expectedBytes === 'number' && body.expectedBytes >= 0
+      ? body.expectedBytes
+      : 0,
+  });
+  if (ent.exceeded) {
+    return NextResponse.json({
+      error: 'limit_reached',
+      limit: ent.kind,
+      current: ent.current,
+      max: ent.max,
+      upgrade_url: ent.upgradeUrl,
+    }, { status: 402 });
+  }
 
   // Cancel any expired-but-unconsumed session for this run before checking
   // app-level uniqueness — otherwise stale sessions block forever (codex
