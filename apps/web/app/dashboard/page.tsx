@@ -79,10 +79,12 @@ export default async function DashboardOverview(): Promise<React.ReactElement> {
     // RPCs unavailable — values stay at 0.
   }
 
-  // Recent runs only — bounded to 5.
+  // Recent runs only — bounded to 5. Bugbot MEDIUM round 2 — exclude
+  // soft-deleted runs from user-visible lists.
   const { data: recentRunsRaw } = await svc.from('runs')
     .select('id, created_at, source_verified, cost_usd, duration_ms, run_status, total_bytes, visibility')
     .eq('user_id', user.id)
+    .is('deleted_at', null)
     .order('created_at', { ascending: false })
     .range(0, 4);
   const recentRuns = (recentRunsRaw as RunListRow[] | null) ?? [];
@@ -96,6 +98,7 @@ export default async function DashboardOverview(): Promise<React.ReactElement> {
   const { data: chartRunsRaw } = await svc.from('runs')
     .select('created_at, cost_usd')
     .eq('user_id', user.id)
+    .is('deleted_at', null)
     .gte('created_at', since.toISOString());
   const chartRuns = (chartRunsRaw as { created_at: string; cost_usd: number | null }[] | null) ?? [];
   const dailyMap = new Map<string, number>();

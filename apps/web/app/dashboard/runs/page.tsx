@@ -23,9 +23,13 @@ export default async function RunsList(
   if (!user) return <div>Not signed in</div>;
 
   const svc = createServiceRoleClient();
+  // Bugbot MEDIUM round 2 — soft-deleted runs must not appear in user-facing
+  // lists or detail views; consistent with codex pass 3 deleted_at checks
+  // on the artifact + visibility routes.
   const { data: runsRaw } = await svc.from('runs')
     .select('id, created_at, source_verified, cost_usd, duration_ms, run_status, total_bytes, visibility')
     .eq('user_id', user.id)
+    .is('deleted_at', null)
     .order('created_at', { ascending: false })
     .range(offset, offset + PAGE_SIZE - 1);
   const runs = (runsRaw as RunListRow[] | null) ?? [];

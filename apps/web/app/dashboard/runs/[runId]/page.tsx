@@ -5,6 +5,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createServiceRoleClient } from '@/lib/supabase/service';
 import EventReplay from '@/components/dashboard/EventReplay';
 import VisibilityToggle from '@/components/dashboard/VisibilityToggle';
+import StateInspectorPanel from '@/components/dashboard/StateInspectorPanel';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,12 +33,15 @@ export default async function RunDetail(
 
   const svc = createServiceRoleClient();
   const { data: runRaw } = await svc.from('runs')
-    .select('id, user_id, source_verified, cost_usd, duration_ms, run_status, total_bytes, created_at, visibility, events_chain_root')
+    .select('id, user_id, source_verified, cost_usd, duration_ms, run_status, total_bytes, created_at, visibility, events_chain_root, deleted_at')
     .eq('id', runId)
     .maybeSingle();
-  const run = runRaw as RunDetailRow | null;
+  const run = runRaw as (RunDetailRow & { deleted_at: string | null }) | null;
   if (!run) notFound();
-  if (run.user_id !== user.id) notFound();   // 404 not 403 — avoid enumeration.
+  // Bugbot MEDIUM round 2 — soft-deleted runs return 404 (consistent with
+  // codex pass 3 deleted_at checks elsewhere; prevents stale links from
+  // showing detail of a removed run).
+  if (run.user_id !== user.id || run.deleted_at) notFound();   // 404 not 403 — avoid enumeration.
 
   const visibility = (run.visibility === 'public' ? 'public' : 'private') as 'public' | 'private';
 
@@ -70,6 +74,11 @@ export default async function RunDetail(
       <div>
         <h2 className="text-sm font-semibold opacity-70 mb-2">Events</h2>
         <EventReplay runId={run.id} />
+      </div>
+
+      <div>
+        <h2 className="text-sm font-semibold opacity-70 mb-2">Run state</h2>
+        <StateInspectorPanel runId={run.id} />
       </div>
     </div>
   );
