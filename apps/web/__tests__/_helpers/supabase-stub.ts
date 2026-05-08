@@ -71,6 +71,28 @@ class TableQuery {
     });
     return this;
   }
+  lte(col: string, val: unknown): this {
+    this.filters.push((r) => {
+      const cell = r[col];
+      if (cell == null || val == null) return false;
+      if (typeof cell === 'string' && typeof val === 'string') {
+        return new Date(cell).getTime() <= new Date(val).getTime();
+      }
+      return (cell as number) <= (val as number);
+    });
+    return this;
+  }
+  gte(col: string, val: unknown): this {
+    this.filters.push((r) => {
+      const cell = r[col];
+      if (cell == null || val == null) return false;
+      if (typeof cell === 'string' && typeof val === 'string') {
+        return new Date(cell).getTime() >= new Date(val).getTime();
+      }
+      return (cell as number) >= (val as number);
+    });
+    return this;
+  }
 
   single(): Promise<StubResult<unknown>> { return this.run(true, false); }
   maybeSingle(): Promise<StubResult<unknown>> { return this.run(true, true); }
@@ -113,6 +135,43 @@ class TableQuery {
         for (const p of payload) {
           if (rows.some((r) => r.session_id === p.session_id && r.seq === p.seq)) {
             return { data: null, error: { message: 'duplicate key value violates unique constraint' } };
+          }
+        }
+      }
+      if (this.table === 'stripe_webhook_events') {
+        for (const p of payload) {
+          if (rows.some((r) => r.id === p.id)) {
+            return { data: null, error: { message: 'duplicate key value violates unique constraint stripe_webhook_events_pkey' } };
+          }
+        }
+        // Default columns the route reads back.
+        const stamped = payload.map((p) => ({
+          status: 'processing',
+          attempt_count: 1,
+          processing_started_at: new Date().toISOString(),
+          locked_until: new Date(Date.now() + 60_000).toISOString(),
+          received_at: new Date().toISOString(),
+          completed_at: null,
+          error: null,
+          ...p,
+        }));
+        this.stub.tables.set(this.table, [...rows, ...stamped]);
+        return { data: stamped, error: null };
+      }
+      if (this.table === 'billing_customers') {
+        for (const p of payload) {
+          if (rows.some((r) => r.organization_id === p.organization_id)) {
+            return { data: null, error: { message: 'duplicate key value violates unique constraint billing_customers_pkey' } };
+          }
+          if (rows.some((r) => r.stripe_customer_id === p.stripe_customer_id)) {
+            return { data: null, error: { message: 'duplicate key value violates unique constraint billing_customers_stripe_customer_id_key' } };
+          }
+        }
+      }
+      if (this.table === 'personal_entitlements') {
+        for (const p of payload) {
+          if (rows.some((r) => r.user_id === p.user_id)) {
+            return { data: null, error: { message: 'duplicate key value violates unique constraint personal_entitlements_pkey' } };
           }
         }
       }
