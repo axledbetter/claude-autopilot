@@ -38,7 +38,10 @@ export default async function DashboardOverview(): Promise<React.ReactElement> {
     .eq('user_id', user.id)
     .eq('status', 'active');
   const memberships = (membershipsRaw as MembershipRow[] | null) ?? [];
-  const organizationId: string | null = memberships[0]?.organization_id ?? null;
+  // Phase 5.3 — honor active-org cookie; fall back to first membership.
+  const { resolveActiveOrg } = await import('@/lib/dashboard/active-org');
+  const ctx = await resolveActiveOrg(svc, user.id);
+  const organizationId: string | null = ctx?.orgId ?? memberships[0]?.organization_id ?? null;
 
   // Entitlement.
   let entitlement: EntitlementRow = { plan: 'free', runs_per_month_cap: 100, storage_bytes_cap: 5 * 1024 * 1024 * 1024 };

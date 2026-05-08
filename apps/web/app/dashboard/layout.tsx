@@ -10,6 +10,8 @@ import { redirect } from 'next/navigation';
 import type { Route } from 'next';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createServiceRoleClient } from '@/lib/supabase/service';
+import { resolveActiveOrg, listActiveOrgs } from '@/lib/dashboard/active-org';
+import OrgSwitcher from '@/components/dashboard/OrgSwitcher';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,25 +23,30 @@ export default async function DashboardLayout({ children }: { children: React.Re
   }
 
   const email = user.email ?? '';
+  const svc = createServiceRoleClient();
 
-  // Phase 5.1 — show "Admin" link only when caller has admin/owner
-  // membership in any active org. Best-effort: render without the link
-  // if the lookup fails, never block the dashboard for this.
-  let firstAdminOrgId: string | null = null;
+  // Phase 5.3 — resolve active org via cookie + show switcher when multi-org.
+  let activeOrgId: string | null = null;
+  let orgs: { id: string; name: string; role: string }[] = [];
   try {
-    const svc = createServiceRoleClient();
-    const { data: rows } = await svc.from('memberships')
-      .select('organization_id')
-      .eq('user_id', user.id)
-      .eq('status', 'active')
-      .in('role', ['admin', 'owner'])
-      .limit(1);
-    firstAdminOrgId = ((rows as { organization_id: string }[] | null) ?? [])[0]?.organization_id ?? null;
+    const ctx = await resolveActiveOrg(svc, user.id);
+    activeOrgId = ctx?.orgId ?? null;
+    orgs = await listActiveOrgs(svc, user.id);
   } catch {
-    firstAdminOrgId = null;
+    activeOrgId = null;
+    orgs = [];
   }
-  const adminHref = firstAdminOrgId
-    ? (`/dashboard/admin/members?orgId=${firstAdminOrgId}` as Route)
+
+  // Admin link visible when caller is admin/owner in active org.
+  let adminLinkOrgId: string | null = null;
+  if (activeOrgId) {
+    const activeOrg = orgs.find((o) => o.id === activeOrgId);
+    if (activeOrg && ['admin', 'owner'].includes(activeOrg.role)) {
+      adminLinkOrgId = activeOrgId;
+    }
+  }
+  const adminHref = adminLinkOrgId
+    ? (`/dashboard/admin/members?orgId=${adminLinkOrgId}` as Route)
     : null;
 
   return (
@@ -59,6 +66,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
           <Link href={adminHref} className="px-3 py-2 rounded hover:bg-white/5 text-sm">
             Admin
           </Link>
+        )}
+        {orgs.length > 1 && activeOrgId && (
+          <div className="mt-3 pt-3 border-t border-white/10 px-3">
+            <div className="text-xs opacity-50 mb-1">Active org</div>
+            <OrgSwitcher orgs={orgs} activeOrgId={activeOrgId} />
+          </div>
         )}
         <div className="mt-auto pt-4 border-t border-white/10 text-xs opacity-60 px-3">
           {email}
