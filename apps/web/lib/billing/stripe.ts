@@ -13,11 +13,17 @@ import { loadBillingConfig } from './plan-map';
 
 let cached: Stripe | null = null;
 
+// Stripe.LatestApiVersion is a TYPE, not a runtime value — passing it to
+// `new Stripe(...)` requires a string literal that matches the SDK's
+// declared LatestApiVersion. SDK bumps the literal in minor versions; we
+// satisfy the typechecker by typing the literal as the type itself.
+const STRIPE_API_VERSION: Stripe.LatestApiVersion = '2025-02-24.acacia';
+
 export function getStripeClient(): Stripe {
   if (cached) return cached;
   const config = loadBillingConfig();
   cached = new Stripe(config.STRIPE_SECRET_KEY, {
-    apiVersion: Stripe.LatestApiVersion,
+    apiVersion: STRIPE_API_VERSION,
   });
   return cached;
 }

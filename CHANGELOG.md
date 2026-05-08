@@ -2,6 +2,41 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 6.3.0-pre.5 (2026-05-08)
+
+**v7.0 Phase 3 — Stripe entitlement enforcement.** Makes the cryptographic credibility boundary commercially load-bearing: every engine-on `autopilot --mode full` upload is now gated on the org's monthly run cap and retained-storage cap.
+
+Five new surfaces:
+1. `POST /api/stripe/webhook` — `runtime='nodejs'`, raw-body signature verification, claim/lease/complete idempotency (status='processing' + locked_until+attempt_count, stale leases reclaimed atomically), `last_stripe_event_at` watermark for out-of-order delivery. Handles `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_failed`.
+2. `POST /api/dashboard/billing/checkout` — Supabase session auth with role check (owner/admin), Stripe Checkout Session create with `idempotencyKey='${orgId}:${tier}:${interval}'` and customer reuse via `billing_customers.stripe_customer_id`. Returns `{ url }`.
+3. `POST /api/dashboard/billing/portal` — same auth, returns Stripe Customer Portal session URL.
+4. `POST /api/upload-session` — Phase 2.2 endpoint extended with entitlement gate between ownership pass and JWT mint. Returns 402 `{ error: 'limit_reached', limit, current, max, upgrade_url }`. New body field `expectedBytes` from `fs.stat(events.ndjson).size` for storage cap preflight (catches the 4.9-of-5GiB user uploading 20GiB pattern).
+5. CLI uploader catches 402 → throws typed `UploadLimitError`. Auto-upload entry point (`auto-upload.ts`) detects, prints friendly message, returns `reason='limit-reached'` without bubbling. Run's exit code preserved.
+
+Pricing tiers (per v7.0 MVP): Free (100 runs/mo, 5 GiB, $0), Org Small (1000, 50 GiB, $99/mo or $990/yr), Org Mid (10000, 500 GiB, $499/mo or $4990/yr), Enterprise (NULL caps = no enforcement, sales-led). PLAN_MAP keys by `(tier, interval)` for all 4 price IDs. Free organizations DO exist and share an org-level cap (NOT each-user-gets-personal-cap) — seeded by AFTER INSERT trigger on `organizations`.
+
+Run-count cap uses STRICT `>` comparison (the runs row already exists when /api/upload-session is called, so count=100 is the 100th and is allowed; reject only at 101+). Storage cap = `sum_retained_bytes(orgId, userId, 90 days)` SQL aggregate, with `expectedBytes` preflight at mint time.
+
+`loadBillingConfig()` validates Stripe env at runtime with zod; `loadPublicBillingConfig()` only reads `AUTOPILOT_PUBLIC_BASE_URL` so missing Stripe env doesn't break the upload-session entitlement gate. Subscription state grace logic: canceled-and-past-period-end → free; cancel_at past → free; payment_failed_at older than 7 days → free.
+
+31 new tests: 8 webhook + 4 checkout + 3 portal + 10 checkEntitlement + 2 plan-map + 2 upload-session integration (web) + 3 CLI 402 handling.
+
+**Migration:** `data/deltas/20260507180000_phase3_billing.sql` — `billing_customers`, augments `entitlements` with Stripe state + caps + watermark, `stripe_webhook_events` with claim/lease, `personal_entitlements`, augments `runs` with `total_bytes`+`deleted_at`, `sum_retained_bytes` + `count_runs_this_month` + `seed_free_entitlements` SECURITY DEFINER RPCs/trigger. CHECK constraint enforces free/small/mid have explicit caps and enterprise has NULLs. Backfills existing rows BEFORE adding the constraint. Operator runs `/migrate` post-merge.
+
+**New env vars (Vercel):**
+- `STRIPE_SECRET_KEY`
+- `STRIPE_WEBHOOK_SECRET`
+- `STRIPE_PRICE_SMALL_MONTHLY`
+- `STRIPE_PRICE_SMALL_YEARLY`
+- `STRIPE_PRICE_MID_MONTHLY`
+- `STRIPE_PRICE_MID_YEARLY`
+
+**Operator follow-ups:**
+- Run `/migrate` to apply the migration through dev → QA → prod.
+- Set the 6 Stripe env vars above in Vercel.
+- Configure Stripe webhook in dashboard pointing at `https://autopilot.dev/api/stripe/webhook` and subscribe to: `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_failed`.
+- Create Stripe Products + 4 Prices: small ($99/mo + $990/yr), mid ($499/mo + $4990/yr).
+
 ## 6.3.0-pre.4 (2026-05-07)
 
 **v7.0 Phase 2.3 — CLI dashboard verbs + auto-upload at run.complete.** Connects v6.x autopilot pipeline to Phase 2.2's ingest API.
