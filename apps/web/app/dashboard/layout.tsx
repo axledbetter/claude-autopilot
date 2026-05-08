@@ -7,6 +7,7 @@
 
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import type { Route } from 'next';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -15,7 +16,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
-    redirect('/?next=' + encodeURIComponent('/dashboard'));
+    redirect(('/?next=' + encodeURIComponent('/dashboard')) as Route);
   }
 
   const email = user.email ?? '';

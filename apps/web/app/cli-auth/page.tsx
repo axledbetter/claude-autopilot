@@ -21,6 +21,7 @@
 //     request headers, not response.
 
 import { redirect } from 'next/navigation';
+import type { Route } from 'next';
 import { validateCallbackUrl } from '@/lib/dashboard/callback-url';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import CliAuthClaim from './_components/CliAuthClaim';
@@ -67,9 +68,9 @@ export default async function CliAuthPage(
     // through Supabase OAuth round-trip (codex pass 2 WARNING — naive
     // concat loses params past the first &).
     const cliAuthQuery = new URLSearchParams({ cb: cbRaw, nonce: nonceRaw }).toString();
-    const next = `/cli-auth?${cliAuthQuery}`;
-    const homeWithNext = `/?${new URLSearchParams({ next }).toString()}`;
-    redirect(homeWithNext);
+    const next = '/cli-auth?' + cliAuthQuery;
+    const homeWithNext = '/?' + new URLSearchParams({ next }).toString();
+    redirect(homeWithNext as Route);
   }
 
   return (
