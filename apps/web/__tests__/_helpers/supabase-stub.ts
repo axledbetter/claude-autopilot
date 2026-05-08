@@ -435,6 +435,215 @@ export class SupabaseStub {
       return { data: [{ key_id: id }], error: null };
     }
 
+    // ========================================================================
+    // Phase 5.1 — members management RPCs.
+    //
+    // These mirror the SQL functions in
+    // data/deltas/20260508140000_phase5_1_member_rpcs.sql. The stub is
+    // single-threaded so the FOR UPDATE locks are implicit; concurrency
+    // test (#31) relies on the test-local mutex above to prove serial
+    // execution equivalent to FOR UPDATE.
+    // ========================================================================
+
+    if (fn === 'invite_member') {
+      const callerUserId = args.p_caller_user_id as string;
+      const orgId = args.p_org_id as string;
+      const inviteeEmail = (args.p_invitee_email as string).trim().toLowerCase();
+      const role = args.p_role as string;
+      if (!['member', 'admin'].includes(role)) {
+        return { data: null, error: { code: 'P0001', message: 'bad_role' } };
+      }
+      const memberships = this.tables.get('memberships') ?? [];
+      const callerRow = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === callerUserId && m.status === 'active',
+      );
+      if (!callerRow || !['admin', 'owner'].includes(callerRow.role as string)) {
+        return { data: null, error: { code: 'P0001', message: 'not_admin' } };
+      }
+      const users = this.tables.get('auth.users') ?? [];
+      const invitee = users.find((u) => (u.email as string).toLowerCase() === inviteeEmail);
+      if (!invitee) {
+        return { data: null, error: { code: 'P0001', message: 'user_not_found' } };
+      }
+      const existing = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === invitee.id,
+      );
+      if (existing && existing.status === 'active') {
+        return { data: null, error: { code: 'P0001', message: 'already_member' } };
+      }
+      let membership: Row;
+      let previousStatus: string | null = null;
+      if (existing) {
+        previousStatus = existing.status as string;
+        existing.status = 'active';
+        existing.role = role;
+        existing.joined_at = new Date().toISOString();
+        membership = existing;
+      } else {
+        membership = {
+          id: globalThis.crypto.randomUUID(),
+          organization_id: orgId,
+          user_id: invitee.id,
+          role,
+          status: 'active',
+          joined_at: new Date().toISOString(),
+        };
+        memberships.push(membership);
+        this.tables.set('memberships', memberships);
+      }
+      const audits = this.tables.get('audit_events') ?? [];
+      audits.push({
+        organization_id: orgId,
+        actor_user_id: callerUserId,
+        action: 'org.member.invited',
+        subject_type: 'membership',
+        subject_id: membership.id,
+        metadata: { inviteeUserId: invitee.id, role, previousStatus },
+        created_at: new Date().toISOString(),
+      });
+      this.tables.set('audit_events', audits);
+      return { data: { membership, noop: false }, error: null };
+    }
+
+    if (fn === 'change_member_role') {
+      const callerUserId = args.p_caller_user_id as string;
+      const orgId = args.p_org_id as string;
+      const targetUserId = args.p_target_user_id as string;
+      const newRole = args.p_new_role as string;
+      if (!['member', 'admin', 'owner'].includes(newRole)) {
+        return { data: null, error: { code: 'P0001', message: 'bad_role' } };
+      }
+      const memberships = this.tables.get('memberships') ?? [];
+      const callerRow = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === callerUserId && m.status === 'active',
+      );
+      const callerRole = callerRow?.role as string | undefined;
+      if (!callerRole) {
+        return { data: null, error: { code: 'P0001', message: 'not_admin' } };
+      }
+      const target = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === targetUserId && m.status === 'active',
+      );
+      if (!target) {
+        return { data: null, error: { code: 'P0001', message: 'target_not_member' } };
+      }
+      if (callerRole === 'admin') {
+        if (target.role === 'owner' || newRole === 'owner') {
+          return { data: null, error: { code: 'P0001', message: 'role_transition' } };
+        }
+      } else if (callerRole !== 'owner') {
+        return { data: null, error: { code: 'P0001', message: 'not_admin' } };
+      }
+      if (target.role === 'owner' && newRole !== 'owner') {
+        const ownerCount = memberships.filter(
+          (m) => m.organization_id === orgId && m.role === 'owner' && m.status === 'active',
+        ).length;
+        if (ownerCount <= 1) {
+          return { data: null, error: { code: 'P0001', message: 'last_owner' } };
+        }
+      }
+      if (target.role === newRole) {
+        return { data: { membership: { ...target }, noop: true }, error: null };
+      }
+      const oldRole = target.role as string;
+      target.role = newRole;
+      const audits = this.tables.get('audit_events') ?? [];
+      audits.push({
+        organization_id: orgId,
+        actor_user_id: callerUserId,
+        action: 'org.member.role_changed',
+        subject_type: 'membership',
+        subject_id: target.id,
+        metadata: { targetUserId, oldRole, newRole },
+        created_at: new Date().toISOString(),
+      });
+      this.tables.set('audit_events', audits);
+      return { data: { membership: { ...target }, noop: false }, error: null };
+    }
+
+    if (fn === 'remove_member') {
+      const callerUserId = args.p_caller_user_id as string;
+      const orgId = args.p_org_id as string;
+      const targetUserId = args.p_target_user_id as string;
+      const memberships = this.tables.get('memberships') ?? [];
+      const callerRow = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === callerUserId && m.status === 'active',
+      );
+      const callerRole = callerRow?.role as string | undefined;
+      if (!callerRole || !['admin', 'owner'].includes(callerRole)) {
+        return { data: null, error: { code: 'P0001', message: 'not_admin' } };
+      }
+      const target = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === targetUserId && m.status === 'active',
+      );
+      if (!target) {
+        return { data: null, error: { code: 'P0001', message: 'target_not_member' } };
+      }
+      if (callerRole === 'admin' && target.role !== 'member') {
+        return { data: null, error: { code: 'P0001', message: 'not_owner' } };
+      }
+      if (target.role === 'owner') {
+        const ownerCount = memberships.filter(
+          (m) => m.organization_id === orgId && m.role === 'owner' && m.status === 'active',
+        ).length;
+        if (ownerCount <= 1) {
+          return { data: null, error: { code: 'P0001', message: 'last_owner' } };
+        }
+      }
+      const previousRole = target.role as string;
+      target.status = 'removed';
+      const audits = this.tables.get('audit_events') ?? [];
+      audits.push({
+        organization_id: orgId,
+        actor_user_id: callerUserId,
+        action: 'org.member.removed',
+        subject_type: 'membership',
+        subject_id: target.id,
+        metadata: { targetUserId, previousRole },
+        created_at: new Date().toISOString(),
+      });
+      this.tables.set('audit_events', audits);
+      return { data: { membership: { ...target }, noop: false }, error: null };
+    }
+
+    if (fn === 'update_org_name') {
+      const callerUserId = args.p_caller_user_id as string;
+      const orgId = args.p_org_id as string;
+      const newName = String(args.p_new_name ?? '').trim();
+      if (newName.length < 1 || newName.length > 100) {
+        return { data: null, error: { code: 'P0001', message: 'bad_name' } };
+      }
+      const memberships = this.tables.get('memberships') ?? [];
+      const callerRow = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === callerUserId && m.status === 'active',
+      );
+      const callerRole = callerRow?.role as string | undefined;
+      if (!callerRole || callerRole !== 'owner') {
+        return { data: null, error: { code: 'P0001', message: 'not_owner' } };
+      }
+      const orgs = this.tables.get('organizations') ?? [];
+      const org = orgs.find((o) => o.id === orgId);
+      const oldName = org?.name as string | undefined ?? null;
+      if (org) {
+        org.name = newName;
+      } else {
+        orgs.push({ id: orgId, name: newName });
+        this.tables.set('organizations', orgs);
+      }
+      const audits = this.tables.get('audit_events') ?? [];
+      audits.push({
+        organization_id: orgId,
+        actor_user_id: callerUserId,
+        action: 'org.settings.updated',
+        subject_type: 'organization',
+        subject_id: orgId,
+        metadata: { field: 'name', oldValue: oldName, newValue: newName },
+        created_at: new Date().toISOString(),
+      });
+      this.tables.set('audit_events', audits);
+      return { data: { organization: { ...org }, noop: false }, error: null };
+    }
+
     return { data: null, error: { message: `unknown rpc: ${fn}` } };
   }
 

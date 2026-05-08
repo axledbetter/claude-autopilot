@@ -2,6 +2,39 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 6.3.0-pre.7 (2026-05-08)
+
+**v7.0 Phase 5.1 — Members management + RBAC enforcement.** First Org-tier user-visible surface. After Phase 5.1 ships, an Org-tier admin (small/mid Stripe plans, or free org owner) can actually manage their team.
+
+New surfaces:
+1. `/dashboard/admin/members` — server-rendered, role-gated. Lists active members with email, role dropdown per row, remove button. Embedded invite form (email + role).
+2. `/dashboard/admin/settings` — owner-only. Edit org name (1..100 chars).
+3. `/dashboard/admin/layout.tsx` — sidebar nav. 404s if signed-out OR caller has no admin/owner membership in any org.
+4. Sidebar "Admin" link in `/dashboard/layout.tsx` — visible only when caller has admin/owner membership somewhere.
+
+5 new API routes (all under `/api/dashboard/orgs/`):
+- `GET /:orgId/members` — list active members + emails.
+- `POST /:orgId/members/invite` — admin/owner invites by email; reactivates removed members.
+- `PATCH /:orgId/members/:userId` — change role (matrix-gated).
+- `DELETE /:orgId/members/:userId` — soft-remove (admin: members only; owner: any).
+- `PATCH /:orgId` — owner updates org name.
+
+4 SECURITY DEFINER Postgres RPCs in `data/deltas/20260508140000_phase5_1_member_rpcs.sql`:
+- `invite_member`, `change_member_role`, `remove_member`, `update_org_name`.
+- Each acquires `FOR UPDATE` lock on `memberships` rows for the org BEFORE re-reading caller role + authorizing. Atomically count + write + audit.append in one transaction.
+- `REVOKE ALL FROM PUBLIC, anon, authenticated; GRANT EXECUTE TO service_role;` — direct authenticated RPC calls fail with `42501 permission denied`.
+- Codex pass 1 CRITICAL (TOCTOU last-owner race) + codex pass 2 CRITICAL (caller-spoofing + lock-before-authorize) + codex plan-pass CRITICAL (`update_org_name` NULL-role guard) — all folded.
+
+CSRF: `assertSameOrigin(req)` on every mutating route (5 of 5).
+
+Audit events: `org.member.invited`, `org.member.role_changed`, `org.member.removed`, `org.settings.updated`. Written by RPCs only — never in route code.
+
+35 backend tests + 4 integration tests = 39 new web tests. Existing 180 still pass. Concurrency test (#31) proves serial last-owner check via stub mutex; static migration test (#31b) proves REVOKE/GRANT.
+
+No new env vars. No CLI changes.
+
+**Operator follow-up:** run `/migrate` to apply `20260508140000_phase5_1_member_rpcs.sql` against dev → QA → prod.
+
 ## 6.3.0-pre.6 (2026-05-08)
 
 **v7.0 Phase 4 — Free tier dashboard UI + `/cli-auth` page + public share-by-URL.** Closes the loop on Phase 3's commercially load-bearing 402: free users now SEE "you've used 87/100 this month" and one click away from upgrading.
