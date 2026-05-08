@@ -2,6 +2,40 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 6.3.0-pre.8 (2026-05-08)
+
+**v7.0 Phase 5.2 — Audit log viewer + cost reporting (CSV export).** Closes the audit half of the original Phase 5 scope.
+
+New surfaces:
+1. `/dashboard/admin/audit` — server-rendered, role-gated. Paginated audit log with single-action filter, cursor-based pagination, prev_hash/this_hash exposed for chain-replay debugging.
+2. `/dashboard/admin/cost` — owner/admin only. Per-user cost breakdown for a YYYY-MM period, default current UTC month. Download CSV button.
+
+3 new API routes (all under `/api/dashboard/orgs/:orgId/`):
+- `GET /audit` — list_audit_events RPC; cursor decode + ISO since/until validation route-side; nextCursor base64-re-encoded
+- `GET /cost` — org_cost_report RPC; period response normalized to `{ since, until, sinceTs, untilTs }`
+- `GET /cost.csv` — same RPC, formats as RFC 4180 CSV (CRLF, UTF-8 no BOM, double-quote escape); filename `cost-<orgId>-<since>-<until>.csv` (no org-name interpolation)
+
+2 SECURITY DEFINER Postgres RPCs in `data/deltas/20260508160000_phase5_2_audit_cost_rpcs.sql`:
+- `list_audit_events` — keyset pagination on `(occurred_at DESC, id DESC)` with index `audit_events_org_keyset_idx`. LEFT JOIN auth.users for actor_email.
+- `org_cost_report` — aggregates runs by user_id; coalesce-in-coalesce-out NULL safety; LEFT JOIN auth.users.
+- Both `SECURITY DEFINER SET search_path = public, audit, auth, pg_temp`. `REVOKE ALL FROM PUBLIC, anon, authenticated; GRANT EXECUTE TO service_role` only.
+
+3 new helpers:
+- `lib/dashboard/period.ts` — YYYY-MM parser converting `since/until` to (sinceTs, untilTs exclusive). UTC. Default to current month when both null.
+- `lib/dashboard/cost-csv.ts` — RFC 4180 encoder + safe filename builder (validates against `[a-zA-Z0-9._-]`).
+- `lib/dashboard/audit-cursor.ts` — base64 JSON cursor encode/decode + ISO 8601 UTC validator.
+
+Codex passes folded:
+- Spec pass 1 (3 CRITICAL: cost period semantics, runs.created_at vs nonexistent occurred_at, CSV filename injection + 7 WARNING + 2 NOTE)
+- Spec pass 2 (2 CRITICAL: filename surface contradiction, deployment target clarification + 7 WARNING: cursor validation in route, error contract, JSON shape unification, audit period parsing, cache headers + 2 NOTE)
+- Plan pass (2 CRITICAL: schema-qualify audit.events + SET search_path lock, runs.cost_usd ordering guard + 6 WARNING)
+
+All routes return `Cache-Control: private, no-store`. All pages declare `force-dynamic`.
+
+39 new tests (Phase 5.1's 237 → **276 web tests**). Helper unit tests: 21. Backend route tests: 32. Integration: 4. Privilege: 7 (incl. SECURITY DEFINER + search_path + schema-qualification + Phase 4 dependency check).
+
+**Operator follow-up:** run `/migrate` to apply `20260508160000_phase5_2_audit_cost_rpcs.sql` against dev → QA → prod.
+
 ## 6.3.0-pre.7 (2026-05-08)
 
 **v7.0 Phase 5.1 — Members management + RBAC enforcement.** First Org-tier user-visible surface. After Phase 5.1 ships, an Org-tier admin (small/mid Stripe plans, or free org owner) can actually manage their team.

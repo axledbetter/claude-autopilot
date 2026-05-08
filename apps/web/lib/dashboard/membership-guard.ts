@@ -29,6 +29,10 @@ const MAP: Record<string, number> = {
   bad_role: 422,
   bad_name: 422,
   bad_email: 422,
+  // Phase 5.2 additions.
+  bad_group_by: 422,
+  bad_period: 422,
+  bad_cursor: 422,
 };
 
 export function mapPostgresError(err: PgError): { status: number; body: { error: string } } {

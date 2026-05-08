@@ -670,6 +670,140 @@ export class SupabaseStub {
       return { data: { organization: { ...org }, noop: false }, error: null };
     }
 
+    // ========================================================================
+    // Phase 5.2 — audit log + cost report read RPCs.
+    // ========================================================================
+
+    if (fn === 'list_audit_events') {
+      const callerUserId = args.p_caller_user_id as string;
+      const orgId = args.p_org_id as string;
+      const cursorOccurredAt = args.p_cursor_occurred_at as string | null;
+      const cursorId = args.p_cursor_id as number | null;
+      const limit = Math.min(Math.max(Number(args.p_limit ?? 50), 1), 200);
+      const filterAction = args.p_action as string | null;
+      const filterActor = args.p_actor_user_id as string | null;
+      const since = args.p_since as string | null;
+      const until = args.p_until as string | null;
+
+      const memberships = this.tables.get('memberships') ?? [];
+      const callerRow = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === callerUserId && m.status === 'active',
+      );
+      if (!callerRow || !['admin', 'owner'].includes(callerRow.role as string)) {
+        return { data: null, error: { code: 'P0001', message: 'not_admin' } };
+      }
+
+      const events = (this.tables.get('audit_events') ?? [])
+        .filter((e) => e.organization_id === orgId)
+        .filter((e) => {
+          if (!cursorOccurredAt || cursorId == null) return true;
+          const cmp = new Date(e.occurred_at as string).getTime() - new Date(cursorOccurredAt).getTime();
+          if (cmp !== 0) return cmp < 0;
+          return Number(e.id) < cursorId;
+        })
+        .filter((e) => filterAction == null || e.action === filterAction)
+        .filter((e) => filterActor == null || e.actor_user_id === filterActor)
+        .filter((e) => since == null || new Date(e.occurred_at as string) >= new Date(since))
+        .filter((e) => until == null || new Date(e.occurred_at as string) < new Date(until))
+        .sort((a, b) => {
+          const t = new Date(b.occurred_at as string).getTime() - new Date(a.occurred_at as string).getTime();
+          if (t !== 0) return t;
+          return Number(b.id) - Number(a.id);
+        });
+
+      const users = this.tables.get('auth.users') ?? [];
+      const emailById = new Map<string, string>(users.map((u) => [u.id as string, u.email as string]));
+      const page = events.slice(0, limit);
+      const hasNext = events.length > limit;
+      const lastOnPage = page[page.length - 1];
+
+      const eventsJson = page.map((e) => ({
+        id: e.id,
+        action: e.action,
+        actorUserId: e.actor_user_id ?? null,
+        actorEmail: e.actor_user_id ? (emailById.get(e.actor_user_id as string) ?? null) : null,
+        subjectType: e.subject_type,
+        subjectId: e.subject_id,
+        metadata: e.metadata ?? {},
+        occurredAt: e.occurred_at,
+        prevHash: e.prev_hash ?? null,
+        thisHash: e.this_hash ?? null,
+      }));
+
+      const nextCursor = hasNext && lastOnPage
+        ? { occurredAt: lastOnPage.occurred_at, id: lastOnPage.id }
+        : null;
+      return { data: { events: eventsJson, nextCursor }, error: null };
+    }
+
+    if (fn === 'org_cost_report') {
+      const callerUserId = args.p_caller_user_id as string;
+      const orgId = args.p_org_id as string;
+      const since = args.p_since as string;
+      const until = args.p_until as string;
+      const groupBy = args.p_group_by as string;
+
+      if (groupBy !== 'user') {
+        return { data: null, error: { code: 'P0001', message: 'bad_group_by' } };
+      }
+
+      const memberships = this.tables.get('memberships') ?? [];
+      const callerRow = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === callerUserId && m.status === 'active',
+      );
+      if (!callerRow || !['admin', 'owner'].includes(callerRow.role as string)) {
+        return { data: null, error: { code: 'P0001', message: 'not_admin' } };
+      }
+
+      const sinceTs = new Date(since).getTime();
+      const untilTs = new Date(until).getTime();
+      const filtered = (this.tables.get('runs') ?? []).filter((r) => {
+        if (r.organization_id !== orgId) return false;
+        if (r.deleted_at != null) return false;
+        const t = new Date(r.created_at as string).getTime();
+        return t >= sinceTs && t < untilTs;
+      });
+
+      const byUser = new Map<string, {
+        user_id: string; run_count: number; cost_usd_sum: number;
+        duration_ms_sum: number; total_bytes_sum: number; last_run_at: string | null;
+      }>();
+      for (const r of filtered) {
+        const uid = r.user_id as string;
+        const cur = byUser.get(uid) ?? {
+          user_id: uid, run_count: 0, cost_usd_sum: 0,
+          duration_ms_sum: 0, total_bytes_sum: 0, last_run_at: null,
+        };
+        cur.run_count += 1;
+        cur.cost_usd_sum += Number(r.cost_usd ?? 0);
+        cur.duration_ms_sum += Number(r.duration_ms ?? 0);
+        cur.total_bytes_sum += Number(r.total_bytes ?? 0);
+        const t = r.created_at as string;
+        if (!cur.last_run_at || new Date(t) > new Date(cur.last_run_at)) cur.last_run_at = t;
+        byUser.set(uid, cur);
+      }
+      const users = this.tables.get('auth.users') ?? [];
+      const emailById = new Map<string, string>(users.map((u) => [u.id as string, u.email as string]));
+      const rows = Array.from(byUser.values())
+        .sort((a, b) => b.cost_usd_sum - a.cost_usd_sum || a.user_id.localeCompare(b.user_id))
+        .map((a) => ({
+          user_id: a.user_id,
+          email: emailById.get(a.user_id) ?? null,
+          run_count: a.run_count,
+          cost_usd_sum: a.cost_usd_sum,
+          duration_ms_sum: a.duration_ms_sum,
+          total_bytes_sum: a.total_bytes_sum,
+          last_run_at: a.last_run_at,
+        }));
+      const total = {
+        run_count: rows.reduce((s, r) => s + r.run_count, 0),
+        cost_usd_sum: rows.reduce((s, r) => s + r.cost_usd_sum, 0),
+        duration_ms_sum: rows.reduce((s, r) => s + r.duration_ms_sum, 0),
+        total_bytes_sum: rows.reduce((s, r) => s + r.total_bytes_sum, 0),
+      };
+      return { data: { rows, total, period: { since, until } }, error: null };
+    }
+
     return { data: null, error: { message: `unknown rpc: ${fn}` } };
   }
 

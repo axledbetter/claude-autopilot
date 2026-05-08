@@ -32,6 +32,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const orgId = rows[0]!.organization_id;
   const membersHref = `/dashboard/admin/members?orgId=${orgId}` as Route;
   const settingsHref = `/dashboard/admin/settings?orgId=${orgId}` as Route;
+  const auditHref = `/dashboard/admin/audit?orgId=${orgId}` as Route;
+  const costHref = `/dashboard/admin/cost?orgId=${orgId}` as Route;
 
   return (
     <div className="grid grid-cols-[200px_1fr] gap-8">
@@ -41,6 +43,12 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         </Link>
         <Link href={settingsHref} className="px-2 py-1 rounded hover:bg-white/5">
           Settings
+        </Link>
+        <Link href={auditHref} className="px-2 py-1 rounded hover:bg-white/5">
+          Audit log
+        </Link>
+        <Link href={costHref} className="px-2 py-1 rounded hover:bg-white/5">
+          Cost report
         </Link>
       </nav>
       {children}
