@@ -311,7 +311,11 @@ async function isStaleEvent(
     .maybeSingle();
   const watermark = (data as { last_stripe_event_at: string | null } | null)?.last_stripe_event_at;
   if (!watermark) return false;
-  return new Date(watermark) >= new Date(event.created * 1000);
+  // Bugbot MEDIUM — strict > only. Same-second events from different
+  // event types (e.g. checkout.session.completed + customer.subscription.
+  // updated created in the same Unix second) must both be allowed through;
+  // >= would silently drop the second one.
+  return new Date(watermark) > new Date(event.created * 1000);
 }
 
 async function stampWatermark(supabase: Supabase, orgId: string, event: Stripe.Event): Promise<void> {

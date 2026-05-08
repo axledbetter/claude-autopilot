@@ -99,4 +99,42 @@ describe('POST /api/dashboard/billing/checkout', () => {
     const r = await POST(req({ organizationId: orgId, tier: 'mid', interval: 'monthly' }));
     expect(r.status).toBe(409);
   });
+
+  it('bugbot MEDIUM: 409 also for trialing/past_due/incomplete (not just active)', async () => {
+    const userId = randomUUID();
+    const orgId = randomUUID();
+    currentUser = { id: userId, email: 'a@b.com' };
+    stub.seed('memberships', [{
+      organization_id: orgId, user_id: userId, role: 'admin', status: 'active',
+    }]);
+    for (const status of ['trialing', 'past_due', 'incomplete']) {
+      stub.tables.set('entitlements', []);
+      stub.seed('entitlements', [{
+        organization_id: orgId, plan: 'small',
+        runs_per_month_cap: 1000, storage_bytes_cap: 50 * 1024 * 1024 * 1024,
+        stripe_subscription_status: status,
+      }]);
+      const r = await POST(req({ organizationId: orgId, tier: 'mid', interval: 'monthly' }));
+      expect(r.status, `status=${status}`).toBe(409);
+    }
+  });
+
+  it('bugbot MEDIUM: terminal statuses (canceled/unpaid/incomplete_expired) allow new checkout', async () => {
+    const userId = randomUUID();
+    const orgId = randomUUID();
+    currentUser = { id: userId, email: 'a@b.com' };
+    stub.seed('memberships', [{
+      organization_id: orgId, user_id: userId, role: 'admin', status: 'active',
+    }]);
+    for (const status of ['canceled', 'unpaid', 'incomplete_expired']) {
+      stub.tables.set('entitlements', []);
+      stub.seed('entitlements', [{
+        organization_id: orgId, plan: 'small',
+        runs_per_month_cap: 1000, storage_bytes_cap: 50 * 1024 * 1024 * 1024,
+        stripe_subscription_status: status,
+      }]);
+      const r = await POST(req({ organizationId: orgId, tier: 'mid', interval: 'monthly' }));
+      expect([200, 201], `status=${status}`).toContain(r.status);
+    }
+  });
 });

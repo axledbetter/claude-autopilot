@@ -272,6 +272,58 @@ describe('POST /api/stripe/webhook', () => {
     expect(ent.plan).toBe('small');     // not downgraded yet
   });
 
+  it('test 10 (bugbot MEDIUM): same-second subscription events both process (watermark uses strict >, not >=)', async () => {
+    const orgId = randomUUID();
+    const subId = 'sub_same_sec';
+    const sameSec = Math.floor(Date.now() / 1000);
+    stub.seed('billing_customers', [{
+      organization_id: orgId, stripe_customer_id: 'cus_same_sec',
+      email: null, created_at: new Date().toISOString(),
+    }]);
+    stub.seed('entitlements', [{
+      organization_id: orgId,
+      plan: 'small', status: 'active',
+      runs_per_month_cap: 1000, storage_bytes_cap: 53687091200,
+      stripe_subscription_status: 'active',
+      stripe_customer_id: 'cus_same_sec', stripe_subscription_id: subId,
+      cancel_at_period_end: false, cancel_at: null,
+      current_period_end: new Date(Date.now() + 30 * 86400_000).toISOString(),
+      payment_failed_at: null, last_stripe_event_at: null,
+    }]);
+
+    // Two subscription.updated events with the same Unix second.
+    const event1 = {
+      id: 'evt_same_1', type: 'customer.subscription.updated',
+      created: sameSec,
+      data: { object: {
+        id: subId, customer: 'cus_same_sec', status: 'active',
+        cancel_at_period_end: false, cancel_at: null,
+        current_period_end: Math.floor((Date.now() + 30 * 86400_000) / 1000),
+        items: { data: [{ price: { id: 'price_small_monthly_xxxxxxxxxxxx' } }] },
+        metadata: { organization_id: orgId },
+      } },
+    };
+    const event2 = {
+      ...event1,
+      id: 'evt_same_2',
+      data: { object: {
+        ...event1.data.object,
+        // Same second, but a different mutation — second event sets cancel_at_period_end.
+        cancel_at_period_end: true,
+        cancel_at: Math.floor((Date.now() + 30 * 86400_000) / 1000),
+      } },
+    };
+
+    const r1 = await POST(makeReq(event1));
+    expect(r1.status, 'first same-second event').toBe(200);
+    const r2 = await POST(makeReq(event2));
+    expect(r2.status, 'second same-second event').toBe(200);
+    // Second event's mutation must have landed (cancel_at_period_end=true);
+    // with >= it would have been silently dropped.
+    const ent = (stub.tables.get('entitlements') ?? []).find((e) => e.organization_id === orgId)!;
+    expect(ent.cancel_at_period_end).toBe(true);
+  });
+
   it('test 9 (bugbot MEDIUM): subscription.updated with status=active clears stale payment_failed_at', async () => {
     // Org has a stale payment_failed_at from a prior failure that has
     // since been resolved. A subsequent customer.subscription.updated with

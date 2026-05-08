@@ -80,7 +80,14 @@ export async function POST(req: Request): Promise<Response> {
     .eq('organization_id', body.organizationId)
     .maybeSingle();
   const ent = existingEnt as { plan: string; stripe_subscription_status: string | null } | null;
-  if (ent && ent.plan !== 'free' && ent.stripe_subscription_status === 'active') {
+  // Bugbot MEDIUM — guard against ALL non-terminal subscription statuses,
+  // not just 'active'. trialing/past_due/incomplete are still active
+  // subscriptions that must not get a duplicate Stripe sub. Only 'canceled',
+  // 'unpaid', and 'incomplete_expired' are terminal-enough to allow
+  // creating a fresh checkout session.
+  const TERMINAL_STATUSES = new Set(['canceled', 'unpaid', 'incomplete_expired']);
+  if (ent && ent.plan !== 'free' && ent.stripe_subscription_status &&
+      !TERMINAL_STATUSES.has(ent.stripe_subscription_status)) {
     return NextResponse.json({ error: 'org already on a paid subscription' }, { status: 409 });
   }
 

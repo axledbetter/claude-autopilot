@@ -16,18 +16,22 @@ ALTER TABLE billing_customers ENABLE ROW LEVEL SECURITY;
 -- UPDATE/INSERT that references runs_per_month_cap or storage_bytes_cap.
 -- Postgres parses the whole script and validates column references at
 -- parse time, so backfill statements moved AFTER the ALTER TABLE here.
+--
+-- Bugbot HIGH (1cd25d4 review) — current_period_end and cancel_at ALREADY
+-- exist in the original entitlements schema (0005_entitlements.sql lines
+-- 15-16); ADD COLUMN without IF NOT EXISTS would fail on apply. Removed
+-- those two from this ALTER TABLE; using IF NOT EXISTS defensively on
+-- the rest in case re-applied.
 ALTER TABLE entitlements
-  ADD COLUMN stripe_customer_id TEXT REFERENCES billing_customers(stripe_customer_id),
-  ADD COLUMN stripe_subscription_status TEXT
+  ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT REFERENCES billing_customers(stripe_customer_id),
+  ADD COLUMN IF NOT EXISTS stripe_subscription_status TEXT
     CHECK (stripe_subscription_status IS NULL OR stripe_subscription_status IN
       ('trialing','active','past_due','canceled','unpaid','incomplete','incomplete_expired','paused')),
-  ADD COLUMN current_period_end TIMESTAMPTZ,
-  ADD COLUMN cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE,
-  ADD COLUMN cancel_at TIMESTAMPTZ,
-  ADD COLUMN payment_failed_at TIMESTAMPTZ,
-  ADD COLUMN runs_per_month_cap INTEGER,
-  ADD COLUMN storage_bytes_cap BIGINT,
-  ADD COLUMN last_stripe_event_at TIMESTAMPTZ;
+  ADD COLUMN IF NOT EXISTS cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS payment_failed_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS runs_per_month_cap INTEGER,
+  ADD COLUMN IF NOT EXISTS storage_bytes_cap BIGINT,
+  ADD COLUMN IF NOT EXISTS last_stripe_event_at TIMESTAMPTZ;
 
 -- Codex plan-pass CRITICAL #1 — backfill existing rows BEFORE adding the
 -- CHECK constraint. Phase 1 may have created `entitlements` rows with NULL
@@ -41,8 +45,11 @@ UPDATE entitlements SET runs_per_month_cap = 10000, storage_bytes_cap = 53687091
   WHERE plan = 'mid' AND runs_per_month_cap IS NULL;
 
 -- Insert free entitlement rows for any organizations that don't have one yet.
-INSERT INTO entitlements (organization_id, plan, runs_per_month_cap, storage_bytes_cap)
-  SELECT id, 'free', 100, 5368709120
+-- Bugbot HIGH (1cd25d4 review) — entitlements.status is NOT NULL with no
+-- default in the original schema; INSERT must supply it. 'active' matches
+-- the existing CHECK enum and is the right initial state for a free org.
+INSERT INTO entitlements (organization_id, plan, status, runs_per_month_cap, storage_bytes_cap)
+  SELECT id, 'free', 'active', 100, 5368709120
   FROM organizations
   WHERE id NOT IN (SELECT organization_id FROM entitlements);
 
@@ -130,8 +137,9 @@ GRANT EXECUTE ON FUNCTION count_runs_this_month(UUID, UUID) TO service_role;
 CREATE OR REPLACE FUNCTION seed_free_entitlements() RETURNS TRIGGER AS $$
 BEGIN
   IF NEW.plan = 'free' THEN
-    INSERT INTO public.entitlements (organization_id, plan, runs_per_month_cap, storage_bytes_cap)
-      VALUES (NEW.id, 'free', 100, 5368709120)
+    -- Bugbot HIGH — entitlements.status is NOT NULL; supply 'active'.
+    INSERT INTO public.entitlements (organization_id, plan, status, runs_per_month_cap, storage_bytes_cap)
+      VALUES (NEW.id, 'free', 'active', 100, 5368709120)
       ON CONFLICT (organization_id) DO NOTHING;
   END IF;
   RETURN NEW;
