@@ -463,3 +463,53 @@ The local run dir contains a snapshot the resume path uses byte-identically.
   upload session.
 - The events.ndjson snapshot is hash-chained on the CLI side and
   verified on the server before any run is marked `source_verified`.
+
+### v7.0 Phase 3 — billing + entitlement enforcement (6.3.0-pre.5)
+
+Once you're logged in, every `autopilot --mode full` upload is gated on
+the **organization's** monthly run cap and retained-storage cap. Free
+tier is 100 runs/month and 5 GiB of retained storage; Org Small ($99/mo
+or $990/yr) bumps to 1000 / 50 GiB; Org Mid ($499/mo or $4990/yr) to
+10,000 / 500 GiB; Enterprise has no caps. Personal-tier (no org) caps
+match Free.
+
+When you're over a cap, `POST /api/upload-session` returns 402 with a
+structured payload:
+
+```json
+{
+  "error": "limit_reached",
+  "limit": "runs_per_month",
+  "current": 1042,
+  "max": 1000,
+  "upgrade_url": "https://autopilot.dev/dashboard/billing"
+}
+```
+
+The CLI catches it as a typed `UploadLimitError` and prints:
+
+```
+[autopilot] upload rejected — runs_per_month cap reached (1042/1000). Upgrade at https://autopilot.dev/dashboard/billing
+```
+
+The run's exit code is preserved — the cap is a soft signal, not a
+failure.
+
+**Upgrading.** Visit `/dashboard/billing` (Phase 4 UI) → click
+"Upgrade to Small/Mid" → Stripe-hosted Checkout. The webhook persists
+the new caps; the very next upload succeeds.
+
+**Cancelling.** Same dashboard → "Manage billing" opens the Stripe
+Customer Portal. Cancel-at-period-end honors the existing cap until
+the period rolls; afterward the org falls back to free-tier caps.
+
+**Storage cap semantics.** Storage is **retained bytes** with a 90-day
+retention filter, not monthly upload volume. A 5 GiB cap means: at any
+moment, the sum of `total_bytes` across runs from the last 90 days
+must be ≤ 5 GiB. The CLI sends `expectedBytes = fs.stat(events.ndjson).size`
+with each mint request so the gate can preflight against the new run.
+
+**Free organizations share an org-level cap** (NOT per-user inside the
+org). The first member's runs count toward the same 100/mo as the
+second member's. Personal-tier users (no org) get their own
+`personal_entitlements` row.

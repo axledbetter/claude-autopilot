@@ -23,6 +23,8 @@ export interface MockServerOptions {
      *  re-bootstrap attempt. */
     persistChunk401?: boolean;
     inflightSession?: { runId: string; token: string; jti: string; nextExpectedSeq: number };
+    /** Phase 3 — POST /api/upload-session returns 402 with structured payload. */
+    cap402?: { limit: 'runs_per_month' | 'storage_bytes'; current: number; max: number; upgrade_url: string };
   };
 }
 
@@ -108,8 +110,18 @@ export function makeMockServer(opts: MockServerOptions): MockServerHandle {
     if (u.pathname === '/api/upload-session' && method === 'POST') {
       const auth = authedUser(headers);
       if (!auth) return jsonResponse(401, { error: 'unauthenticated' });
-      const body = JSON.parse(String(init?.body ?? '{}')) as { runId: string; expectedChunkCount: number };
+      const body = JSON.parse(String(init?.body ?? '{}')) as { runId: string; expectedChunkCount: number; expectedBytes?: number };
       if (!auth.runs.includes(body.runId)) return jsonResponse(404, { error: 'not found' });
+      // Phase 3 — entitlement gate scenario.
+      if (sc.cap402) {
+        return jsonResponse(402, {
+          error: 'limit_reached',
+          limit: sc.cap402.limit,
+          current: sc.cap402.current,
+          max: sc.cap402.max,
+          upgrade_url: sc.cap402.upgrade_url,
+        });
+      }
       const token = `tok_${createHash('sha256').update(body.runId + ':' + Date.now() + ':' + Math.random()).digest('hex')}`;
       return jsonResponse(201, {
         uploadToken: token,

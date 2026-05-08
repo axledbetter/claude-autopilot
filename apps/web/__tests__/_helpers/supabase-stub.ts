@@ -71,6 +71,28 @@ class TableQuery {
     });
     return this;
   }
+  lte(col: string, val: unknown): this {
+    this.filters.push((r) => {
+      const cell = r[col];
+      if (cell == null || val == null) return false;
+      if (typeof cell === 'string' && typeof val === 'string') {
+        return new Date(cell).getTime() <= new Date(val).getTime();
+      }
+      return (cell as number) <= (val as number);
+    });
+    return this;
+  }
+  gte(col: string, val: unknown): this {
+    this.filters.push((r) => {
+      const cell = r[col];
+      if (cell == null || val == null) return false;
+      if (typeof cell === 'string' && typeof val === 'string') {
+        return new Date(cell).getTime() >= new Date(val).getTime();
+      }
+      return (cell as number) >= (val as number);
+    });
+    return this;
+  }
 
   single(): Promise<StubResult<unknown>> { return this.run(true, false); }
   maybeSingle(): Promise<StubResult<unknown>> { return this.run(true, true); }
@@ -113,6 +135,43 @@ class TableQuery {
         for (const p of payload) {
           if (rows.some((r) => r.session_id === p.session_id && r.seq === p.seq)) {
             return { data: null, error: { message: 'duplicate key value violates unique constraint' } };
+          }
+        }
+      }
+      if (this.table === 'stripe_webhook_events') {
+        for (const p of payload) {
+          if (rows.some((r) => r.id === p.id)) {
+            return { data: null, error: { message: 'duplicate key value violates unique constraint stripe_webhook_events_pkey' } };
+          }
+        }
+        // Default columns the route reads back.
+        const stamped = payload.map((p) => ({
+          status: 'processing',
+          attempt_count: 1,
+          processing_started_at: new Date().toISOString(),
+          locked_until: new Date(Date.now() + 60_000).toISOString(),
+          received_at: new Date().toISOString(),
+          completed_at: null,
+          error: null,
+          ...p,
+        }));
+        this.stub.tables.set(this.table, [...rows, ...stamped]);
+        return { data: stamped, error: null };
+      }
+      if (this.table === 'billing_customers') {
+        for (const p of payload) {
+          if (rows.some((r) => r.organization_id === p.organization_id)) {
+            return { data: null, error: { message: 'duplicate key value violates unique constraint billing_customers_pkey' } };
+          }
+          if (rows.some((r) => r.stripe_customer_id === p.stripe_customer_id)) {
+            return { data: null, error: { message: 'duplicate key value violates unique constraint billing_customers_stripe_customer_id_key' } };
+          }
+        }
+      }
+      if (this.table === 'personal_entitlements') {
+        for (const p of payload) {
+          if (rows.some((r) => r.user_id === p.user_id)) {
+            return { data: null, error: { message: 'duplicate key value violates unique constraint personal_entitlements_pkey' } };
           }
         }
       }
@@ -261,6 +320,38 @@ export class SupabaseStub {
       const keep = rows.filter((r) => new Date(r.created_at as string).getTime() >= cutoff);
       this.tables.set('api_key_mint_nonces', keep);
       return { data: rows.length - keep.length, error: null };
+    }
+
+    if (fn === 'count_runs_this_month') {
+      // Phase 3 entitlement gate — count runs for the current calendar month
+      // (UTC). Mirrors the SQL `date_trunc('month', NOW() AT TIME ZONE 'UTC')`.
+      const monthStart = new Date();
+      monthStart.setUTCDate(1);
+      monthStart.setUTCHours(0, 0, 0, 0);
+      const orgId = args.p_organization_id as string | null;
+      const userId = args.p_user_id as string;
+      const rows = (this.tables.get('runs') ?? []).filter((r) => {
+        if (new Date(r.created_at as string) < monthStart) return false;
+        if (orgId != null) return r.organization_id === orgId;
+        return r.organization_id == null && r.user_id === userId;
+      });
+      return { data: rows.length, error: null };
+    }
+
+    if (fn === 'sum_retained_bytes') {
+      // Phase 3 — sum total_bytes of non-deleted runs within retention window.
+      const days = (args.p_retention_days as number | undefined) ?? 90;
+      const cutoff = new Date(Date.now() - days * 86400_000);
+      const orgId = args.p_organization_id as string | null;
+      const userId = args.p_user_id as string;
+      const rows = (this.tables.get('runs') ?? []).filter((r) => {
+        if (r.deleted_at != null) return false;
+        if (new Date(r.created_at as string) < cutoff) return false;
+        if (orgId != null) return r.organization_id === orgId;
+        return r.organization_id == null && r.user_id === userId;
+      });
+      const sum = rows.reduce((s, r) => s + (Number(r.total_bytes) || 0), 0);
+      return { data: sum, error: null };
     }
 
     if (fn === 'mint_api_key_with_nonce') {

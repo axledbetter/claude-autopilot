@@ -64,11 +64,35 @@ interface SessionInfo {
   };
 }
 
-class UploadError extends Error {
+export class UploadError extends Error {
   public readonly status: number | null;
   constructor(message: string, status: number | null = null) {
     super(message);
     this.status = status;
+  }
+}
+
+/**
+ * Phase 3 — thrown when /api/upload-session returns 402 with a structured
+ * `limit_reached` payload. Auto-upload entry point detects this subclass
+ * and prints a friendly message without retrying or overriding the run's
+ * exit code.
+ */
+export class UploadLimitError extends UploadError {
+  public readonly payload: {
+    limit: string;
+    current: number;
+    max: number;
+    upgrade_url: string;
+  };
+  constructor(message: string, payload: {
+    limit: string;
+    current: number;
+    max: number;
+    upgrade_url: string;
+  }) {
+    super(message, 402);
+    this.payload = payload;
   }
 }
 
@@ -166,6 +190,7 @@ async function bootstrapSession(
   apiKey: string,
   runId: string,
   expectedChunkCount: number,
+  expectedBytes: number,
   fetchImpl: typeof fetch,
   signal: AbortSignal | undefined,
 ): Promise<{ session: SessionInfo; resumed: boolean }> {
@@ -193,9 +218,28 @@ async function bootstrapSession(
       authorization: `Bearer ${apiKey}`,
       'content-type': 'application/json',
     },
-    body: JSON.stringify({ runId, expectedChunkCount }),
+    body: JSON.stringify({ runId, expectedChunkCount, expectedBytes }),
     signal,
   }, fetchImpl, signal, true);
+  // Phase 3 — structured 402 means we hit a runs/storage cap. Surface as a
+  // typed error so the auto-upload caller can print a friendly message
+  // without retrying or overriding the run's exit code.
+  if (mintRes.status === 402) {
+    let parsed: { error?: string; limit?: string; current?: number; max?: number; upgrade_url?: string } = {};
+    try {
+      parsed = await mintRes.json() as typeof parsed;
+    } catch {
+      // fall through — message below still useful
+    }
+    const limit = parsed.limit ?? 'unknown';
+    const current = parsed.current ?? 0;
+    const max = parsed.max ?? 0;
+    const upgradeUrl = parsed.upgrade_url ?? '';
+    throw new UploadLimitError(
+      `upload rejected — ${limit} cap reached (${current}/${max}). Upgrade at ${upgradeUrl}`,
+      { limit, current, max, upgrade_url: upgradeUrl },
+    );
+  }
   if (mintRes.status !== 201) {
     const text = await mintRes.text().catch(() => '');
     throw new UploadError(`mint failed: ${mintRes.status} ${text}`, mintRes.status);
@@ -234,10 +278,10 @@ export async function uploadRun(
     const chunks = await readChunks(snap.events);
     const expectedChunkCount = chunks.length;
 
-    // (3) Bootstrap.
+    // (3) Bootstrap. Phase 3 — pass expectedBytes for storage cap preflight.
     checkAborted(signal);
     const { session, resumed } = await bootstrapSession(
-      baseUrl, opts.apiKey, runId, expectedChunkCount, fetchImpl, signal,
+      baseUrl, opts.apiKey, runId, expectedChunkCount, snap.eventsBytes, fetchImpl, signal,
     );
     const startSeq = session.session.nextExpectedSeq ?? 0;
     opts.onProgress?.({ kind: 'session', resumed, nextExpectedSeq: startSeq });
@@ -291,7 +335,7 @@ export async function uploadRun(
         }
         reauthAttempts++;
         const reboot = await bootstrapSession(
-          baseUrl, opts.apiKey, runId, expectedChunkCount, fetchImpl, signal,
+          baseUrl, opts.apiKey, runId, expectedChunkCount, snap.eventsBytes, fetchImpl, signal,
         );
         token = reboot.session.uploadToken;
         seq -= 1;
@@ -353,6 +397,11 @@ export async function uploadRun(
       url: `${baseUrl}/runs/${encodeURIComponent(runId)}`,
     };
   } catch (err) {
+    // Phase 3 — let UploadLimitError bubble so the auto-upload entry point
+    // can print the friendly message + preserve the run's exit code.
+    if (err instanceof UploadLimitError) {
+      throw err;
+    }
     if (err instanceof SnapshotMismatchError) {
       return { ok: false, error: `snapshot mismatch: ${err.message}` };
     }
