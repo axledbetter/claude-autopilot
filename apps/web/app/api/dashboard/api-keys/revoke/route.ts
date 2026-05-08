@@ -4,6 +4,7 @@ import { createServerClient as createSsrServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { createServiceRoleClient } from '@/lib/supabase/service';
 import { authViaApiKey } from '@/lib/dashboard/auth';
+import { assertSameOrigin } from '@/lib/dashboard/same-origin';
 
 interface Body { keyId?: string; apiKey?: string }
 
@@ -44,6 +45,9 @@ export async function POST(req: Request): Promise<Response> {
   if (apiKeyAuth) {
     callerUserId = apiKeyAuth.userId;
   } else {
+    // Cookie path — gate on Origin to block CSRF.
+    const so = assertSameOrigin(req);
+    if (!so.ok) return NextResponse.json({ error: `forbidden: ${so.reason}` }, { status: 403 });
     callerUserId = await resolveSessionUserId();
   }
   if (!callerUserId) return NextResponse.json({ error: 'unauthenticated' }, { status: 401 });

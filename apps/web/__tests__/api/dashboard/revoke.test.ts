@@ -25,6 +25,7 @@ beforeEach(() => {
   process.env.NEXT_PUBLIC_SUPABASE_URL = 'http://stub';
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'anon';
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'stub';
+  process.env.AUTOPILOT_PUBLIC_BASE_URL = 'https://autopilot.dev';
 });
 
 function seedKey(id: string, userId: string, raw: string): void {
@@ -46,7 +47,7 @@ const KEY_A = `clp_${'a'.repeat(64)}`;
 function jsonReq(body: object, headers: Record<string, string> = {}): Request {
   return new Request('http://x', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...headers },
+    headers: { 'content-type': 'application/json', origin: 'https://autopilot.dev', ...headers },
     body: JSON.stringify(body),
   });
 }
@@ -75,5 +76,23 @@ describe('POST /api/dashboard/api-keys/revoke', () => {
     expect(r1.status).toBe(200);
     const r2 = await POST(jsonReq({ keyId: 'keyA' }));
     expect(r2.status).toBe(200);
+  });
+
+  it('test 28 (revoke): cookie path with mismatched Origin → 403', async () => {
+    currentUser = { id: 'user1' };
+    seedKey('keyA', 'user1', KEY_A);
+    const r = await POST(jsonReq({ keyId: 'keyA' }, { origin: 'https://attacker.example' }));
+    expect(r.status).toBe(403);
+  });
+
+  it('test 28 (revoke): API-key path bypasses Origin check', async () => {
+    seedKey('keyA', 'user1', KEY_A);
+    // No session — auth via Bearer key. Origin omitted, no 403.
+    const r = await POST(new Request('http://x', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${KEY_A}` },
+      body: JSON.stringify({ keyId: 'keyA' }),
+    }));
+    expect(r.status).toBe(200);
   });
 });

@@ -23,15 +23,16 @@ beforeEach(() => {
   process.env.NEXT_PUBLIC_SUPABASE_URL = 'http://stub';
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'anon';
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'stub';
+  process.env.AUTOPILOT_PUBLIC_BASE_URL = 'https://autopilot.dev';
 });
 
 const VALID_NONCE = 'a'.repeat(32);
 const VALID_CB = 'http://127.0.0.1:56010/cli-callback';
 
-function req(body: object): Request {
+function req(body: object, headers: Record<string, string> = {}): Request {
   return new Request('http://x', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', origin: 'https://autopilot.dev', ...headers },
     body: JSON.stringify(body),
   });
 }
@@ -70,5 +71,14 @@ describe('POST /api/dashboard/api-keys/mint', () => {
     currentUser = { id: 'user1' };
     const r = await POST(req({ nonce: 'too-short', callbackUrl: VALID_CB }));
     expect(r.status).toBe(422);
+  });
+
+  it('test 28 (mint): mismatched Origin → 403', async () => {
+    currentUser = { id: 'user1' };
+    const r = await POST(req(
+      { nonce: VALID_NONCE, callbackUrl: VALID_CB },
+      { origin: 'https://attacker.example' },
+    ));
+    expect(r.status).toBe(403);
   });
 });

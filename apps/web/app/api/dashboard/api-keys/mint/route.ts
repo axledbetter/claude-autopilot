@@ -4,10 +4,17 @@ import { createServerClient as createSsrServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { createServiceRoleClient } from '@/lib/supabase/service';
 import { validateCallbackUrl } from '@/lib/dashboard/callback-url';
+import { assertSameOrigin } from '@/lib/dashboard/same-origin';
 
 interface Body { nonce: string; callbackUrl: string; label?: string }
 
 export async function POST(req: Request): Promise<Response> {
+  // Mint is cookie-only (no API-key path) — Origin guard is unconditional.
+  const so = assertSameOrigin(req);
+  if (!so.ok) {
+    return NextResponse.json({ error: `forbidden: ${so.reason}` }, { status: 403 });
+  }
+
   let body: Body;
   try {
     body = await req.json() as Body;
