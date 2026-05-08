@@ -13,7 +13,7 @@
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { readConfig } from './config.ts';
-import { uploadRun } from './upload/uploader.ts';
+import { uploadRun, UploadLimitError } from './upload/uploader.ts';
 
 export interface AutoUploadOptions {
   /** Caller's explicit opt-out (e.g. CLI --no-upload). */
@@ -29,7 +29,7 @@ export interface AutoUploadResult {
   ok: boolean;
   url: string | null;
   skipped: boolean;
-  reason?: 'opt-out-flag' | 'env-off' | 'not-logged-in' | 'no-events' | 'aborted' | 'error';
+  reason?: 'opt-out-flag' | 'env-off' | 'not-logged-in' | 'no-events' | 'aborted' | 'error' | 'limit-reached';
 }
 
 export function shouldAutoUpload(options: AutoUploadOptions = {}): { ok: boolean; reason?: AutoUploadResult['reason'] } {
@@ -105,6 +105,16 @@ export async function autoUploadAtComplete(
         process.stderr.write(`            Resume with: claude-autopilot dashboard upload ${runId}\n`);
       }
       return { attempted: true, ok: false, url: null, skipped: false, reason: 'aborted' };
+    }
+    // Phase 3 — runs/storage cap reached. Print a friendly message but
+    // do NOT print the resume hint (resume would just hit 402 again until
+    // the user upgrades) and do NOT bubble the error so the run's exit
+    // code is preserved.
+    if (err instanceof UploadLimitError) {
+      if (!options.silent) {
+        process.stderr.write(`[autopilot] ${err.message}\n`);
+      }
+      return { attempted: true, ok: false, url: null, skipped: false, reason: 'limit-reached' };
     }
     if (!options.silent) {
       process.stderr.write(`[autopilot] upload error: ${(err as Error).message}\n`);
