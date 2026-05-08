@@ -136,6 +136,15 @@ describe('GET /api/dashboard/orgs/:orgId/cost', () => {
     expect(body.rows[0].cost_usd_sum).toBe(0);
   });
 
+  it('codex-pr WARNING: groupBy=repo → 422 bad_group_by route-side', async () => {
+    const orgId = randomUUID();
+    const { admin } = seedAdmin(orgId);
+    currentUser = { id: admin };
+    const r = await GET(req(orgId, 'since=2026-04&until=2026-04&groupBy=repo'), { params: { orgId } });
+    expect(r.status).toBe(422);
+    expect((await r.json()).error).toBe('bad_group_by');
+  });
+
   it('test 18: empty period → 200 rows: [], total all zeros', async () => {
     const orgId = randomUUID();
     const { admin } = seedAdmin(orgId);

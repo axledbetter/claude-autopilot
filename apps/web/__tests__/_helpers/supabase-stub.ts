@@ -743,16 +743,16 @@ export class SupabaseStub {
       const until = args.p_until as string;
       const groupBy = args.p_group_by as string;
 
-      if (groupBy !== 'user') {
-        return { data: null, error: { code: 'P0001', message: 'bad_group_by' } };
-      }
-
+      // Codex PR-pass WARNING — authorize first.
       const memberships = this.tables.get('memberships') ?? [];
       const callerRow = memberships.find(
         (m) => m.organization_id === orgId && m.user_id === callerUserId && m.status === 'active',
       );
       if (!callerRow || !['admin', 'owner'].includes(callerRow.role as string)) {
         return { data: null, error: { code: 'P0001', message: 'not_admin' } };
+      }
+      if (groupBy !== 'user') {
+        return { data: null, error: { code: 'P0001', message: 'bad_group_by' } };
       }
 
       const sinceTs = new Date(since).getTime();

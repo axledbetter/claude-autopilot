@@ -172,6 +172,32 @@ describe('GET /api/dashboard/orgs/:orgId/audit', () => {
     expect(r.status).toBe(422);
   });
 
+  it('codex-pr WARNING: limit=25abc → 422 (digits-only)', async () => {
+    const orgId = randomUUID();
+    const { admin } = seedAdmin(orgId);
+    currentUser = { id: admin };
+    const r = await GET(req(orgId, 'limit=25abc'), { params: { orgId } });
+    expect(r.status).toBe(422);
+  });
+
+  it('codex-pr CRITICAL: nextCursor round-trips even when stub emits offset notation', async () => {
+    const orgId = randomUUID();
+    const { admin } = seedAdmin(orgId);
+    // Seed events with offset notation in occurred_at — simulates Postgres timestamptz JSON output.
+    stub.seed('audit_events', [
+      { id: 1, organization_id: orgId, action: 'a', actor_user_id: null, subject_type: 'x', subject_id: 'x', metadata: {}, occurred_at: '2026-04-15T12:00:00+00:00', prev_hash: null, this_hash: 'h1' },
+      { id: 2, organization_id: orgId, action: 'a', actor_user_id: null, subject_type: 'x', subject_id: 'x', metadata: {}, occurred_at: '2026-04-15T12:01:00+00:00', prev_hash: null, this_hash: 'h2' },
+      { id: 3, organization_id: orgId, action: 'a', actor_user_id: null, subject_type: 'x', subject_id: 'x', metadata: {}, occurred_at: '2026-04-15T12:02:00+00:00', prev_hash: null, this_hash: 'h3' },
+    ]);
+    currentUser = { id: admin };
+    const r1 = await GET(req(orgId, 'limit=2'), { params: { orgId } });
+    const body1 = await r1.json();
+    expect(body1.nextCursor).toBeTruthy();
+    // Send the cursor back; must be accepted (round-trip).
+    const r2 = await GET(req(orgId, `limit=2&cursor=${encodeURIComponent(body1.nextCursor)}`), { params: { orgId } });
+    expect(r2.status).toBe(200);
+  });
+
   it('test 9c: bad cursor → 422 bad_cursor', async () => {
     const orgId = randomUUID();
     const { admin } = seedAdmin(orgId);

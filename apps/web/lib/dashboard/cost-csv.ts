@@ -12,9 +12,16 @@ export interface CostRow {
 }
 
 const NEEDS_QUOTING = /[",\r\n]/;
+const FORMULA_LEAD = /^[=+\-@\t\r]/;
 
 function escapeCell(v: string | number | null): string {
-  const s = v == null ? '' : String(v);
+  let s = v == null ? '' : String(v);
+  // Codex PR-pass CRITICAL — spreadsheet formula injection guard.
+  // Cells starting with =, +, -, @, tab, or CR can execute as formulas in
+  // Excel/Sheets. Prefix with apostrophe to neutralize.
+  if (FORMULA_LEAD.test(s)) {
+    s = `'${s}`;
+  }
   if (NEEDS_QUOTING.test(s)) {
     return `"${s.replace(/"/g, '""')}"`;
   }

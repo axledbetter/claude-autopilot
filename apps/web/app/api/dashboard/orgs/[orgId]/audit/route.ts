@@ -27,7 +27,11 @@ export async function GET(req: Request, { params }: RouteParams): Promise<Respon
   }
 
   const limitParam = url.searchParams.get('limit');
-  const limit = limitParam == null ? 50 : Number.parseInt(limitParam, 10);
+  // Codex PR-pass WARNING — digits-only validation rejects values like '25abc'.
+  if (limitParam != null && !/^\d+$/.test(limitParam)) {
+    return NextResponse.json({ error: 'malformed_params' }, { status: 422, headers: NO_STORE });
+  }
+  const limit = limitParam == null ? 50 : Number(limitParam);
   if (!Number.isInteger(limit) || limit < 1) {
     return NextResponse.json({ error: 'malformed_params' }, { status: 422, headers: NO_STORE });
   }
@@ -68,7 +72,17 @@ export async function GET(req: Request, { params }: RouteParams): Promise<Respon
     return NextResponse.json(mapped.body, { status: mapped.status, headers: NO_STORE });
   }
 
-  const result = data as { events: unknown[]; nextCursor: { occurredAt: string; id: number } | null };
-  const nextCursor = result.nextCursor ? encodeCursor(result.nextCursor) : null;
+  const result = data as { events: unknown[]; nextCursor: { occurredAt: string; id: number | string } | null };
+  // Codex PR-pass CRITICAL — Postgres timestamptz JSON output may use offset
+  // notation (`+00:00`) instead of `Z`. Normalize to ISO-8601 UTC `Z` so the
+  // cursor round-trips through decodeCursor's strict regex.
+  const nextCursor = result.nextCursor
+    ? encodeCursor({
+        occurredAt: new Date(result.nextCursor.occurredAt).toISOString(),
+        id: typeof result.nextCursor.id === 'string'
+          ? Number(result.nextCursor.id)
+          : result.nextCursor.id,
+      })
+    : null;
   return NextResponse.json({ events: result.events, nextCursor }, { status: 200, headers: NO_STORE });
 }

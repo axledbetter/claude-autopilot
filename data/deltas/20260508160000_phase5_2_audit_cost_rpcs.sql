@@ -125,10 +125,8 @@ DECLARE
   v_rows jsonb;
   v_total jsonb;
 BEGIN
-  IF p_group_by IS NULL OR p_group_by <> 'user' THEN
-    RAISE EXCEPTION 'bad_group_by' USING ERRCODE = 'P0001';
-  END IF;
-
+  -- Codex PR-pass WARNING — authorize first; otherwise non-admins probe behavior
+  -- via group_by errors.
   SELECT role INTO v_caller_role
     FROM public.memberships
    WHERE organization_id = p_org_id
@@ -136,6 +134,10 @@ BEGIN
      AND status = 'active';
   IF v_caller_role IS NULL OR v_caller_role NOT IN ('admin', 'owner') THEN
     RAISE EXCEPTION 'not_admin' USING ERRCODE = 'P0001';
+  END IF;
+
+  IF p_group_by IS NULL OR p_group_by <> 'user' THEN
+    RAISE EXCEPTION 'bad_group_by' USING ERRCODE = 'P0001';
   END IF;
 
   WITH agg AS (

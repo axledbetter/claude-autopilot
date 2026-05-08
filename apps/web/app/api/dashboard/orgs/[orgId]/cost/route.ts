@@ -19,6 +19,10 @@ export async function GET(req: Request, { params }: RouteParams): Promise<Respon
     return NextResponse.json({ error: 'bad_period' }, { status: 422, headers: NO_STORE });
   }
   const groupBy = url.searchParams.get('groupBy') ?? 'user';
+  // Codex PR-pass WARNING — route-side validation; RPC enforces too.
+  if (groupBy !== 'user') {
+    return NextResponse.json({ error: 'bad_group_by' }, { status: 422, headers: NO_STORE });
+  }
 
   const callerUserId = await resolveSessionUserId();
   if (!callerUserId) {

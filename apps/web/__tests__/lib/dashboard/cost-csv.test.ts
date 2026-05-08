@@ -40,6 +40,24 @@ describe('encodeCostCsv', () => {
     expect(csv).toContain('"foo\nbar@example.com"');
   });
 
+  it('codex-pr CRITICAL: prefixes formula-leading chars with apostrophe', () => {
+    const rows: CostRow[] = [{
+      user_id: 'u', email: '=cmd|notepad!A1', run_count: 1, cost_usd_sum: 0, duration_ms_sum: 0, total_bytes_sum: 0,
+    }];
+    expect(encodeCostCsv(rows)).toContain("'=cmd|notepad!A1");
+  });
+
+  it('codex-pr CRITICAL: handles + and - leading chars too', () => {
+    const rows: CostRow[] = [
+      { user_id: '+1', email: '-2', run_count: 1, cost_usd_sum: 0, duration_ms_sum: 0, total_bytes_sum: 0 },
+      { user_id: '@cmd', email: 'x', run_count: 1, cost_usd_sum: 0, duration_ms_sum: 0, total_bytes_sum: 0 },
+    ];
+    const csv = encodeCostCsv(rows);
+    expect(csv).toContain("'+1");
+    expect(csv).toContain("'-2");
+    expect(csv).toContain("'@cmd");
+  });
+
   it('null email rendered as empty cell (no quotes needed)', () => {
     const rows: CostRow[] = [{
       user_id: 'u', email: null, run_count: 1, cost_usd_sum: 0, duration_ms_sum: 0, total_bytes_sum: 0,
