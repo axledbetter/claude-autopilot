@@ -8,6 +8,7 @@ import Link from 'next/link';
 import type { Route } from 'next';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createServiceRoleClient } from '@/lib/supabase/service';
+import { resolveActiveOrg } from '@/lib/dashboard/active-org';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,9 +28,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const rows = (rowsRaw as MembershipRow[] | null) ?? [];
   if (rows.length === 0) notFound();
 
-  // Use the first admin/owner membership as the active org context. Phase 5.x
-  // may add an explicit org switcher.
-  const orgId = rows[0]!.organization_id;
+  // Phase 5.3 — use active-org cookie context; restrict to admin/owner orgs only
+  // so the cookie can't escalate a member-only org into the admin surface.
+  const ctx = await resolveActiveOrg(svc, user.id);
+  const adminOrgIds = new Set(rows.map((r) => r.organization_id));
+  const orgId = ctx && adminOrgIds.has(ctx.orgId) ? ctx.orgId : rows[0]!.organization_id;
   const membersHref = `/dashboard/admin/members?orgId=${orgId}` as Route;
   const settingsHref = `/dashboard/admin/settings?orgId=${orgId}` as Route;
   const auditHref = `/dashboard/admin/audit?orgId=${orgId}` as Route;

@@ -2,6 +2,18 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 6.3.0-pre.9 (2026-05-08)
+
+**v7.0 Phase 5.3 — Org switcher.** Replaces the "first admin/owner membership" hack across `/dashboard` + `/dashboard/admin/*` with a real org switcher backed by an HTTP-only cookie.
+
+- New: `POST /api/dashboard/active-org` sets `cao_active_org` cookie (HttpOnly Secure SameSite=Lax 14d). Body `{ orgId }` validates caller is active member; `{ orgId: null }` clears.
+- New: `lib/dashboard/active-org.ts` exports `resolveActiveOrg(svc, userId)` (cookie → first-membership fallback) and `listActiveOrgs(svc, userId)` (with names + roles).
+- New: `<OrgSwitcher>` client component in dashboard sidebar (only shows when caller has 2+ active memberships).
+- Modified: `/dashboard/layout.tsx`, `/dashboard/page.tsx`, `/dashboard/billing/page.tsx`, `/dashboard/admin/layout.tsx` all now consult `resolveActiveOrg` instead of `memberships[0]`.
+- Admin layout cookie restricted to admin/owner orgs — cannot escalate a member-only org into the admin surface.
+- 11 new tests (6 backend route + 5 helper). Stale-cookie test asserts the membership check rejects removed members.
+- No new env vars, no migration.
+
 ## 6.3.0-pre.8 (2026-05-08)
 
 **v7.0 Phase 5.2 — Audit log viewer + cost reporting (CSV export).** Closes the audit half of the original Phase 5 scope.

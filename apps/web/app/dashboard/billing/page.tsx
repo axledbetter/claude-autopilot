@@ -24,7 +24,10 @@ export default async function BillingPage(): Promise<React.ReactElement> {
     .eq('user_id', user.id)
     .eq('status', 'active');
   const memberships = (membershipsRaw as MembershipRow[] | null) ?? [];
-  const organizationId = memberships[0]?.organization_id ?? null;
+  // Phase 5.3 — honor active-org cookie; fall back to first membership.
+  const { resolveActiveOrg } = await import('@/lib/dashboard/active-org');
+  const ctx = await resolveActiveOrg(svc, user.id);
+  const organizationId = ctx?.orgId ?? memberships[0]?.organization_id ?? null;
 
   // Entitlement.
   let entitlement: EntitlementRow = {
