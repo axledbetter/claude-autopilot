@@ -128,7 +128,18 @@ Recommended deploy order:
    from the Supabase service role (should return JSON with
    `status='no_row'` for an arbitrary pair).
 3. Deploy v7.0 web image to Vercel (or promote v7.0 build).
-4. Smoke-test `/dashboard` page-load + one `/api/dashboard/*` call.
+4. **(v7.1.3+)** Hit the readiness endpoint to verify env vars + RPC
+   in one shot:
+   ```bash
+   curl -fsSL -H "Authorization: Bearer $CRON_SECRET" \
+     https://autopilot.dev/api/health/v7-readiness | jq
+   ```
+   Returns `200 {ok: true, totalChecks, passed, failed: 0, checks: [...]}`
+   when every required env var + the RPC are healthy. `503 {ok: false,
+   ...}` lists each failing check with a diagnostic message
+   (e.g. `MEMBERSHIP_CHECK_COOKIE_SECRET: too short (got 5 bytes; need
+   ≥32)`). Fail-on-non-200 in your deploy script for an automated gate.
+5. Smoke-test `/dashboard` page-load + one `/api/dashboard/*` call.
 
 Rollback (RPC unavailable post-deploy): revert the web deploy. The
 RPC migration is forward-only and safe to leave in place — pre-Phase-6
