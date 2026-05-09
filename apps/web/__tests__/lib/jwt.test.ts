@@ -8,7 +8,7 @@ beforeAll(() => { process.env.UPLOAD_SESSION_JWT_SECRET = SECRET; });
 afterAll(() => { delete process.env.UPLOAD_SESSION_JWT_SECRET; });
 
 describe('upload-token mint/verify', () => {
-  const baseInput = { userId: 'u1', runId: 'r1', orgId: 'o1', jti: 'jti1' };
+  const baseInput = { userId: 'u1', runId: 'r1', orgId: 'o1', jti: 'jti1', mintStatus: 'active' as const };
 
   it('mints a token with all required claims', () => {
     const { token, expiresAt } = mintUploadToken(baseInput);
@@ -22,10 +22,37 @@ describe('upload-token mint/verify', () => {
     expect(expiresAt.getTime()).toBeGreaterThan(Date.now());
   });
 
-  it('encodes free-tier (null org) as empty string', () => {
-    const { token } = mintUploadToken({ ...baseInput, orgId: null });
+  it('v7.1 — mint with mintStatus:active embeds the claim in the decoded JWT', () => {
+    const { token } = mintUploadToken(baseInput);
     const claims = verifyUploadToken(token);
-    expect(claims.org_id).toBe('');
+    expect(claims.mint_status).toBe('active');
+  });
+
+  it('v7.1 — mint with mintStatus:personal embeds the claim', () => {
+    const { token } = mintUploadToken({ ...baseInput, orgId: null, mintStatus: 'personal' });
+    const claims = verifyUploadToken(token);
+    expect(claims.mint_status).toBe('personal');
+  });
+
+  it('v7.1 — verify normalizes wire-format empty-string org_id to null', () => {
+    // Personal runs serialize as org_id: '' on the wire (v7.0 compat) but
+    // verify hands consumers the canonical null.
+    const { token } = mintUploadToken({ ...baseInput, orgId: null, mintStatus: 'personal' });
+    const claims = verifyUploadToken(token);
+    expect(claims.org_id).toBeNull();
+  });
+
+  it('v7.1 — verify still passes for v7.0 tokens missing the mint_status claim', () => {
+    // Hand-craft a v7.0-shape token (no mint_status) to simulate in-flight
+    // tokens minted before the v7.1 deploy. They MUST still verify.
+    const v70 = jwt.sign(
+      { sub: 'u1', run_id: 'r1', org_id: 'o1', jti: 'jti1', aud: 'claude-autopilot-upload', iss: 'autopilot.dev' },
+      SECRET,
+      { algorithm: 'HS256', expiresIn: '15m' },
+    );
+    const claims = verifyUploadToken(v70);
+    expect(claims.mint_status).toBeUndefined();
+    expect(claims.org_id).toBe('o1');
   });
 
   it('rejects token with wrong audience', () => {

@@ -2,6 +2,77 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.1.0 (2026-05-09)
+
+**v7.1 — symmetric ingest revocation closure.** Hosted product
+(`apps/web/`) only. Closes the JWT-authenticated ingest gap that v7.0
+Phase 6 explicitly deferred: collapses the per-request revocation
+window from ≤15min (the JWT TTL) to **≤1 request** for org-scoped runs.
+
+### apps/web — JWT-authenticated ingest membership re-check
+
+- New helper `assertActiveMembership(claims)` in
+  `apps/web/lib/upload/membership-recheck.ts` — calls the existing
+  Phase 6 `check_membership_status` RPC and maps statuses to typed
+  errors. Personal runs short-circuit via `!claims.org_id`. Authority
+  is `claims.org_id`; the new `mint_status` claim is observability-
+  only (codex pass-1 CRITICAL #2 — closed bypass where a v7.0 token
+  could skip the check).
+- New orchestrator `verifyTokenAndAssertRunMembership(token, runId,
+  supabase)` in `apps/web/lib/upload/auth.ts` — single chokepoint that
+  every JWT-authenticated ingest route calls. Combines (1) JWT shape
+  + signature verify, (2) JWT.run_id ↔ route runId consistency,
+  (3) persisted runs lookup, (4) JWT.org_id ↔ run.organization_id
+  consistency (closes cross-org JWT replay AND personal-shortcut
+  bypass — codex pass-3 CRITICAL #2), and (5) per-request membership
+  re-check.
+- `PUT /api/runs/:runId/events/:seq` and `POST /api/runs/:runId/finalize`
+  both call the orchestrator before any side-effect RPC / Storage
+  write. Disabled / inactive / no-membership returns 403; transient
+  RPC failure returns retryable 503; opaque 404 for run mismatches
+  (no enumeration leakage).
+- `POST /api/upload-session` does its own pre-mint
+  `check_membership_status` RPC for org-scoped runs. Non-active
+  members get 403 `member_not_active` + `audit_events` row with
+  `action: 'ingest.mint_refused'`. No upload session created on
+  refusal. RPC failure → 503 (retryable parity with event-write/
+  finalize, codex pass-2 WARNING #2).
+- JWT shape: `UploadTokenClaims.org_id` is now `string | null` (verify
+  normalizes wire-format `''` → `null`); new optional
+  `mint_status: 'active' | 'personal'` claim. `MintInput.mintStatus`
+  is required.
+- `verifyUploadToken()` is preserved for the JWT-shape unit tests but
+  marked `@deprecated`. Routes under `app/api/runs/**` are blocked
+  from importing it directly via ESLint `no-restricted-imports`
+  (`apps/web/.eslintrc.json`). Defense-in-depth chokepoint
+  (codex pass-3 WARNING #5).
+
+### Tests
+
+- 32 new/modified web tests (566 → 598). Coverage: mint-time
+  membership snapshot (4), event-write re-check (8 — incl. ordering
+  spy + v7.0-shape regression), finalize re-check (4), helper unit
+  (10 — status enum + RPC error + personal shortcut + v7.0
+  back-compat), end-to-end disable-mid-session (1), identity invariant
+  (3), JWT shape (4 modified).
+- `__tests__/_helpers/supabase-stub.ts` adds a
+  `check_membership_status` RPC handler that reads from the seeded
+  `memberships` table.
+
+### Documentation
+
+- `docs/v7/breaking-changes.md` — appended "v7.0 → v7.1" section
+  covering the rollout (no coordinated cutover; in-flight org-scoped
+  tokens enforce immediately).
+- `apps/web/lib/dashboard/auth.ts` — extended the API-key audit
+  comment block with the new ingest-API JWT caller list and the
+  invariant.
+
+### No SQL migration
+
+Phase 6's `check_membership_status` RPC is reused verbatim. v7.1 ships
+pure TypeScript + a single test-stub change.
+
 ## 7.0.0 (2026-05-09)
 
 **v7.0 — hosted product MVP cutover.** First major bump since v6.0

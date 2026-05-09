@@ -47,7 +47,7 @@ function seed(): Seeded {
   const runId = '01HQK8' + 'A'.repeat(20);
   const sessionId = randomUUID();
   const jti = randomUUID();
-  const { token } = mintUploadToken({ userId, runId, orgId: null, jti });
+  const { token } = mintUploadToken({ userId, runId, orgId: null, jti, mintStatus: 'personal' });
   stub.seed('runs', [{ id: runId, user_id: userId, organization_id: null }]);
   stub.seed('upload_sessions', [{
     id: sessionId, run_id: runId, user_id: userId, organization_id: null,
@@ -162,12 +162,17 @@ describe('PUT chunk — concurrency + token + recovery', () => {
     expect(res.status).toBe(401);
   });
 
-  it('test 15: JWT for wrong runId (claim/path mismatch) → 403', async () => {
+  it('test 15: JWT for wrong runId (claim/path mismatch) → 404 (v7.1 — opaque not_found)', async () => {
+    // v7.1 — verifyTokenAndAssertRunMembership() raises run_mismatch which
+    // maps to 404 not_found at the route layer (no enumeration leakage).
+    // Pre-v7.1 behavior was 403 run_mismatch; the route now opaques it.
     const { runId } = seed();
     const otherRun = '01HQK9' + 'B'.repeat(20);
-    const { token } = mintUploadToken({ userId: randomUUID(), runId: otherRun, orgId: null, jti: randomUUID() });
+    const { token } = mintUploadToken({ userId: randomUUID(), runId: otherRun, orgId: null, jti: randomUUID(), mintStatus: 'personal' });
     const res = await PUT(req(token, runId, 0, zeroHash, Buffer.from('a')), { params: { runId, seq: '0' } });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toBe('not_found');
   });
 
   it('test 16: session consumed → 401', async () => {
@@ -193,7 +198,7 @@ describe('PUT chunk — concurrency + token + recovery', () => {
     // Token valid, session expired:
     const liveJti = randomUUID();
     const userId = randomUUID();
-    const { token: validToken } = mintUploadToken({ userId, runId, orgId: null, jti: liveJti });
+    const { token: validToken } = mintUploadToken({ userId, runId, orgId: null, jti: liveJti, mintStatus: 'personal' });
     const session = firstSession();
     session.jti = liveJti;
     session.user_id = userId;

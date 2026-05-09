@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createServiceRoleClient } from '@/lib/supabase/service';
-import { verifyUploadToken, TokenError } from '@/lib/upload/jwt';
+import { TokenError } from '@/lib/upload/jwt';
+import { verifyTokenAndAssertRunMembership } from '@/lib/upload/auth';
+import { IngestMembershipError } from '@/lib/upload/membership-recheck';
 import { hashChunk } from '@/lib/upload/chain';
 import { chunkPath, putObject, StorageWriteError } from '@/lib/upload/storage';
 import { existingBytesEqual } from '@/lib/upload/storage-verify';
@@ -32,17 +34,42 @@ export async function PUT(req: Request, { params }: RouteParams): Promise<Respon
   const auth = req.headers.get('authorization');
   if (!auth?.startsWith('Bearer ')) return NextResponse.json({ error: 'unauthenticated' }, { status: 401 });
 
-  let claims;
-  try { claims = verifyUploadToken(auth.slice('Bearer '.length)); }
-  catch (err) {
-    if (err instanceof TokenError && err.reason === 'expired') {
-      return NextResponse.json({ error: 'token expired' }, { status: 401 });
-    }
-    return NextResponse.json({ error: 'invalid token' }, { status: 401 });
-  }
+  const supabase = createServiceRoleClient();
 
-  if (claims.run_id !== p.runId) {
-    return NextResponse.json({ error: 'run mismatch' }, { status: 403 });
+  // v7.1 — single chokepoint: JWT verify + run consistency + membership
+  // re-check. Replaces the prior bare verifyUploadToken() + run_id
+  // mismatch check + early runs lookup.
+  let claims;
+  try {
+    ({ claims } = await verifyTokenAndAssertRunMembership(
+      auth.slice('Bearer '.length),
+      p.runId,
+      supabase,
+    ));
+  } catch (err) {
+    if (err instanceof TokenError) {
+      if (err.reason === 'expired') return NextResponse.json({ error: 'token expired' }, { status: 401 });
+      return NextResponse.json({ error: 'invalid token' }, { status: 401 });
+    }
+    if (err instanceof IngestMembershipError) {
+      switch (err.reason) {
+        case 'run_mismatch':
+        case 'run_not_found':
+        case 'run_org_mismatch':
+          // No enumeration leakage — opaque 404 per existing ingest convention.
+          return NextResponse.json({ error: 'not_found' }, { status: 404 });
+        case 'member_disabled':
+        case 'member_inactive':
+        case 'no_membership':
+          return NextResponse.json({ error: err.reason }, { status: 403 });
+        case 'member_check_failed':
+          // Transient — CLI uploader retries 5xx automatically.
+          return NextResponse.json({ error: 'member_check_failed' }, { status: 503 });
+        default:
+          return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+      }
+    }
+    throw err;
   }
 
   const seq = Number.parseInt(p.seq, 10);
@@ -60,7 +87,6 @@ export async function PUT(req: Request, { params }: RouteParams): Promise<Respon
     return NextResponse.json({ error: 'chunk too large' }, { status: 413 });
   }
 
-  const supabase = createServiceRoleClient();
   const thisHash = hashChunk(prevHashHeader, bodyBuf);
 
   // Resolve scope from session row for the storage path. Must read session

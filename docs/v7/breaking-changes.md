@@ -188,6 +188,76 @@ Tags matching `v[0-9]+.[0-9]+.[0-9]+` (no suffix) publish with
 `package.json` `publishConfig.tag` stays at `next` as a hand-publish
 fallback only — the workflow is the source of truth.
 
+## v7.0 → v7.1 — ingest-API JWT membership re-check
+
+> Hosted product (`apps/web/`) only. CLI users can ignore this section.
+
+### Summary
+
+v7.1 closes the symmetric gap that v7.0 Phase 6 left open: upload-session
+JWTs (15-min TTL) keep working for org-scoped members who get disabled
+mid-session. v7.1 adds a per-request membership re-check on every
+ingest event-write + finalize, collapsing the JWT-authenticated
+revocation window from ≤15min to **≤1 request** for org-scoped runs.
+
+### Behavior change
+
+After deploy, every PUT `/api/runs/:runId/events/:seq` and POST
+`/api/runs/:runId/finalize` request runs the
+`check_membership_status(p_org_id, p_user_id)` RPC (the same RPC Phase
+6 added) BEFORE the chunk write or manifest write. Org-scoped tokens
+where the member's status is anything other than `'active'` get a
+**403** with `{error: 'member_disabled' | 'member_inactive' |
+'no_membership'}`. RPC errors get a **503** `{error:
+'member_check_failed'}` (retryable; the CLI uploader's existing
+5xx-retry path covers this automatically).
+
+### Rollout
+
+**No coordinated cutover required.** The JWT format change is
+forward-only and backward-compatible:
+
+- **In-flight v7.0 org-scoped tokens** (no `mint_status` claim, but
+  `org_id` populated) enforce the new revocation check immediately on
+  their **next** event-write or finalize after deploy. `claims.org_id`
+  is the sole authorization authority — the cosmetic `mint_status`
+  claim is only used for observability/audit.
+- **In-flight v7.0 personal-run tokens** (`org_id: ''` empty string)
+  short-circuit safely via the `!claims.org_id` falsy check. They
+  skip the new RPC entirely.
+- **v7.1 tokens** mint with the new `mint_status: 'active' | 'personal'`
+  claim for log filtering. Authorization behavior is identical to v7.0
+  tokens of the same org-scoped/personal shape.
+
+**No 15-min latency window for org-scoped tokens.**
+
+### Mint endpoint change
+
+POST `/api/upload-session` now refuses to mint for non-active org
+members:
+
+- `r.organization_id` populated + member status ≠ `'active'` → **403**
+  `{error: 'member_not_active'}` + `audit_events` row with
+  `action: 'ingest.mint_refused'`. No upload session created.
+- `r.organization_id` populated + RPC failure → **503** `{error:
+  'member_check_failed'}` (retryable). No upload session created.
+- `r.organization_id` IS NULL → no RPC; mint with `mint_status:
+  'personal'`.
+
+### No new env vars
+
+The existing JWT secret + 15-min TTL are unchanged. v7.0's
+`MEMBERSHIP_CHECK_COOKIE_SECRET` is still only used by the dashboard
+middleware, NOT by the ingest re-check. The ingest helper makes a
+direct `check_membership_status` RPC call per request (intentional —
+chunk requests are sequential per session and the per-request RPC
+cost is bounded; see "Capacity" in the spec).
+
+### No new SQL migration
+
+Phase 6's `check_membership_status` RPC is reused verbatim. The
+v7.1 PR ships pure TypeScript + a single test-stub change.
+
 ## See also
 
 - [docs/v7/runbook.md](./runbook.md) — production deployment guide.

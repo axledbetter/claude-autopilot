@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createServiceRoleClient } from '@/lib/supabase/service';
-import { verifyUploadToken, TokenError, type UploadTokenClaims } from '@/lib/upload/jwt';
+import { TokenError, type UploadTokenClaims } from '@/lib/upload/jwt';
+import { verifyTokenAndAssertRunMembership } from '@/lib/upload/auth';
+import { IngestMembershipError } from '@/lib/upload/membership-recheck';
 import { sha256OfCanonical, canonicalJsonBytes } from '@/lib/upload/canonical';
 import { manifestPath, statePath, putObject, StorageWriteError } from '@/lib/upload/storage';
 import { existingBytesEqual } from '@/lib/upload/storage-verify';
@@ -19,16 +21,39 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
   const auth = req.headers.get('authorization');
   if (!auth?.startsWith('Bearer ')) return NextResponse.json({ error: 'unauthenticated' }, { status: 401 });
 
+  // v7.1 — orchestrator: JWT verify + run consistency + membership re-check.
+  // Replaces the prior bare verifyUploadToken() + run_id mismatch check.
   let claims: UploadTokenClaims;
-  try { claims = verifyUploadToken(auth.slice('Bearer '.length)); }
-  catch (err) {
-    if (err instanceof TokenError && err.reason === 'expired') {
-      return NextResponse.json({ error: 'token expired' }, { status: 401 });
+  try {
+    const supabaseForAuth = createServiceRoleClient();
+    ({ claims } = await verifyTokenAndAssertRunMembership(
+      auth.slice('Bearer '.length),
+      p.runId,
+      supabaseForAuth,
+    ));
+  } catch (err) {
+    if (err instanceof TokenError) {
+      if (err.reason === 'expired') return NextResponse.json({ error: 'token expired' }, { status: 401 });
+      return NextResponse.json({ error: 'invalid token' }, { status: 401 });
     }
-    return NextResponse.json({ error: 'invalid token' }, { status: 401 });
+    if (err instanceof IngestMembershipError) {
+      switch (err.reason) {
+        case 'run_mismatch':
+        case 'run_not_found':
+        case 'run_org_mismatch':
+          return NextResponse.json({ error: 'not_found' }, { status: 404 });
+        case 'member_disabled':
+        case 'member_inactive':
+        case 'no_membership':
+          return NextResponse.json({ error: err.reason }, { status: 403 });
+        case 'member_check_failed':
+          return NextResponse.json({ error: 'member_check_failed' }, { status: 503 });
+        default:
+          return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+      }
+    }
+    throw err;
   }
-
-  if (claims.run_id !== p.runId) return NextResponse.json({ error: 'run mismatch' }, { status: 403 });
 
   let body: Body;
   try { body = await req.json() as Body; } catch { return NextResponse.json({ error: 'invalid json' }, { status: 422 }); }

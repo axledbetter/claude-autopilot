@@ -62,7 +62,7 @@ describe('finalize with malformed run_status (integration)', () => {
     const runId = '01HQK8' + 'C'.repeat(20);
     const sessionId = randomUUID();
     const jti = randomUUID();
-    const { token } = mintUploadToken({ userId, runId, orgId: null, jti });
+    const { token } = mintUploadToken({ userId, runId, orgId: null, jti, mintStatus: 'personal' });
     const c0 = Buffer.from('{"event":"run.complete"}\n');
     const h0 = hashChunk(zeroHash, c0);
     stub.seed('runs', [{ id: runId, user_id: userId, organization_id: null }]);

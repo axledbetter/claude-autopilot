@@ -39,7 +39,7 @@ function seedComplete(): SeededState {
   const runId = '01HQK8' + 'A'.repeat(20);
   const sessionId = randomUUID();
   const jti = randomUUID();
-  const { token } = mintUploadToken({ userId, runId, orgId: null, jti });
+  const { token } = mintUploadToken({ userId, runId, orgId: null, jti, mintStatus: 'personal' });
 
   // Two chunks already uploaded, status='persisted'.
   const c0Body = Buffer.from('{"event":"run.started"}\n');
@@ -128,7 +128,7 @@ describe('finalize — structural + concurrency', () => {
     const runId = '01HQKEMPTY' + 'A'.repeat(15);
     const sessionId = randomUUID();
     const jti = randomUUID();
-    const { token } = mintUploadToken({ userId, runId, orgId: null, jti });
+    const { token } = mintUploadToken({ userId, runId, orgId: null, jti, mintStatus: 'personal' });
     stub.seed('runs', [{ id: runId, user_id: userId, organization_id: null }]);
     stub.seed('upload_sessions', [{
       id: sessionId, run_id: runId, user_id: userId, organization_id: null,
@@ -144,7 +144,7 @@ describe('finalize — structural + concurrency', () => {
     const runId = '01HQK1' + 'A'.repeat(20);
     const sessionId = randomUUID();
     const jti = randomUUID();
-    const { token } = mintUploadToken({ userId, runId, orgId: null, jti });
+    const { token } = mintUploadToken({ userId, runId, orgId: null, jti, mintStatus: 'personal' });
     stub.seed('runs', [{ id: runId, user_id: userId, organization_id: null }]);
     stub.seed('upload_sessions', [{
       id: sessionId, run_id: runId, user_id: userId, organization_id: null,
