@@ -13,6 +13,7 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { safeRedirect } from '@/lib/auth/redirect';
+import { enforceSsoRequired } from '@/lib/auth/enforce-sso-required';
 
 const SAFE_PROVIDER_ERRORS = new Set([
   'access_denied',
@@ -38,9 +39,19 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   const supabase = await createSupabaseServerClient();
-  const { error } = await supabase.auth.exchangeCodeForSession(code);
+  const { data, error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) {
     return NextResponse.redirect(new URL('/?error=auth_failed', url.origin));
+  }
+
+  // Phase 5.6 — single chokepoint for sso_required enforcement
+  // (codex spec pass-2 CRITICAL #1).
+  const enforcement = await enforceSsoRequired(data.session?.user?.email);
+  if (enforcement.action === 'redirect_to_sso') {
+    await supabase.auth.signOut();
+    return NextResponse.redirect(
+      new URL(`/login/sso?email=${encodeURIComponent(enforcement.email)}&reason=sso_required`, url.origin),
+    );
   }
 
   const target = safeRedirect(next);

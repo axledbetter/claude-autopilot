@@ -1069,6 +1069,358 @@ export class SupabaseStub {
       };
     }
 
+    // ========================================================================
+    // Phase 5.6 — WorkOS SSO sign-in RPCs.
+    //
+    // Mirror data/deltas/20260509120000_phase5_6_workos_signin.sql.
+    // ========================================================================
+
+    if (fn === 'claim_domain') {
+      const callerUserId = args.p_caller_user_id as string;
+      const orgId = args.p_org_id as string;
+      const domain = (args.p_normalized_domain as string).trim();
+      const challenge = args.p_challenge_token as string;
+      if (!domain) return { data: null, error: { code: 'P0001', message: 'invalid_domain' } };
+      if (!challenge || challenge.length < 32) {
+        return { data: null, error: { code: 'P0001', message: 'invalid_challenge_token' } };
+      }
+      const memberships = this.tables.get('memberships') ?? [];
+      const callerRow = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === callerUserId && m.status === 'active',
+      );
+      if (!callerRow || !['admin', 'owner'].includes(callerRow.role as string)) {
+        return { data: null, error: { code: 'P0001', message: 'not_admin' } };
+      }
+      const claims = this.tables.get('organization_domain_claims') ?? [];
+      const otherOwned = claims.find(
+        (c) => (c.domain as string).toLowerCase() === domain.toLowerCase()
+          && c.ever_verified === true
+          && c.organization_id !== orgId,
+      );
+      if (otherOwned) {
+        return { data: null, error: { code: 'P0001', message: 'domain_already_claimed' } };
+      }
+      const samePending = claims.find(
+        (c) => (c.domain as string).toLowerCase() === domain.toLowerCase()
+          && c.organization_id === orgId
+          && c.status === 'pending',
+      );
+      if (samePending) {
+        return { data: null, error: { code: 'P0001', message: 'domain_already_pending' } };
+      }
+      const row: Row = {
+        id: globalThis.crypto.randomUUID(),
+        organization_id: orgId,
+        domain,
+        status: 'pending',
+        ever_verified: false,
+        challenge_token: challenge,
+        verified_at: null,
+        revoked_at: null,
+        created_by: callerUserId,
+        created_at: new Date().toISOString(),
+      };
+      claims.push(row);
+      this.tables.set('organization_domain_claims', claims);
+      const audits = this.tables.get('audit_events') ?? [];
+      audits.push({
+        organization_id: orgId,
+        actor_user_id: callerUserId,
+        action: 'org.sso.domain.claim_started',
+        subject_type: 'organization_domain_claim',
+        subject_id: row.id,
+        metadata: { domain },
+        created_at: new Date().toISOString(),
+      });
+      this.tables.set('audit_events', audits);
+      return {
+        data: { id: row.id, domain, status: 'pending', challengeToken: challenge },
+        error: null,
+      };
+    }
+
+    if (fn === 'mark_domain_verified') {
+      const callerUserId = args.p_caller_user_id as string;
+      const orgId = args.p_org_id as string;
+      const domainId = args.p_domain_id as string;
+      const memberships = this.tables.get('memberships') ?? [];
+      const callerRow = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === callerUserId && m.status === 'active',
+      );
+      if (!callerRow || !['admin', 'owner'].includes(callerRow.role as string)) {
+        return { data: null, error: { code: 'P0001', message: 'not_admin' } };
+      }
+      const claims = this.tables.get('organization_domain_claims') ?? [];
+      const claim = claims.find((c) => c.id === domainId && c.organization_id === orgId);
+      if (!claim) return { data: null, error: { code: 'P0001', message: 'domain_not_found' } };
+      if (claim.status === 'verified') {
+        return { data: { id: claim.id, status: 'verified', noop: true }, error: null };
+      }
+      if (claim.status === 'revoked') {
+        return { data: null, error: { code: 'P0001', message: 'domain_revoked' } };
+      }
+      // Concurrent-verify race: check if any other claim has ever_verified for same lower(domain).
+      const conflict = claims.find(
+        (c) => c.id !== claim.id
+          && (c.domain as string).toLowerCase() === (claim.domain as string).toLowerCase()
+          && c.ever_verified === true,
+      );
+      if (conflict) {
+        return { data: null, error: { code: 'P0001', message: 'domain_already_claimed' } };
+      }
+      claim.status = 'verified';
+      claim.ever_verified = true;
+      claim.verified_at = new Date().toISOString();
+      const audits = this.tables.get('audit_events') ?? [];
+      audits.push({
+        organization_id: orgId,
+        actor_user_id: callerUserId,
+        action: 'org.sso.domain.verified',
+        subject_type: 'organization_domain_claim',
+        subject_id: claim.id,
+        metadata: { domain: claim.domain },
+        created_at: new Date().toISOString(),
+      });
+      this.tables.set('audit_events', audits);
+      return { data: { id: claim.id, status: 'verified', noop: false }, error: null };
+    }
+
+    if (fn === 'revoke_domain_claim') {
+      const callerUserId = args.p_caller_user_id as string;
+      const orgId = args.p_org_id as string;
+      const domainId = args.p_domain_id as string;
+      const memberships = this.tables.get('memberships') ?? [];
+      const callerRow = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === callerUserId && m.status === 'active',
+      );
+      if (!callerRow || !['admin', 'owner'].includes(callerRow.role as string)) {
+        return { data: null, error: { code: 'P0001', message: 'not_admin' } };
+      }
+      const claims = this.tables.get('organization_domain_claims') ?? [];
+      const claim = claims.find((c) => c.id === domainId && c.organization_id === orgId);
+      if (!claim) return { data: null, error: { code: 'P0001', message: 'domain_not_found' } };
+      if (claim.status === 'revoked') {
+        return { data: { id: claim.id, status: 'revoked', noop: true }, error: null };
+      }
+      claim.status = 'revoked';
+      claim.revoked_at = new Date().toISOString();
+      // ever_verified intentionally preserved (codex pass-1 CRITICAL #1).
+      const audits = this.tables.get('audit_events') ?? [];
+      audits.push({
+        organization_id: orgId,
+        actor_user_id: callerUserId,
+        action: 'org.sso.domain.revoked',
+        subject_type: 'organization_domain_claim',
+        subject_id: claim.id,
+        metadata: { domain: claim.domain },
+        created_at: new Date().toISOString(),
+      });
+      this.tables.set('audit_events', audits);
+      return { data: { id: claim.id, status: 'revoked', noop: false }, error: null };
+    }
+
+    if (fn === 'set_sso_required') {
+      const callerUserId = args.p_caller_user_id as string;
+      const orgId = args.p_org_id as string;
+      const required = args.p_required as boolean;
+      const memberships = this.tables.get('memberships') ?? [];
+      const callerRow = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === callerUserId && m.status === 'active',
+      );
+      if (!callerRow || callerRow.role !== 'owner') {
+        return { data: null, error: { code: 'P0001', message: 'not_owner' } };
+      }
+      const settings = this.tables.get('organization_settings') ?? [];
+      const existing = settings.find((s) => s.organization_id === orgId);
+      const currentStatus = (existing?.sso_connection_status as string | undefined) ?? 'inactive';
+      // Asymmetric guard.
+      if (required === true && currentStatus !== 'active') {
+        return { data: null, error: { code: 'P0001', message: 'no_active_sso' } };
+      }
+      // Codex PR-pass WARNING #6 — turning ON requires verified domain.
+      if (required === true) {
+        const claims = this.tables.get('organization_domain_claims') ?? [];
+        const hasVerified = claims.some(
+          (c) => c.organization_id === orgId && c.status === 'verified',
+        );
+        if (!hasVerified) {
+          return { data: null, error: { code: 'P0001', message: 'no_verified_domain' } };
+        }
+      }
+      const previous = (existing?.sso_required as boolean | undefined) ?? false;
+      if (existing) {
+        existing.sso_required = required;
+        existing.updated_at = new Date().toISOString();
+        existing.updated_by = callerUserId;
+      } else {
+        settings.push({
+          organization_id: orgId,
+          sso_required: required,
+          updated_at: new Date().toISOString(),
+          updated_by: callerUserId,
+        });
+        this.tables.set('organization_settings', settings);
+      }
+      const audits = this.tables.get('audit_events') ?? [];
+      audits.push({
+        organization_id: orgId,
+        actor_user_id: callerUserId,
+        action: 'org.sso.required.toggled',
+        subject_type: 'organization',
+        subject_id: orgId,
+        metadata: { previous, new: required },
+        created_at: new Date().toISOString(),
+      });
+      this.tables.set('audit_events', audits);
+      return { data: { organizationId: orgId, ssoRequired: required }, error: null };
+    }
+
+    if (fn === 'consume_sso_authentication_state') {
+      const stateId = args.p_state_id as string;
+      const nonceHash = args.p_nonce_hash as string;
+      const wosOrg = args.p_workos_organization_id as string;
+      const wosConn = args.p_workos_connection_id as string;
+      const states = this.tables.get('sso_authentication_states') ?? [];
+      const row = states.find((s) => s.id === stateId);
+      if (!row) return { data: null, error: { code: 'P0001', message: 'state_not_found' } };
+      if (row.consumed_at) return { data: null, error: { code: 'P0001', message: 'state_already_consumed' } };
+      const expiresAt = new Date(row.expires_at as string).getTime();
+      if (Date.now() > expiresAt) {
+        return { data: null, error: { code: 'P0001', message: 'state_expired' } };
+      }
+      // Atomic consume.
+      row.consumed_at = new Date().toISOString();
+      if (row.nonce !== nonceHash) {
+        return { data: null, error: { code: 'P0001', message: 'state_nonce_mismatch' } };
+      }
+      if (row.workos_organization_id !== wosOrg) {
+        return { data: null, error: { code: 'P0001', message: 'state_workos_org_mismatch' } };
+      }
+      if (row.workos_connection_id !== wosConn) {
+        return { data: null, error: { code: 'P0001', message: 'state_workos_connection_mismatch' } };
+      }
+      return {
+        data: {
+          stateId,
+          organizationId: row.organization_id,
+          initiatedEmail: row.initiated_email ?? null,
+        },
+        error: null,
+      };
+    }
+
+    if (fn === 'record_workos_sign_in') {
+      const orgId = args.p_organization_id as string;
+      const email = args.p_email as string;
+      const normalizedDomain = args.p_normalized_email_domain as string;
+      const wosUserId = args.p_workos_user_id as string;
+      const wosOrgId = args.p_workos_organization_id as string;
+      const wosConnId = args.p_workos_connection_id as string;
+      if (!email || !normalizedDomain) {
+        return { data: null, error: { code: 'P0001', message: 'invalid_email' } };
+      }
+      // Verified domain check.
+      const claims = this.tables.get('organization_domain_claims') ?? [];
+      const verifiedClaim = claims.find(
+        (c) => c.organization_id === orgId
+          && (c.domain as string).toLowerCase() === normalizedDomain.toLowerCase()
+          && c.status === 'verified',
+      );
+      if (!verifiedClaim) {
+        return { data: null, error: { code: 'P0001', message: 'email_domain_not_claimed_for_org' } };
+      }
+      // Workos org binding.
+      const settings = this.tables.get('organization_settings') ?? [];
+      const settingsRow = settings.find((s) => s.organization_id === orgId);
+      if (!settingsRow || settingsRow.workos_organization_id !== wosOrgId) {
+        return { data: null, error: { code: 'P0001', message: 'unknown_org' } };
+      }
+      // Identity-link path.
+      const identities = this.tables.get('workos_user_identities') ?? [];
+      const link = identities.find(
+        (i) => i.workos_user_id === wosUserId && i.workos_organization_id === wosOrgId,
+      );
+      let userId: string | null = null;
+      let identityCreated = false;
+      if (link) {
+        userId = link.user_id as string;
+      } else {
+        const users = this.tables.get('auth.users') ?? [];
+        const u = users.find((x) => (x.email as string).toLowerCase() === email.toLowerCase());
+        if (!u) {
+          return {
+            data: { result: 'user_not_provisioned', email, organizationId: orgId },
+            error: null,
+          };
+        }
+        userId = u.id as string;
+        identities.push({
+          id: globalThis.crypto.randomUUID(),
+          user_id: userId,
+          workos_user_id: wosUserId,
+          workos_organization_id: wosOrgId,
+          workos_connection_id: wosConnId,
+          email_at_link: email.toLowerCase(),
+          created_at: new Date().toISOString(),
+        });
+        this.tables.set('workos_user_identities', identities);
+        identityCreated = true;
+      }
+      const memberships = this.tables.get('memberships') ?? [];
+      let membershipCreated = false;
+      const existingMembership = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === userId && m.status === 'active',
+      );
+      if (!existingMembership) {
+        memberships.push({
+          id: globalThis.crypto.randomUUID(),
+          organization_id: orgId,
+          user_id: userId,
+          role: 'member',
+          status: 'active',
+          joined_at: new Date().toISOString(),
+        });
+        this.tables.set('memberships', memberships);
+        membershipCreated = true;
+      }
+      const audits = this.tables.get('audit_events') ?? [];
+      audits.push({
+        organization_id: orgId,
+        actor_user_id: userId,
+        action: 'org.sso.user.signed_in',
+        subject_type: 'user',
+        subject_id: userId,
+        metadata: {
+          email,
+          workosUserId: wosUserId,
+          workosOrganizationId: wosOrgId,
+          membershipCreated,
+          identityCreated,
+        },
+        created_at: new Date().toISOString(),
+      });
+      this.tables.set('audit_events', audits);
+      return {
+        data: { result: 'linked', userId, membershipCreated, identityCreated },
+        error: null,
+      };
+    }
+
+    if (fn === 'audit_append') {
+      const audits = this.tables.get('audit_events') ?? [];
+      audits.push({
+        organization_id: args.p_organization_id,
+        actor_user_id: args.p_actor_user_id ?? null,
+        action: args.p_action,
+        subject_type: args.p_subject_type,
+        subject_id: args.p_subject_id,
+        metadata: args.p_metadata,
+        created_at: new Date().toISOString(),
+      });
+      this.tables.set('audit_events', audits);
+      return { data: 1, error: null };
+    }
+
     return { data: null, error: { message: `unknown rpc: ${fn}` } };
   }
 
@@ -1080,6 +1432,66 @@ export class SupabaseStub {
       },
       rpc(fn: string, args: Record<string, unknown>): Promise<StubResult<unknown>> {
         return stub.callRpc(fn, args);
+      },
+      auth: {
+        admin: {
+          async getUserById(userId: string) {
+            const users = stub.tables.get('auth.users') ?? [];
+            const u = users.find((x) => x.id === userId);
+            if (!u) return { data: null, error: { message: 'user not found', status: 404 } };
+            return { data: { user: { id: u.id, email: u.email } }, error: null };
+          },
+          async createUser(payload: { email: string; email_confirm?: boolean; user_metadata?: Record<string, unknown> }) {
+            const users = stub.tables.get('auth.users') ?? [];
+            const existing = users.find((u) => (u.email as string).toLowerCase() === payload.email.toLowerCase());
+            if (existing) {
+              return { data: null, error: { message: 'User already exists', status: 422 } };
+            }
+            const id = globalThis.crypto.randomUUID();
+            users.push({
+              id,
+              email: payload.email,
+              user_metadata: payload.user_metadata ?? {},
+              email_confirmed_at: payload.email_confirm ? new Date().toISOString() : null,
+            });
+            stub.tables.set('auth.users', users);
+            return { data: { user: { id, email: payload.email } }, error: null };
+          },
+          async generateLink(payload: { type: string; email: string }) {
+            const users = stub.tables.get('auth.users') ?? [];
+            const u = users.find((x) => (x.email as string).toLowerCase() === payload.email.toLowerCase());
+            if (!u) return { data: null, error: { message: 'user not found' } };
+            // Encode user id into the hashed_token so verifyOtp can look it up.
+            const hashed_token = `stub-magiclink-${u.id}`;
+            return {
+              data: {
+                user: { id: u.id, email: u.email },
+                properties: { hashed_token, action_link: `https://stub/?token=${hashed_token}` },
+              },
+              error: null,
+            };
+          },
+          async signOut(_token: string, _scope: string) {
+            return { error: null };
+          },
+        },
+        async verifyOtp(payload: { token_hash: string; type: string }) {
+          const id = payload.token_hash.replace(/^stub-magiclink-/, '');
+          const users = stub.tables.get('auth.users') ?? [];
+          const u = users.find((x) => x.id === id);
+          if (!u) return { data: null, error: { message: 'invalid token' } };
+          return {
+            data: {
+              user: { id: u.id, email: u.email },
+              session: {
+                access_token: `at-${id}`,
+                refresh_token: `rt-${id}`,
+                expires_in: 3600,
+              },
+            },
+            error: null,
+          };
+        },
       },
       storage: {
         from(bucket: string) {

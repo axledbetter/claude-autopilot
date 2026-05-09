@@ -2,6 +2,39 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 6.3.0-pre.11 (2026-05-09)
+
+**v7.0 Phase 5.6 — WorkOS SSO sign-in flow.** End-to-end SSO sign-in built on the Phase 5.4 foundation. Three sub-features that ship together (any subset is unusable):
+
+- **Domain claim with DNS TXT challenge.** Admin-gated `POST/DELETE /api/dashboard/orgs/:orgId/sso/domains` + `POST .../verify`. Codex pass-1 CRITICAL #1 — `ever_verified` flag + unique partial index on `(lower(domain)) WHERE ever_verified=TRUE` blocks revoke-then-takeover by another org.
+- **Sign-in flow.** Public `POST /api/auth/sso/start` (email-only — `orgId`-mode removed for anti-enumeration per codex pass-2 WARNING #8) → `GET /api/auth/sso/callback`. State binding (codex pass-2 CRITICAL #2): single canonical protocol — cookie holds HMAC-signed `{stateId, nonce}`, WorkOS state param = stateId only, server-stored `sso_authentication_states` row + atomic `consume_sso_authentication_state` RPC validates `(stateId, sha256(nonce))` + workos org/connection match. Session minted via admin-mediated magic link (codex pass-1 CRITICAL #4 — `verifyOtp` uses `token_hash` not `token`); session-user-mismatch verification revokes + audits + 500.
+- **`sso_required` toggle.** Owner-only `PATCH /api/dashboard/orgs/:orgId/sso/required`. Asymmetric guard (codex pass-1 WARNING #7): turning OFF always allowed; turning ON requires active SSO. UI banner per codex pass-2 NOTE #2 explains the asymmetric state.
+
+Single chokepoint enforcement: `enforceSsoRequired()` helper called from `/api/auth/callback` after every Google/magic-link `exchangeCodeForSession`. Sign-in surface registry table in spec documents the auth boundary.
+
+Identity link (codex pass-1 WARNING #6): `workos_user_identities` table preserves `(workos_user_id, workos_organization_id) → user_id` mapping so future sign-ins re-use the same Supabase user even if IdP email changes. Magic link minted with the linked Supabase user's CURRENT email (looked up via `auth.admin.getUserById`), not the WorkOS profile email.
+
+Migration `data/deltas/20260509120000_phase5_6_workos_signin.sql`:
+- ALTER `organization_settings` ADD `sso_required BOOLEAN DEFAULT FALSE`.
+- 3 new tables (`organization_domain_claims`, `sso_authentication_states`, `workos_user_identities`) with RLS + service-role grants.
+- 6 SECURITY DEFINER RPCs: `claim_domain`, `mark_domain_verified`, `revoke_domain_claim`, `set_sso_required`, `consume_sso_authentication_state` (atomic UPDATE...RETURNING per codex plan-pass WARNING #5), `record_workos_sign_in` (verified-domain match required per codex pass-1 CRITICAL #3). All REVOKE FROM PUBLIC,anon,authenticated; GRANT TO service_role.
+
+New deps: `tldts` (maintained PSL package per codex pass-1 NOTE #1).
+New env vars: `SSO_STATE_SIGNING_SECRET` (≥32 bytes, module-load validation per codex plan-pass WARNING #4), `WORKOS_CLIENT_ID` (required by `workos.sso.getAuthorizationUrl`).
+
+Helpers:
+- `lib/dns/normalize-domain.ts` — `normalizeDomain` + `normalizeEmailDomain` (IDN, public-suffix-aware) used by every domain-touching surface.
+- `lib/dns/verify-txt.ts` — `Promise.race`-bounded TXT lookup (codex pass-2 WARNING #4 — `node:dns/promises.resolveTxt` doesn't honor AbortSignal).
+- `lib/auth/enforce-sso-required.ts` — sign-in surface chokepoint.
+- `lib/workos/sign-in.ts` — `getSsoStateSigningSecret` (length-validated singleton), `signStateCookie` / `parseStateCookie` (HMAC), `buildAuthorizeUrl` (passes clientId per codex plan-pass CRITICAL #3).
+- `lib/dashboard/membership-guard.ts` MAP gains 13 new error codes.
+
+UI:
+- `/login/sso` page + `<SsoSignInForm>` client component.
+- `<SsoDomainsCard>` + `<SsoRequiredToggle>` embedded in admin SSO page (toggle renders even when SSO inactive per codex pass-1 WARNING #7).
+
+Tests: 5 new test files (54 tests). domains.test.ts (11), required.test.ts (4), start.test.ts (5), callback.test.ts (10), sso-signin-privilege.test.ts (13), normalize-domain.test.ts (19), verify-txt.test.ts (6), enforce-sso-required.test.ts (7), sign-in.test.ts (11). Stub extensions for 7 new RPCs (`claim_domain`, `mark_domain_verified`, `revoke_domain_claim`, `set_sso_required`, `consume_sso_authentication_state`, `record_workos_sign_in`, `audit_append`) + 3 new tables + `auth.admin.{getUserById,createUser,generateLink,signOut}` + `auth.verifyOtp` mocks.
+
 ## 6.3.0-pre.10 (2026-05-08)
 
 **v7.0 Phase 5.4 — WorkOS SSO setup.** Foundational SSO wiring: server-owned WorkOS organization correlation, admin-gated portal link, signature-verified lifecycle webhook, owner-gated disconnect.
