@@ -531,3 +531,28 @@ second member's. Personal-tier users (no org) get their own
 **CSRF posture.** Cookie-authenticated mutating routes (mint, revoke, visibility, checkout, portal) now verify the `Origin` header against `AUTOPILOT_PUBLIC_BASE_URL`. API-key bearer callers (CLI, server-to-server) bypass the check — they don't reliably set Origin.
 
 **Operator follow-up.** Run `/migrate` to apply `data/deltas/20260508120000_phase4_runs_metadata.sql` (adds `runs.cost_usd / duration_ms / run_status` + the `runs_select_public` policy + column-level anon GRANT). The finalize handler graceful-drops the cost/duration/status writes if columns aren't created yet, so the migration can lag the deploy by a few minutes without breaking finalize.
+
+---
+
+## v6.2.x → v7.0
+
+The v7.0 release is the cutover for the hosted product (autopilot.dev)
+and removes the engine-off code path entirely. See
+[docs/v7/breaking-changes.md](../v7/breaking-changes.md) for the full
+migration checklist.
+
+**TL;DR for CLI users:**
+
+1. `npm install -g @delegance/claude-autopilot@latest`
+2. Drop `--no-engine` from your CLI invocations / scripts / CI.
+3. Unset `CLAUDE_AUTOPILOT_ENGINE=off` in your env / CI.
+4. If your code imports `ENGINE_DEFAULT_V6_0` or `ENGINE_DEFAULT_V6_1`
+   directly, replace with literal `true`.
+5. Existing engine state (`state.json` + `events.ndjson`) keeps working
+   — v6 runs are readable by v7. v7-written runs are NOT readable by
+   v6, so plan rollbacks accordingly.
+
+**For hosted product operators:** see [docs/v7/runbook.md](../v7/runbook.md)
+for the Vercel deployment checklist (env vars, Stripe products, WorkOS
+dashboard, cron secret). New env var: `MEMBERSHIP_CHECK_COOKIE_SECRET`
+(≥32 bytes; `openssl rand -hex 32`).

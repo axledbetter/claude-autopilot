@@ -137,15 +137,13 @@ export const HELP_OPTIONS: Record<string, string> = {
   --focus <type>       security | logic | performance (default: all)
   --dry-run            List files that would be scanned without running
   --config <path>      Path to config file
-  --engine             Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
-  --no-engine          Force the legacy stateless code path (overrides config / env)`,
+  --engine             [v7.0 deprecated no-op] engine is always on; flag emits a warning`,
   pr: `Options (pr):
   <number>                   PR number to review (optional if on a PR branch)
   --no-post-comments         Skip posting/updating PR summary comment
   --no-inline-comments       Skip posting per-line inline annotations
   --config <path>            Path to config file
-  --engine                   Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
-  --no-engine                Force the legacy stateless code path (overrides config / env)
+  --engine                   [v7.0 deprecated no-op] engine is always on; flag emits a warning
 
   Note: pr is side-effecting — it posts/updates a PR comment and inline
         review comments via the gh CLI. Engine-on records a github-pr
@@ -156,16 +154,13 @@ export const HELP_OPTIONS: Record<string, string> = {
   --severity <critical|warning|all>  Which findings to fix (default: critical)
   --dry-run                          Preview fixes without writing files
   --config <path>                    Path to config file
-  --engine                           Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
-  --no-engine                        Force the legacy stateless code path (overrides config / env)`,
+  --engine                           [v7.0 deprecated no-op] engine is always on; flag emits a warning`,
   costs: `Options (costs):
   --config <path>      Path to config file
-  --engine             Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
-  --no-engine          Force the legacy stateless code path (overrides config / env)`,
+  --engine             [v7.0 deprecated no-op] engine is always on; flag emits a warning`,
   brainstorm: `Options (brainstorm):
   --config <path>      Path to config file
-  --engine             Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
-  --no-engine          Force the legacy stateless code path (overrides config / env)
+  --engine             [v7.0 deprecated no-op] engine is always on; flag emits a warning
   --json               Emit a structured JSON envelope on stdout
 
   Note: brainstorm is primarily a Claude Code skill (/brainstorm). The CLI
@@ -173,8 +168,7 @@ export const HELP_OPTIONS: Record<string, string> = {
         snapshot (state.json + events.ndjson) for pipeline introspection.`,
   spec: `Options (spec):
   --config <path>      Path to config file
-  --engine             Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
-  --no-engine          Force the legacy stateless code path (overrides config / env)
+  --engine             [v7.0 deprecated no-op] engine is always on; flag emits a warning
   --json               Emit a structured JSON envelope on stdout
 
   Note: spec is primarily a Claude Code skill (entered via /brainstorm). The
@@ -184,20 +178,17 @@ export const HELP_OPTIONS: Record<string, string> = {
   --spec <path>        Spec file the planner should read (optional)
   --output <path>      Where to write the plan markdown (default: .guardrail-cache/plans/<ts>-plan.md)
   --config <path>      Path to config file
-  --engine             Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
-  --no-engine          Force the legacy stateless code path (overrides config / env)`,
+  --engine             [v7.0 deprecated no-op] engine is always on; flag emits a warning`,
   review: `Options (review):
   --context <text>     Optional context note injected into the review log
   --output <path>      Where to write the review log (default: .guardrail-cache/reviews/<ts>-review.md)
   --config <path>      Path to config file
-  --engine             Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
-  --no-engine          Force the legacy stateless code path (overrides config / env)`,
+  --engine             [v7.0 deprecated no-op] engine is always on; flag emits a warning`,
   validate: `Options (validate):
   --context <text>     Optional context note injected into the validate log
   --output <path>      Where to write the validate log (default: .guardrail-cache/validate/<ts>-validate.md)
   --config <path>      Path to config file
-  --engine             Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
-  --no-engine          Force the legacy stateless code path (overrides config / env)
+  --engine             [v7.0 deprecated no-op] engine is always on; flag emits a warning
 
   Note: validate is primarily a Claude Code skill (/validate). The CLI verb
         is an engine-wrap shell; engine-on still produces a run-state
@@ -207,8 +198,7 @@ export const HELP_OPTIONS: Record<string, string> = {
   --mode <full>        Pipeline mode (v6.2.0 ships 'full' only — scan → spec → plan → implement)
   --phases <a,b,c>     Explicit phase list (comma-separated; overrides --mode)
   --budget <usd>       Run-scope budget cap (USD). Cross-phase — actualSoFar accumulates across phases.
-  --engine             Run under the v6 Run State Engine (REQUIRED — engine-off is rejected)
-  --no-engine          REJECTED — orchestrator requires engine-on (rejected at pre-flight, exit 1)
+  --engine             [v7.0 deprecated no-op] engine is always on; flag emits a warning
 
   Behavior: drives N pipeline phases under ONE runId so a \`runs watch <id>\`
             window covers the whole pipeline. Sequential — no parallel
@@ -252,8 +242,7 @@ export const HELP_OPTIONS: Record<string, string> = {
   --plan <path>        Plan file the implement phase consumed (e.g. docs/plans/<slug>.md)
   --output <path>      Where to write the implement log (default: .guardrail-cache/implement/<ts>-implement.md)
   --config <path>      Path to config file
-  --engine             Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
-  --no-engine          Force the legacy stateless code path (overrides config / env)
+  --engine             [v7.0 deprecated no-op] engine is always on; flag emits a warning
 
   Note: implement is primarily a Claude Code skill (claude-autopilot — reads
         plan, dispatches subagents per plan phase via subagent-driven-development,
@@ -280,8 +269,7 @@ export const HELP_OPTIONS: Record<string, string> = {
   --dry-run            Run skill in dry-run mode (no side effects)
   --yes                Required to apply prod migrations in CI
   --config <path>      Path to config file (default: ./guardrail.config.yaml)
-  --engine             Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
-  --no-engine          Force the legacy stateless code path (overrides config / env)
+  --engine             [v7.0 deprecated no-op] engine is always on; flag emits a warning
 
   Note: migrate is a side-effecting phase — re-running with --engine after a
         prior phase.success requires --force-replay (Phase 6+) because the
@@ -376,10 +364,10 @@ function padVerb(verb: string): string {
  */
 export const GLOBAL_FLAGS_BLOCK = `Global flags:
   --json                 Emit a structured JSON envelope on stdout (most verbs)
-  --engine               Run under the v6 Run State Engine (writes .guardrail-cache/runs/<ulid>/)
-  --no-engine            Force the legacy stateless code path (overrides config / env)
-                         Precedence: CLI > env (CLAUDE_AUTOPILOT_ENGINE) > config (engine.enabled) > built-in default
-                         v6.0.1: wired for \`scan\`. v6.0.2: wired for \`fix\` and \`costs\`. v6.0.3: wired for \`brainstorm\` and \`spec\`. v6.0.4: wired for \`plan\` and \`review\`. v6.0.5: wired for \`validate\`. v6.0.7: wired for \`implement\`. v6.0.8: wired for \`migrate\`. v6.0.9: wired for \`pr\`. ALL 10 phases now wrapped — v6.0.x feature-complete.`;
+  --engine               [v7.0 deprecated no-op] engine is always on; flag emits a warning
+                         v7.0 removed the engine-off opt-out flag and code path entirely.
+                         CLAUDE_AUTOPILOT_ENGINE=off is now ignored (warns once per process)
+                         instead of disabling the engine. See docs/v7/breaking-changes.md.`;
 
 /** Build the full two-level help text. Returned as a string so tests can assert against it without spawning. */
 export function buildHelpText(): string {

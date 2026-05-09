@@ -32,7 +32,8 @@ describe('appendEvent', () => {
     assert.equal(ev.seq, 1);
     assert.equal(ev.event, 'run.start');
     assert.equal(ev.runId, 'TESTRUN');
-    assert.equal(ev.schema_version, 1);
+    // v7.0 — schema_version bumped 1 → 2.
+    assert.equal(ev.schema_version, 2);
     assert.deepEqual((ev as RunEvent & { event: 'run.start' }).phases, ['a', 'b']);
     const raw = fs.readFileSync(eventsPath(dir), 'utf8');
     assert.ok(raw.endsWith('\n'));
@@ -243,15 +244,15 @@ describe('replayState / foldEvents', () => {
   it('foldEvents dedupes externalRefs by kind+id', () => {
     const dir = tmp();
     const events = [
-      { schema_version: 1, ts: 't', runId: 'R', seq: 1, writerId,
+      { schema_version: 2, ts: 't', runId: 'R', seq: 1, writerId,
         event: 'run.start', phases: ['pr'] },
-      { schema_version: 1, ts: 't', runId: 'R', seq: 2, writerId,
+      { schema_version: 2, ts: 't', runId: 'R', seq: 2, writerId,
         event: 'phase.start', phase: 'pr', phaseIdx: 0,
         idempotent: false, hasSideEffects: true, attempt: 1 },
-      { schema_version: 1, ts: 't', runId: 'R', seq: 3, writerId,
+      { schema_version: 2, ts: 't', runId: 'R', seq: 3, writerId,
         event: 'phase.externalRef', phase: 'pr', phaseIdx: 0,
         ref: { kind: 'github-pr', id: '42', observedAt: 't' } },
-      { schema_version: 1, ts: 't', runId: 'R', seq: 4, writerId,
+      { schema_version: 2, ts: 't', runId: 'R', seq: 4, writerId,
         event: 'phase.externalRef', phase: 'pr', phaseIdx: 0,
         ref: { kind: 'github-pr', id: '42', observedAt: 't' } },
     ] as RunEvent[];

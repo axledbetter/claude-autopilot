@@ -122,36 +122,17 @@ describe('autopilot --json — successful run envelope', () => {
 });
 
 // ============================================================================
-// Test 2 — pre-run failure (engine off) → runId: null, invalid_config, exit 1
+// v7.0 — engine-off rejection envelope test removed: engine is always
+// on, autopilot can no longer hit the invalid_config pre-run failure
+// from envEngine='off'. See tests/cli/no-engine-flag-removed.test.ts
+// for the v7.0 dispatcher-level rejection of `--no-engine`.
 // ============================================================================
 
-describe('autopilot --json — pre-run failure envelope', () => {
-  it('engine off → runId: null, errorCode: invalid_config, exitCode: 1', async () => {
-    const cwd = tmpProject();
-    const cap = captureStdio();
-    try {
-      const exit = await runAutopilotWithJsonEnvelope({
-        cwd,
-        envEngine: 'off',
-        __testInstallProcessHandlers: false,
-      });
-
-      assert.equal(exit, 1);
-      const lines = cap.stdoutLines();
-      assert.equal(lines.length, 1, 'exactly one envelope on stdout');
-      const env = JSON.parse(lines[0]!) as AutopilotJsonEnvelope;
-      assert.equal(env.runId, null);
-      assert.equal(env.status, 'failed');
-      assert.equal(env.exitCode, 1);
-      assert.equal(env.errorCode, 'invalid_config');
-      assert.equal(env.phases.length, 0);
-      assert.equal(env.totalCostUSD, 0);
-      assert.ok(env.errorMessage);
-      assert.ok(/engine/i.test(env.errorMessage), `errorMessage should mention engine: ${env.errorMessage}`);
-    } finally {
-      cap.restore();
-      cleanup(cwd);
-    }
+describe.skip('autopilot --json — pre-run failure envelope (v7.0 deferred)', () => {
+  it('placeholder', async () => {
+    // Intentionally empty — block kept so the file's outer describe
+    // count is stable for downstream tooling.
+    void {} as unknown;
   });
 });
 

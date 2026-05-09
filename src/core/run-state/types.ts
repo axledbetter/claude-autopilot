@@ -9,8 +9,14 @@
 // "Idempotency rules + external operation ledger", "Persistence protocol").
 
 /** Schema version for everything written by this engine. Bump on breaking
- *  changes to RunState / RunEvent / PhaseSnapshot shape. */
-export const RUN_STATE_SCHEMA_VERSION = 1 as const;
+ *  changes to RunState / RunEvent / PhaseSnapshot shape.
+ *
+ *  v7.0 — bumped from 1 to 2 to signal the v7 cycle on every newly-written
+ *  state.json. v6.x runs (schema_version=1) remain readable by v7 binaries
+ *  because `RUN_STATE_MIN_SUPPORTED_SCHEMA_VERSION` stays at 1. v6 binaries
+ *  cannot read v7-written runs; the corrupted_state error includes a
+ *  "downgrade resume is not supported" hint so operators know why. */
+export const RUN_STATE_SCHEMA_VERSION = 2 as const;
 export type SchemaVersion = typeof RUN_STATE_SCHEMA_VERSION;
 
 /** Identifies a single OS-level writer. PID + a hash of the hostname (we

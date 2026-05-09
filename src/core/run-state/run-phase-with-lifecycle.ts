@@ -42,7 +42,6 @@ import { appendEvent, replayState } from './events.ts';
 import { writeStateSnapshot } from './state.ts';
 import {
   resolveEngineEnabled,
-  emitEngineOffDeprecationWarning,
   type ResolveEngineResult,
 } from './resolve-engine.ts';
 import type { GuardrailConfig } from '../config/types.ts';
@@ -83,15 +82,11 @@ export interface RunPhaseWithLifecycleOpts<I, O> {
    *  unset. The helper passes this through to `resolveEngineEnabled` —
    *  invalid values fall through with a `run.warning` recorded automatically. */
   envEngine: string | undefined;
-  /** Engine-off escape hatch — what to return when `resolveEngineEnabled`
-   *  decides the engine should NOT run. Most callers pass an async function
-   *  that runs the legacy code path (typically the same `phase.run` body
-   *  invoked without the lifecycle wrapper). The helper does not invoke
-   *  `phase.run` for engine-off so the caller has full control over the
-   *  legacy path's behavior — keeps engine-off byte-for-byte identical to
-   *  pre-v6 behavior even when the phase body's signature would otherwise
-   *  pin the call shape. */
-  runEngineOff: () => Promise<O>;
+  /** v6.x escape hatch — invoked when the engine was disabled. Retained
+   *  in the v7.0 type for source compatibility with existing callers,
+   *  but the helper NEVER calls it in v7.0+ (engine-off path was
+   *  removed). Optional in v7.0; can be omitted from new call sites. */
+  runEngineOff?: () => Promise<O>;
 }
 
 /** What the helper hands back. `runId` and `runDir` are null on the
@@ -129,13 +124,13 @@ export interface RunPhaseWithLifecycleResult<O> {
 export async function runPhaseWithLifecycle<I, O>(
   opts: RunPhaseWithLifecycleOpts<I, O>,
 ): Promise<RunPhaseWithLifecycleResult<O>> {
-  const { cwd, phase, input, config, cliEngine, envEngine, runEngineOff } = opts;
+  const { cwd, phase, input, config, cliEngine, envEngine } = opts;
 
-  // Resolve engine via the canonical precedence (CLI > env > config >
-  // built-in default). The resolver is pure — same inputs always produce
-  // the same decision. We DO consult the loaded config's `engine.enabled`
-  // here so the helper's caller doesn't have to repeat the conditional
-  // spread that every wrapped verb wrote inline.
+  // v7.0 — engine is always on. resolveEngineEnabled() returns
+  // { enabled: true, source: 'default' } unconditionally. We still
+  // pass the v6-era inputs through so any future re-introduction of
+  // observability (a run.warning when a user passes the removed flags
+  // via env vars in CI) is a one-line change.
   const engineResolved: ResolveEngineResult = resolveEngineEnabled({
     ...(cliEngine !== undefined ? { cliEngine } : {}),
     ...(envEngine !== undefined ? { envValue: envEngine } : {}),
@@ -143,19 +138,6 @@ export async function runPhaseWithLifecycle<I, O>(
       ? { configEnabled: config.engine.enabled }
       : {}),
   });
-
-  if (!engineResolved.enabled) {
-    // Engine off — call the caller's legacy path. No run dir, no events,
-    // no lifecycle work. Behavior is byte-for-byte identical to pre-engine
-    // versions of the verb. v6.1+ emits a one-line stderr deprecation
-    // notice when the user explicitly opted out (CLI / env / config); the
-    // v6.1 default is `enabled: true`, so a `'default'` source can't reach
-    // this branch and the deprecation helper no-ops on the `enabled: true`
-    // path. v7 removes the opt-out entirely.
-    emitEngineOffDeprecationWarning(engineResolved);
-    const output = await runEngineOff();
-    return { output, runId: null, runDir: null };
-  }
 
   // Engine on — full lifecycle. Mirrors the pre-v6.0.6 inline shape that
   // every wrapped verb duplicated.
@@ -182,6 +164,30 @@ export async function runPhaseWithLifecycle<I, O>(
       },
       { writerId: created.lock.writerId, runId: created.runId },
     );
+  }
+
+  // v7.0 — emit `engine_off_removed` warning when CLAUDE_AUTOPILOT_ENGINE
+  // is set to an off-style value. The env value is otherwise ignored
+  // (engine remains on). Softer than --no-engine (which exits 1) because
+  // env vars in CI are sticky and silently breaking every v6.x → v7
+  // upgrade in CI on day one would burn user trust. See spec test #1(c).
+  if (envEngine !== undefined) {
+    const normalized = envEngine.trim().toLowerCase();
+    if (normalized === 'off' || normalized === 'false' || normalized === '0' || normalized === 'no') {
+      appendEvent(
+        created.runDir,
+        {
+          event: 'run.warning',
+          message: 'engine_off_removed',
+          details: {
+            code: 'engine_off_removed',
+            envValue: envEngine,
+            note: 'CLAUDE_AUTOPILOT_ENGINE=off has no effect in v7.0+; engine remains on.',
+          },
+        },
+        { writerId: created.lock.writerId, runId: created.runId },
+      );
+    }
   }
 
   const runStartedAt = Date.now();

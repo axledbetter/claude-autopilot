@@ -153,6 +153,47 @@ describe('replayState — schema_version range guard (v6.2.2)', () => {
     );
   });
 
+  // v7.0 — schema bumped from 1 → 2 with v6 read back-compat preserved.
+  it('v7.0: RUN_STATE_SCHEMA_VERSION === 2', () => {
+    assert.equal(RUN_STATE_SCHEMA_VERSION, 2);
+  });
+
+  it('v7.0: MIN_SUPPORTED stays at 1 — v6.x runs (schema_version=1) are still readable', () => {
+    assert.equal(RUN_STATE_MIN_SUPPORTED_SCHEMA_VERSION, 1);
+    const dir = tmp();
+    writeForcedRunStart(dir, 1);
+    // v6 dir replays without throwing on a v7 binary.
+    const state = replayState(dir);
+    assert.equal(state.runId, path.basename(dir));
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('v7.0: schema_version above MAX includes "downgrade resume is not supported" hint + [1..2] range', () => {
+    // Simulate a v8-written run dir replayed by a v7 binary — the same
+    // shape a v6 binary would see when reading a v7-written dir.
+    const dir = tmp();
+    writeForcedRunStart(dir, RUN_STATE_MAX_SUPPORTED_SCHEMA_VERSION + 1);
+    let caught: unknown;
+    try {
+      replayState(dir);
+    } catch (err) { caught = err; }
+    assert.ok(caught instanceof GuardrailError);
+    const msg = (caught as GuardrailError).message;
+    assert.ok(
+      msg.includes('downgrade resume is not supported'),
+      `expected "downgrade resume is not supported" hint; got: ${msg}`,
+    );
+    assert.ok(
+      msg.includes(`[${RUN_STATE_MIN_SUPPORTED_SCHEMA_VERSION}..${RUN_STATE_MAX_SUPPORTED_SCHEMA_VERSION}]`),
+      `expected "[1..2]" range; got: ${msg}`,
+    );
+    assert.ok(
+      msg.includes(`schema_version=${RUN_STATE_MAX_SUPPORTED_SCHEMA_VERSION + 1}`),
+      `expected observed schema_version in message; got: ${msg}`,
+    );
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   /** Build an events.ndjson with a single run.start whose schema_version
    *  is forced to `version`. Bypasses appendEvent so we can inject an
    *  out-of-range value that the writer would never produce naturally. */

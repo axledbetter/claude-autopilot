@@ -80,7 +80,7 @@ describe('review --engine smoke (v6.0.4)', () => {
       const exit = await runReview({ cwd, cliEngine: false });
       assert.equal(exit, 0);
       const runs = path.join(cwd, '.guardrail-cache', 'runs');
-      assert.equal(fs.existsSync(runs), false, 'engine-off path should not create run dir');
+      assert.equal(fs.existsSync(runs), true, 'v7.0: cliEngine=false ignored — engine still runs');
     } finally {
       cleanup(cwd);
     }
@@ -172,19 +172,6 @@ describe('review --engine smoke (v6.0.4)', () => {
     }
   });
 
-  it('CLI --no-engine wins over env on', async () => {
-    const cwd = tmpProject();
-    try {
-      const exit = await runReview({ cwd, cliEngine: false, envEngine: 'on' });
-      assert.equal(exit, 0);
-      const runs = path.join(cwd, '.guardrail-cache', 'runs');
-      assert.equal(
-        fs.existsSync(runs),
-        false,
-        '--no-engine must beat env on — no run dir expected',
-      );
-    } finally {
-      cleanup(cwd);
-    }
-  });
+  // v7.0 — `--no-engine wins over env on` test removed: engine is
+  // unconditionally on regardless of cli/env precedence.
 });

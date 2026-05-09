@@ -87,11 +87,7 @@ describe('scan --engine smoke (v6.0.1 Part A)', () => {
       assert.equal(exit, 0, 'expected scan to exit 0 with zero findings');
       // No .guardrail-cache/runs/ directory should be produced.
       const runs = path.join(cwd, '.guardrail-cache', 'runs');
-      assert.equal(
-        fs.existsSync(runs),
-        false,
-        `engine-off path should not create ${runs} — got dir`,
-      );
+      assert.equal(fs.existsSync(runs), true, 'v7.0: cliEngine=false ignored — engine still runs');
     } finally {
       cleanup(cwd);
     }
@@ -177,52 +173,11 @@ describe('scan --engine smoke (v6.0.1 Part A)', () => {
     }
   });
 
-  it('CLI --no-engine wins over env on', async () => {
-    const cwd = tmpProject();
-    try {
-      const exit = await runScan({
-        cwd,
-        targets: ['src/'],
-        cliEngine: false,
-        envEngine: 'on',
-        __testReviewEngine: makeFakeEngine(),
-      });
-      assert.equal(exit, 0);
-      const runs = path.join(cwd, '.guardrail-cache', 'runs');
-      assert.equal(
-        fs.existsSync(runs),
-        false,
-        '--no-engine must beat env on — no run dir expected',
-      );
-    } finally {
-      cleanup(cwd);
-    }
-  });
+  // v7.0 — `--no-engine wins over env on` test removed: engine is
+  // unconditionally on regardless of cli/env precedence.
 
-  it('invalid env value falls through and surfaces a run.warning when engine ends up on via config', async () => {
-    const cwd = tmpProject();
-    fs.writeFileSync(
-      path.join(cwd, 'guardrail.config.yaml'),
-      'configVersion: 1\nengine:\n  enabled: true\n',
-    );
-    try {
-      const exit = await runScan({
-        cwd,
-        targets: ['src/'],
-        envEngine: 'definitely-not-a-bool',
-        __testReviewEngine: makeFakeEngine(),
-      });
-      assert.equal(exit, 0);
-      const runDir = findRunDir(cwd);
-      assert.ok(runDir);
-      const events = readEvents(runDir!);
-      const warnings = events.filter(e => e.event === 'run.warning');
-      assert.ok(
-        warnings.some(w => /CLAUDE_AUTOPILOT_ENGINE/.test(JSON.stringify(w))),
-        `expected a run.warning citing the invalid env value — got ${JSON.stringify(warnings)}`,
-      );
-    } finally {
-      cleanup(cwd);
-    }
-  });
+  // v7.0 — invalid env value warning REMOVED. The resolver no longer
+  // distinguishes invalid from valid env values; all env values are
+  // ignored. The only env-driven warning is engine_off_removed for
+  // off-style values (covered in run-phase-with-lifecycle.test.ts).
 });

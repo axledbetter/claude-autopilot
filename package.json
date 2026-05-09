@@ -1,6 +1,6 @@
 {
   "name": "@delegance/claude-autopilot",
-  "version": "6.3.0-pre.13",
+  "version": "7.0.0",
   "type": "module",
   "publishConfig": {
     "tag": "next"

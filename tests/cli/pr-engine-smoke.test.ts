@@ -129,7 +129,7 @@ describe('pr --engine smoke (v6.0.9)', () => {
       });
       assert.equal(exit, 0);
       const runs = path.join(cwd, '.guardrail-cache', 'runs');
-      assert.equal(fs.existsSync(runs), false, 'engine-off path should not create run dir');
+      assert.equal(fs.existsSync(runs), true, 'v7.0: cliEngine=false ignored — engine still runs');
     } finally {
       cleanup(cwd);
     }
@@ -248,27 +248,8 @@ describe('pr --engine smoke (v6.0.9)', () => {
     }
   });
 
-  it('CLI --no-engine wins over env on', async () => {
-    const cwd = tmpProject();
-    try {
-      const exit = await runPr({
-        cwd,
-        cliEngine: false,
-        envEngine: 'on',
-        __testPrMeta: FAKE_PR_META,
-        __testRunCommand: fakeRunCommand,
-      });
-      assert.equal(exit, 0);
-      const runs = path.join(cwd, '.guardrail-cache', 'runs');
-      assert.equal(
-        fs.existsSync(runs),
-        false,
-        '--no-engine must beat env on — no run dir expected',
-      );
-    } finally {
-      cleanup(cwd);
-    }
-  });
+  // v7.0 — `--no-engine wins over env on` test removed: engine is
+  // unconditionally on regardless of cli/env precedence.
 
   it('engine on: surfaces inner runCommand failure as exit 1 (phase still succeeds — pipeline failure ≠ engine failure)', async () => {
     // The pr verb returns the runCommand's exit code (0 / 1). When

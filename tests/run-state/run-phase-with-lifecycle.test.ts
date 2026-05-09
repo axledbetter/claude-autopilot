@@ -84,99 +84,56 @@ function makeFailingPhase(opts: { name?: string; message?: string } = {}): RunPh
 const DEFAULT_CONFIG: GuardrailConfig = { configVersion: 1 };
 
 // ---------------------------------------------------------------------------
-// Engine-off path
+// v7.0 — engine-off path RETIRED. Every invocation runs engine-on
+// regardless of cliEngine / envEngine / config.engine.enabled. Tests
+// pin the always-on behavior across what used to be the precedence
+// matrix; the helper never invokes `runEngineOff` even when it's
+// supplied for source-compat. (Spec test #4)
 // ---------------------------------------------------------------------------
 
-describe('runPhaseWithLifecycle — engine-off path', () => {
-  it('calls runEngineOff when engine is disabled (--no-engine explicit opt-out, v6.1+)', async () => {
-    // v6.1+ flipped the default to ON, so engine-off requires an explicit
-    // opt-out (CLI flag here). v7 removes this escape hatch entirely.
+describe('runPhaseWithLifecycle — v7.0 engine always on', () => {
+  it('cliEngine=false is ignored (was --no-engine in v6.x; now no-op)', async () => {
     const cwd = tmpProject();
-    // Suppress the deprecation banner the helper now writes on engine-off.
-    const originalWrite = process.stderr.write.bind(process.stderr);
-    process.stderr.write = (((_: string | Uint8Array) => true) as unknown) as typeof process.stderr.write;
     try {
-      let offCalled = false;
       const result = await runPhaseWithLifecycle<NoopInput, NoopOutput>({
         cwd,
         phase: makeSuccessPhase(),
-        input: { tag: 'engine-off' },
+        input: { tag: 'cli-false' },
         config: DEFAULT_CONFIG,
         cliEngine: false,
         envEngine: undefined,
         runEngineOff: async () => {
-          offCalled = true;
-          return { tag: 'from-engine-off' };
+          throw new Error('runEngineOff must NOT be called in v7.0');
         },
       });
-      assert.equal(offCalled, true, 'runEngineOff must be invoked');
-      assert.equal(result.output.tag, 'from-engine-off', 'helper must return runEngineOff output');
-      assert.equal(result.runId, null, 'runId must be null on engine-off');
-      assert.equal(result.runDir, null, 'runDir must be null on engine-off');
-
-      const runs = path.join(cwd, '.guardrail-cache', 'runs');
-      assert.equal(fs.existsSync(runs), false, 'engine-off must not create run dir');
-    } finally {
-      process.stderr.write = originalWrite;
-      cleanup(cwd);
-    }
-  });
-
-  it('v6.1 default flip: undefined CLI/env + empty config → engine ON (no longer reaches engine-off)', async () => {
-    // Pinning the v6.1 behavior at the helper boundary. With nothing set,
-    // the helper now creates a run dir and runs the engine-on path.
-    const cwd = tmpProject();
-    try {
-      const result = await runPhaseWithLifecycle<NoopInput, NoopOutput>({
-        cwd,
-        phase: makeSuccessPhase({ name: 'v61-default' }),
-        input: { tag: 'engine-on-by-default' },
-        config: DEFAULT_CONFIG,
-        cliEngine: undefined,
-        envEngine: undefined,
-        runEngineOff: async () => {
-          throw new Error('runEngineOff must NOT be called on the v6.1 default (engine on)');
-        },
-      });
-      assert.equal(result.output.tag, 'engine-on-by-default');
-      assert.ok(result.runId, 'runId must be populated on the v6.1 default');
-      assert.ok(result.runDir, 'runDir must be populated on the v6.1 default');
+      assert.ok(result.runId, 'runId populated even when cliEngine=false');
+      assert.ok(result.runDir, 'runDir populated even when cliEngine=false');
       assert.equal(readState(result.runDir!).status, 'success');
     } finally {
       cleanup(cwd);
     }
   });
 
-  it('--no-engine wins over env on (CLI > env precedence)', async () => {
+  it('default invocation (no cli/env/config) → engine on', async () => {
     const cwd = tmpProject();
-    const originalWrite = process.stderr.write.bind(process.stderr);
-    process.stderr.write = (((_: string | Uint8Array) => true) as unknown) as typeof process.stderr.write;
     try {
       const result = await runPhaseWithLifecycle<NoopInput, NoopOutput>({
         cwd,
-        phase: makeSuccessPhase(),
+        phase: makeSuccessPhase({ name: 'default' }),
         input: { tag: 't' },
         config: DEFAULT_CONFIG,
-        cliEngine: false,
-        envEngine: 'on',
-        runEngineOff: async () => ({ tag: 'off' }),
+        cliEngine: undefined,
+        envEngine: undefined,
       });
-      assert.equal(result.runId, null, '--no-engine must win — no run dir');
-      assert.equal(result.runDir, null);
-      assert.equal(fs.existsSync(path.join(cwd, '.guardrail-cache', 'runs')), false);
+      assert.ok(result.runDir);
+      assert.equal(readState(result.runDir!).status, 'success');
     } finally {
-      process.stderr.write = originalWrite;
       cleanup(cwd);
     }
   });
 
-  it('config engine.enabled=false beats default (config > default precedence, still works in v6.1)', async () => {
-    // v6.1 flipped the default to ON, but explicit `engine.enabled: false`
-    // in config STILL wins per precedence — the escape hatch survives one
-    // minor version. v7 removes it.
+  it('config.engine.enabled=false is ignored — engine on', async () => {
     const cwd = tmpProject();
-    const originalWrite = process.stderr.write.bind(process.stderr);
-    process.stderr.write = (((_: string | Uint8Array) => true) as unknown) as typeof process.stderr.write;
     try {
       const result = await runPhaseWithLifecycle<NoopInput, NoopOutput>({
         cwd,
@@ -185,72 +142,37 @@ describe('runPhaseWithLifecycle — engine-off path', () => {
         config: { configVersion: 1, engine: { enabled: false } },
         cliEngine: undefined,
         envEngine: undefined,
-        runEngineOff: async () => ({ tag: 'off' }),
       });
-      assert.equal(result.runId, null);
-      assert.equal(fs.existsSync(path.join(cwd, '.guardrail-cache', 'runs')), false);
+      assert.ok(result.runDir, 'engine still runs even with engine.enabled=false');
+      assert.equal(readState(result.runDir!).status, 'success');
     } finally {
-      process.stderr.write = originalWrite;
       cleanup(cwd);
     }
   });
 
-  it('v6.1 deprecation banner: explicit --no-engine prints to stderr', async () => {
-    // Pin the deprecation banner copy + emission point at the helper boundary.
+  it('CLAUDE_AUTOPILOT_ENGINE=off emits a run.warning with code engine_off_removed; engine remains on', async () => {
+    // Spec test #1(c): env-off is softer than --no-engine — it warns but
+    // does not refuse to run.
     const cwd = tmpProject();
-    const originalWrite = process.stderr.write.bind(process.stderr);
-    const stderrLines: string[] = [];
-    process.stderr.write = (((chunk: string | Uint8Array) => {
-      stderrLines.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
-      return true;
-    }) as unknown) as typeof process.stderr.write;
     try {
-      await runPhaseWithLifecycle<NoopInput, NoopOutput>({
-        cwd,
-        phase: makeSuccessPhase(),
-        input: { tag: 't' },
-        config: DEFAULT_CONFIG,
-        cliEngine: false,
-        envEngine: undefined,
-        runEngineOff: async () => ({ tag: 'off' }),
-      });
-    } finally {
-      process.stderr.write = originalWrite;
-      cleanup(cwd);
-    }
-    const captured = stderrLines.join('');
-    assert.match(captured, /\[deprecation]/);
-    assert.match(captured, /--no-engine/);
-    assert.match(captured, /engine\.enabled: false/);
-    assert.match(captured, /v7/);
-  });
-
-  it('v6.1 deprecation banner: NOT emitted on the engine-on default path', async () => {
-    const cwd = tmpProject();
-    const originalWrite = process.stderr.write.bind(process.stderr);
-    const stderrLines: string[] = [];
-    process.stderr.write = (((chunk: string | Uint8Array) => {
-      stderrLines.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
-      return true;
-    }) as unknown) as typeof process.stderr.write;
-    try {
-      await runPhaseWithLifecycle<NoopInput, NoopOutput>({
+      const result = await runPhaseWithLifecycle<NoopInput, NoopOutput>({
         cwd,
         phase: makeSuccessPhase(),
         input: { tag: 't' },
         config: DEFAULT_CONFIG,
         cliEngine: undefined,
-        envEngine: undefined,
-        runEngineOff: async () => {
-          throw new Error('engine-off must not run on the v6.1 default');
-        },
+        envEngine: 'off',
       });
+      assert.ok(result.runDir, 'engine still runs even when env=off');
+      const events = readEvents(result.runDir!);
+      const warning = events.find(
+        (e): e is RunEvent & { event: 'run.warning' } =>
+          e.event === 'run.warning' && (e as { message?: string }).message === 'engine_off_removed',
+      );
+      assert.ok(warning, 'expected a run.warning with message engine_off_removed');
     } finally {
-      process.stderr.write = originalWrite;
       cleanup(cwd);
     }
-    const captured = stderrLines.join('');
-    assert.doesNotMatch(captured, /\[deprecation]/);
   });
 });
 
@@ -496,31 +418,8 @@ describe('runPhaseWithLifecycle — engine-on failure', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Invalid env value path
+// v7.0 — invalid env value path RETIRED. The resolver no longer
+// distinguishes invalid from valid env values; both are ignored. The
+// only env-driven warning that fires is `engine_off_removed` for
+// off-style values (covered by the always-on suite above).
 // ---------------------------------------------------------------------------
-
-describe('runPhaseWithLifecycle — invalid env value', () => {
-  it('falls through and surfaces a run.warning when engine ends up on via config', async () => {
-    const cwd = tmpProject();
-    try {
-      const result = await runPhaseWithLifecycle<NoopInput, NoopOutput>({
-        cwd,
-        phase: makeSuccessPhase(),
-        input: { tag: 't' },
-        config: { configVersion: 1, engine: { enabled: true } },
-        cliEngine: undefined,
-        envEngine: 'definitely-not-a-bool',
-        runEngineOff: async () => { throw new Error('should not be called'); },
-      });
-      assert.ok(result.runDir);
-      const events = readEvents(result.runDir!);
-      const warnings = events.filter(e => e.event === 'run.warning');
-      assert.ok(
-        warnings.some(w => /CLAUDE_AUTOPILOT_ENGINE/.test(JSON.stringify(w))),
-        `expected a run.warning citing the invalid env value — got ${JSON.stringify(warnings)}`,
-      );
-    } finally {
-      cleanup(cwd);
-    }
-  });
-});
