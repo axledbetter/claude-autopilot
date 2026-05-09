@@ -29,7 +29,11 @@ ALTER TABLE public.organization_settings
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS public.organization_domain_claims (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  -- Codex PR-pass CRITICAL #1 — RESTRICT (not CASCADE) on org delete.
+  -- Verified-then-revoked rows must survive org deletion to keep
+  -- ever_verified ownership intact. Org-delete flow (when added) must
+  -- explicitly handle domain claims first.
+  organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE RESTRICT,
   domain TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'verified', 'revoked')),
@@ -349,6 +353,19 @@ BEGIN
   -- SSO; turning OFF always allowed.
   IF p_required = TRUE AND COALESCE(v_current_status, 'inactive') <> 'active' THEN
     RAISE EXCEPTION 'no_active_sso' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- Codex PR-pass WARNING #6 — turning ON also requires at least one
+  -- verified domain claim. Without that, /api/auth/sso/start by email
+  -- can never resolve and admins lock everyone out.
+  IF p_required = TRUE THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM public.organization_domain_claims
+       WHERE organization_id = p_org_id
+         AND status = 'verified'
+    ) THEN
+      RAISE EXCEPTION 'no_verified_domain' USING ERRCODE = 'P0001';
+    END IF;
   END IF;
 
   -- Upsert.

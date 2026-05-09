@@ -28,7 +28,7 @@ function req(orgId: string, body: object): Request {
   });
 }
 
-function seedOwner(orgId: string, status: string): string {
+function seedOwner(orgId: string, status: string, withVerifiedDomain = false): string {
   const userId = randomUUID();
   stub.seed('memberships', [{
     id: randomUUID(), organization_id: orgId, user_id: userId,
@@ -38,13 +38,24 @@ function seedOwner(orgId: string, status: string): string {
   stub.seed('organization_settings', [{
     organization_id: orgId, sso_connection_status: status, sso_required: false,
   }]);
+  if (withVerifiedDomain) {
+    stub.seed('organization_domain_claims', [{
+      id: randomUUID(),
+      organization_id: orgId,
+      domain: 'acme.com',
+      status: 'verified',
+      ever_verified: true,
+      challenge_token: 'a'.repeat(64),
+      verified_at: new Date().toISOString(),
+    }]);
+  }
   return userId;
 }
 
 describe('PATCH sso/required', () => {
   it('owner toggle ON when SSO active → 200', async () => {
     const orgId = randomUUID();
-    const owner = seedOwner(orgId, 'active');
+    const owner = seedOwner(orgId, 'active', true);  // with verified domain
     currentUser = { id: owner };
     const r = await PATCH(req(orgId, { ssoRequired: true }), { params: { orgId } });
     expect(r.status).toBe(200);
@@ -71,6 +82,33 @@ describe('PATCH sso/required', () => {
     expect(r.status).toBe(200);
     const settings = stub.tables.get('organization_settings')!.find((s) => s.organization_id === orgId);
     expect(settings?.sso_required).toBe(false);
+  });
+
+  it('codex PR-pass WARNING #6: turning ON without verified domain → 422 no_verified_domain', async () => {
+    const orgId = randomUUID();
+    const owner = seedOwner(orgId, 'active');
+    // No verified domains seeded.
+    currentUser = { id: owner };
+    const r = await PATCH(req(orgId, { ssoRequired: true }), { params: { orgId } });
+    expect(r.status).toBe(422);
+    expect((await r.json()).error).toBe('no_verified_domain');
+  });
+
+  it('codex PR-pass WARNING #6: turning ON WITH verified domain → 200', async () => {
+    const orgId = randomUUID();
+    const owner = seedOwner(orgId, 'active');
+    stub.seed('organization_domain_claims', [{
+      id: randomUUID(),
+      organization_id: orgId,
+      domain: 'acme.com',
+      status: 'verified',
+      ever_verified: true,
+      challenge_token: 'a'.repeat(64),
+      verified_at: new Date().toISOString(),
+    }]);
+    currentUser = { id: owner };
+    const r = await PATCH(req(orgId, { ssoRequired: true }), { params: { orgId } });
+    expect(r.status).toBe(200);
   });
 
   it('admin (not owner) → 403 not_owner', async () => {

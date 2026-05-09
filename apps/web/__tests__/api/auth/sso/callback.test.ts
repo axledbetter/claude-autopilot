@@ -11,6 +11,26 @@ vi.mock('@supabase/supabase-js', async (orig) => {
   return { ...real, createClient: () => stub.asClient() };
 });
 
+// @supabase/ssr createServerClient — used by the route to set session
+// cookies. Stub setSession to immediately invoke the cookie setter with
+// a fake auth-token cookie so we can assert it's set.
+vi.mock('@supabase/ssr', () => ({
+  createServerClient: (_url: string, _key: string, opts: { cookies: { setAll: (c: { name: string; value: string; options?: Record<string, unknown> }[]) => void } }) => ({
+    auth: {
+      setSession: async (s: { access_token: string; refresh_token: string }) => {
+        opts.cookies.setAll([
+          {
+            name: 'sb-stub-auth-token',
+            value: JSON.stringify({ access_token: s.access_token, refresh_token: s.refresh_token }),
+            options: { httpOnly: true, secure: true, sameSite: 'lax', path: '/', maxAge: 3600 },
+          },
+        ]);
+        return { error: null };
+      },
+    },
+  }),
+}));
+
 const getProfileAndTokenMock = vi.fn();
 class FakeWorkOS {
   sso = {
@@ -201,6 +221,30 @@ describe('GET /api/auth/sso/callback', () => {
     await GET(reqCallback(stateId, 'workos_code_x', cookieValue));
     const audits = stub.tables.get('audit_events') ?? [];
     expect(audits.find((a) => a.action === 'org.sso.user.signed_in')).toBeTruthy();
+  });
+
+  it('codex PR-pass WARNING #4: stored connection_id mismatch → 409 identity_connection_mismatch', async () => {
+    const { stateId, cookieValue, userId } = seedFlow();
+    // Pre-seed identity link with a DIFFERENT connection_id.
+    stub.seed('workos_user_identities', [{
+      id: randomUUID(),
+      user_id: userId,
+      workos_user_id: 'workos_user_123',
+      workos_organization_id: 'org_workos_111',
+      workos_connection_id: 'conn_OLD',  // different from callback
+      email_at_link: 'alice@acme.com',
+      created_at: new Date().toISOString(),
+    }]);
+    setProfile({
+      id: 'workos_user_123', email: 'alice@acme.com',
+      organizationId: 'org_workos_111', connectionId: 'conn_111',  // current
+      firstName: '', lastName: '',
+    });
+    const r = await GET(reqCallback(stateId, 'workos_code_x', cookieValue));
+    expect(r.status).toBe(409);
+    expect((await r.json()).error).toBe('identity_connection_mismatch');
+    const audits = stub.tables.get('audit_events') ?? [];
+    expect(audits.find((a) => a.action === 'org.sso.identity.connection_drift')).toBeTruthy();
   });
 
   it('codex plan-pass CRITICAL #2 — verifyOtp returns {data:{user,session}} shape; route reads data.session.access_token', async () => {

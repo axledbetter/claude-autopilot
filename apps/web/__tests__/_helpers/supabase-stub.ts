@@ -1237,6 +1237,16 @@ export class SupabaseStub {
       if (required === true && currentStatus !== 'active') {
         return { data: null, error: { code: 'P0001', message: 'no_active_sso' } };
       }
+      // Codex PR-pass WARNING #6 — turning ON requires verified domain.
+      if (required === true) {
+        const claims = this.tables.get('organization_domain_claims') ?? [];
+        const hasVerified = claims.some(
+          (c) => c.organization_id === orgId && c.status === 'verified',
+        );
+        if (!hasVerified) {
+          return { data: null, error: { code: 'P0001', message: 'no_verified_domain' } };
+        }
+      }
       const previous = (existing?.sso_required as boolean | undefined) ?? false;
       if (existing) {
         existing.sso_required = required;

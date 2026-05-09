@@ -45,6 +45,8 @@ const MAP: Record<string, number> = {
   domain_not_found: 404,
   domain_revoked: 422,
   no_active_sso: 422,
+  no_verified_domain: 422,
+  identity_connection_mismatch: 409,
   state_not_found: 401,
   state_expired: 401,
   state_already_consumed: 401,

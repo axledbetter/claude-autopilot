@@ -142,6 +142,34 @@ export async function GET(req: Request): Promise<Response> {
       | { result: 'user_not_provisioned'; email: string; organizationId: string };
     if (r.result === 'linked') {
       userId = r.userId;
+      // Codex PR-pass WARNING #4 — defense-in-depth: stored
+      // workos_connection_id on the identity must match the callback's.
+      // Connection-replacement scenario: same workos_user across orgs
+      // was wired to a different connection in WorkOS; we should not
+      // silently re-attach.
+      const { data: identityRow } = await supabase
+        .from('workos_user_identities')
+        .select('workos_connection_id')
+        .eq('workos_user_id', profile.id)
+        .eq('workos_organization_id', profile.organizationId)
+        .maybeSingle();
+      const stored = (identityRow as { workos_connection_id: string } | null)?.workos_connection_id;
+      if (stored && stored !== profile.connectionId) {
+        await supabase.rpc('audit_append', {
+          p_organization_id: consumed.organizationId,
+          p_actor_user_id: null,
+          p_action: 'org.sso.identity.connection_drift',
+          p_subject_type: 'user',
+          p_subject_id: userId,
+          p_metadata: {
+            workosUserId: profile.id,
+            storedConnectionId: stored,
+            callbackConnectionId: profile.connectionId,
+          },
+          p_source_verified: true,
+        });
+        return fail(409, { error: 'identity_connection_mismatch' });
+      }
       break;
     }
     if (attempt === 1) {
@@ -161,8 +189,12 @@ export async function GET(req: Request): Promise<Response> {
     });
     if (createErr) {
       const msg = createErr.message ?? '';
-      if (msg.toLowerCase().includes('already') || createErr.status === 422) {
-        return fail(409, { error: 'user_email_collision' });
+      const alreadyExists = msg.toLowerCase().includes('already') || createErr.status === 422;
+      if (alreadyExists) {
+        // Codex PR-pass WARNING #7 — race against concurrent first-time
+        // sign-in. Another request just created the user; loop back so
+        // the next record_workos_sign_in lookup-by-email succeeds.
+        continue;
       }
       console.error('[sso-callback] createUser failed', createErr);
       return fail(500, { error: 'create_user_failed' });
@@ -229,26 +261,38 @@ export async function GET(req: Request): Promise<Response> {
     return fail(500, { error: 'session_user_mismatch' });
   }
 
-  // Set Supabase session cookies + clear sso_state. Build redirect response
-  // first so cookies land on it.
+  // Set Supabase session cookies + clear sso_state.
+  //
+  // Codex PR-pass CRITICAL #2 — use @supabase/ssr cookie-handler shape
+  // so the cookies match exactly what the rest of the app reads via
+  // createSupabaseServerClient. Hand-rolling the cookie prefix is
+  // brittle (single-cookie vs chunked formats vary across SDK
+  // versions); routing setSession() through @supabase/ssr's setAll()
+  // delegates that detail to the SDK.
   const dashboardUrl = `${url.origin}/dashboard`;
   const res = NextResponse.redirect(dashboardUrl, 302);
-  // Supabase session cookies (sb-<ref>-auth-token).
-  const projectRef = process.env.NEXT_PUBLIC_SUPABASE_PROJECT_REF;
-  const cookiePrefix = projectRef ? `sb-${projectRef}-auth-token` : 'sb-auth-token';
-  const sessionPayload = JSON.stringify([
-    otpData.session.access_token,
-    otpData.session.refresh_token,
-    null,
-    null,
-    null,
-  ]);
-  res.cookies.set(cookiePrefix, sessionPayload, {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'lax',
-    maxAge: otpData.session.expires_in,
-    path: '/',
+
+  const { createServerClient } = await import('@supabase/ssr');
+  const cookieStore = (req as unknown as {
+    cookies: { getAll: () => { name: string; value: string }[] };
+  }).cookies;
+  const ssr = createServerClient(anonUrl, anonKey, {
+    cookies: {
+      getAll: () => (cookieStore?.getAll?.() ?? []),
+      setAll: (cookies) => {
+        for (const c of cookies) {
+          res.cookies.set(c.name, c.value, c.options as Parameters<typeof res.cookies.set>[2]);
+        }
+      },
+    },
   });
+  const { error: setErr } = await ssr.auth.setSession({
+    access_token: otpData.session.access_token,
+    refresh_token: otpData.session.refresh_token,
+  });
+  if (setErr) {
+    console.error('[sso-callback] setSession failed', setErr);
+    return fail(500, { error: 'set_session_failed' });
+  }
   return clearStateCookie(res);
 }
