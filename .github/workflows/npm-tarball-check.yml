@@ -2,9 +2,22 @@ name: npm tarball boundary
 
 on:
   push:
+    # codex W4 safety net: full run on every master push.
     branches: [master]
   pull_request:
     branches: [master]
+    # v7.1.5 — change-aware CI. Only relevant when packaging metadata,
+    # included file paths, or this workflow itself changes.
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - '.npmignore'
+      - 'src/**'
+      - 'bin/**'
+      - 'scripts/**'
+      - 'presets/**'
+      - 'tsconfig*.json'
+      - '.github/workflows/npm-tarball-check.yml'
 
 jobs:
   check:

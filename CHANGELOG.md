@@ -2,6 +2,49 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.1.5 (2026-05-09)
+
+**v7.1.5 — change-aware CI matrix.** CI infra optimization;
+no application code change; no test additions.
+
+The v7.0+ repo runs 6 GitHub Actions workflows on every PR
+(bin smoke ×6 OS×Node + Test Node 22 + Delegance regression +
+tarball check + apps/web typecheck/build/tests + RLS). Many of
+those are irrelevant to PRs that only touch a different layer
+(apps/web-only PRs don't need bin smoke; CLI-only PRs don't
+need apps/web tests; docs-only PRs don't need anything).
+
+Each workflow's `pull_request:` trigger now includes a `paths:`
+filter — GitHub Actions skips the workflow entirely on PRs that
+don't touch any matching file:
+
+* `ci.yml` (Test Node 22), `bin-parity.yml` (bin smoke ×6),
+  `delegance-regression.yml`: triggered by CLI changes (`src/**`,
+  `bin/**`, `tests/**` for ci.yml, `scripts/**`, `presets/**`)
+  and conservative shared paths (`tsconfig*`, `package.json`,
+  `package-lock.json`, the workflow file itself).
+* `web-tests.yml`: triggered by `apps/**`, `tsconfig*`,
+  `package.json`, `package-lock.json`, the workflow file.
+* `db-tests.yml`: triggered by `db/**`, `tests/rls/**`,
+  `package.json`, `package-lock.json`, the workflow file.
+* `npm-tarball-check.yml`: triggered by anything that affects
+  the published artifact (`package.json`, `.npmignore`,
+  `package-lock.json`, CLI source).
+
+**Codex pass W4 safety net:** `push:` triggers (master + tag
+pushes) deliberately have NO `paths:` filter. Every master merge
+runs the full matrix, catching anything that slipped past the
+PR-level filter (e.g. a config change in a directory we forgot
+to enumerate). The PR-level filter is a latency optimization,
+not a correctness boundary.
+
+**Expected effect:** apps/web-only PRs (Phase 5.7-7.1.4 polish
+shape) drop from ~12-15min CI wall clock to ~5-7min. Docs-only
+PRs become a no-op CI run.
+
+No package code change; bumping to 7.1.5 to keep CHANGELOG/
+version-line in lockstep with master HEAD.
+
 ## 7.1.4 (2026-05-09)
 
 **v7.1.4 — fix recurring PGRST002 RLS workflow flake.** CI infra

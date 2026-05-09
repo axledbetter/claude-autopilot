@@ -3,6 +3,19 @@ name: Delegance regression
 on:
   pull_request:
     branches: [master]
+    # v7.1.5 — change-aware CI matrix. The Delegance migrate-flow
+    # regression exercises the CLI's migrate skill against real Postgres.
+    # Skip when only apps/web/**, db/**, tests/rls/**, or docs/** changed.
+    # (codex W4 safety: full run on master push.)
+    paths:
+      - 'src/**'
+      - 'bin/**'
+      - 'scripts/**'
+      - 'presets/**'
+      - 'tsconfig*.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/delegance-regression.yml'
   push:
     branches: [master]
 

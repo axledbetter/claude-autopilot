@@ -2,9 +2,19 @@ name: Web tests (v7.0)
 
 on:
   push:
+    # codex W4 safety net: full run on every master push.
     branches: [master]
   pull_request:
     branches: [master]
+    # v7.1.5 — change-aware CI. Skip when only CLI files (src/**, bin/**),
+    # docs/**, or db/** change. apps/** covers apps/web and any future
+    # apps/*.
+    paths:
+      - 'apps/**'
+      - 'tsconfig*.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/web-tests.yml'
 
 jobs:
   web:

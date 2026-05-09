@@ -2,10 +2,27 @@ name: CI
 
 on:
   push:
+    # Master + tag pushes ALWAYS run the full CI (safety net for any path
+    # filter on pull_request below — codex pass W4).
     branches: [master]
     tags: ['v*']
   pull_request:
     branches: [master]
+    # v7.1.5 — change-aware CI matrix. Skip the CLI test job for PRs that
+    # only touch apps/web/**, db/**, tests/rls/**, or docs/**.
+    # Conservative path groups: any change to root package.json, lockfile,
+    # tsconfig*, scripts/**, presets/**, OR this workflow file triggers
+    # a full run.
+    paths:
+      - 'src/**'
+      - 'bin/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'presets/**'
+      - 'tsconfig*.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/ci.yml'
 
 jobs:
   test:
