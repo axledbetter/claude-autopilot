@@ -3,5 +3,11 @@
   "outputDirectory": "apps/web/.next",
   "framework": "nextjs",
   "installCommand": "npm ci",
-  "ignoreCommand": "git diff HEAD^ HEAD --quiet -- apps/web/ && exit 0 || exit 1"
+  "ignoreCommand": "git diff HEAD^ HEAD --quiet -- apps/web/ && exit 0 || exit 1",
+  "crons": [
+    {
+      "path": "/api/cron/cleanup-expired-sso-state",
+      "schedule": "0 3 * * *"
+    }
+  ]
 }
