@@ -72,6 +72,14 @@ purpose:
   without it, but the middleware will fail closed on every request
   until the secret is set.
 
+  **Rotation (v7.0):** rotating this secret invalidates every
+  outstanding `cao_membership_check` cookie at once — every active
+  dashboard session falls through to the `check_membership_status`
+  RPC on its next request. Rotate during a low-traffic window and
+  watch RPC + Supabase latency. Dual-secret support
+  (`MEMBERSHIP_CHECK_COOKIE_SECRET_CURRENT` +
+  `_PREVIOUS`) is deferred to v7.1 (codex PR-pass WARNING #7).
+
 ## Supabase
 
 ### Migration
@@ -88,6 +96,23 @@ This adds the `check_membership_status(p_org_id uuid, p_user_id uuid)`
 RPC that the dashboard middleware calls on cache miss. The function is
 `SECURITY INVOKER`, REVOKE'd from PUBLIC/anon/authenticated, and only
 GRANTed to `service_role`.
+
+**Critical: apply this migration BEFORE deploying the v7.0 web image**
+(codex PR-pass WARNING #1). The middleware fails closed if the RPC is
+missing — every dashboard request that misses the 60s cache cookie
+will return `check_failed` and route the user to `/access-revoked`.
+Recommended deploy order:
+
+1. Apply `20260509200000_phase6_check_membership_rpc.sql` to prod.
+2. Verify with `SELECT check_membership_status(<any-org-uuid>, <any-user-uuid>);`
+   from the Supabase service role (should return JSON with
+   `status='no_row'` for an arbitrary pair).
+3. Deploy v7.0 web image to Vercel (or promote v7.0 build).
+4. Smoke-test `/dashboard` page-load + one `/api/dashboard/*` call.
+
+Rollback (RPC unavailable post-deploy): revert the web deploy. The
+RPC migration is forward-only and safe to leave in place — pre-Phase-6
+web images don't call the RPC.
 
 ### RLS
 
