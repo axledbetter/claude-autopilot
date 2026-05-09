@@ -4,9 +4,24 @@ name: Bin parity smoke
 # other untrusted source. Safe to interpolate directly in `run:` blocks.
 on:
   push:
+    # Master pushes ALWAYS run the full 6-OS bin-parity matrix (codex
+    # pass W4 safety net — catches anything the pull_request path filter
+    # below misses).
     branches: [master]
   pull_request:
     branches: [master]
+    # v7.1.5 — change-aware CI matrix. Skip the 6-OS bin smoke matrix
+    # for PRs that only touch apps/web/**, db/**, tests/rls/**, or
+    # docs/** (no CLI artifact impact).
+    paths:
+      - 'src/**'
+      - 'bin/**'
+      - 'scripts/**'
+      - 'presets/**'
+      - 'tsconfig*.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/bin-parity.yml'
 
 jobs:
   from-tarball:

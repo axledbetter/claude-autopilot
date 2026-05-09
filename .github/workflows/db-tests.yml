@@ -2,9 +2,19 @@ name: DB tests (v7.0)
 
 on:
   push:
+    # codex W4 safety net: full run on every master push.
     branches: [master]
   pull_request:
     branches: [master]
+    # v7.1.5 — change-aware CI. RLS tests verify Postgres row-level
+    # security on the v7.0 schema. Only relevant when migrations or
+    # the test files themselves change.
+    paths:
+      - 'db/**'
+      - 'tests/rls/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/db-tests.yml'
 
 jobs:
   rls:
