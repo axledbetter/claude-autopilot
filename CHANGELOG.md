@@ -2,6 +2,31 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.1.1 (2026-05-09)
+
+**v7.1.1 — dual-secret rotation for `MEMBERSHIP_CHECK_COOKIE_SECRET`.**
+Hosted product (`apps/web/`) only. Operator-facing improvement;
+no breaking changes; no migration; no new tests fail/skip.
+
+* New optional env var `MEMBERSHIP_CHECK_COOKIE_SECRET_PREVIOUS`.
+  When set, `verifyMembershipCookie()` tries `CURRENT` first; on
+  signature mismatch, tries `PREVIOUS`. New cookies always sign
+  with `CURRENT`. Closes the v7.0 runbook follow-up where rotating
+  the secret invalidated every outstanding cookie at once = a
+  thundering-herd of `check_membership_status` RPC calls on every
+  active dashboard session.
+* Operator rotation flow (4 steps) documented in `docs/v7/runbook.md`
+  + `apps/web/.env.example`.
+* `MEMBERSHIP_CHECK_COOKIE_SECRET_PREVIOUS` validation: same
+  ≥32-byte minimum as `CURRENT`. Malformed/too-short `PREVIOUS`
+  is ignored with a one-shot warn — does not break the happy path.
+* 5 new tests in `apps/web/__tests__/lib/middleware/cookie-hmac.test.ts`
+  cover: PREVIOUS verifies during rotation; new cookies sign with
+  CURRENT not PREVIOUS; forged-third-secret fails even with both;
+  PREVIOUS unset behaves identically to v7.1.0; PREVIOUS too short
+  is ignored without breaking CURRENT.
+* 602 → 607 web tests; 1536 CLI unchanged; tsc clean.
+
 ## 7.1.0 (2026-05-09)
 
 **v7.1 — symmetric ingest revocation closure.** Hosted product

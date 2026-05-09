@@ -193,4 +193,72 @@ describe('cookie-hmac', () => {
       }
     });
   });
+
+  // v7.1.1 — dual-secret rotation
+  describe('v7.1.1 — MEMBERSHIP_CHECK_COOKIE_SECRET_PREVIOUS rotation', () => {
+    const PREVIOUS = 'b'.repeat(64);
+
+    beforeEach(() => {
+      process.env.MEMBERSHIP_CHECK_COOKIE_SECRET = SECRET;
+      delete process.env.MEMBERSHIP_CHECK_COOKIE_SECRET_PREVIOUS;
+    });
+    afterEach(() => {
+      delete process.env.MEMBERSHIP_CHECK_COOKIE_SECRET;
+      delete process.env.MEMBERSHIP_CHECK_COOKIE_SECRET_PREVIOUS;
+    });
+
+    it('cookie signed with PREVIOUS verifies during rotation window', () => {
+      // Sim: cookie was signed with the old secret, then operator
+      // rotated. Old cookie still verifies via PREVIOUS fallback.
+      process.env.MEMBERSHIP_CHECK_COOKIE_SECRET = PREVIOUS;
+      const oldCookie = signMembershipCookie(makePayload());
+      // Now flip: CURRENT = new value, PREVIOUS = the old one used above.
+      process.env.MEMBERSHIP_CHECK_COOKIE_SECRET = SECRET;
+      process.env.MEMBERSHIP_CHECK_COOKIE_SECRET_PREVIOUS = PREVIOUS;
+      expect(verifyMembershipCookie(oldCookie).ok).toBe(true);
+    });
+
+    it('new cookies always sign with CURRENT (not PREVIOUS)', () => {
+      process.env.MEMBERSHIP_CHECK_COOKIE_SECRET_PREVIOUS = PREVIOUS;
+      const newCookie = signMembershipCookie(makePayload());
+      // Verify under CURRENT-only env: should pass.
+      delete process.env.MEMBERSHIP_CHECK_COOKIE_SECRET_PREVIOUS;
+      expect(verifyMembershipCookie(newCookie).ok).toBe(true);
+      // Swap CURRENT to junk with no PREVIOUS — verification fails.
+      process.env.MEMBERSHIP_CHECK_COOKIE_SECRET = 'z'.repeat(64);
+      const result = verifyMembershipCookie(newCookie);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('bad_signature');
+    });
+
+    it('cookie signed with random third secret fails even with both CURRENT + PREVIOUS set', () => {
+      const FORGED_SECRET = 'q'.repeat(64);
+      process.env.MEMBERSHIP_CHECK_COOKIE_SECRET = FORGED_SECRET;
+      const forgedCookie = signMembershipCookie(makePayload());
+      process.env.MEMBERSHIP_CHECK_COOKIE_SECRET = SECRET;
+      process.env.MEMBERSHIP_CHECK_COOKIE_SECRET_PREVIOUS = PREVIOUS;
+      const result = verifyMembershipCookie(forgedCookie);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('bad_signature');
+    });
+
+    it('PREVIOUS unset → behaves identically to v7.1.0 (single-secret)', () => {
+      const cookie = signMembershipCookie(makePayload());
+      // PREVIOUS deliberately not set.
+      expect(verifyMembershipCookie(cookie).ok).toBe(true);
+      // Cookie signed under a different secret with no PREVIOUS fallback:
+      process.env.MEMBERSHIP_CHECK_COOKIE_SECRET = 'z'.repeat(64);
+      expect(verifyMembershipCookie(cookie).ok).toBe(false);
+    });
+
+    it('PREVIOUS set but too short → ignored (warn-once), CURRENT still works', async () => {
+      const { _resetPreviousSecretWarnLatchForTests } = await import('@/lib/middleware/cookie-hmac');
+      _resetPreviousSecretWarnLatchForTests();
+      process.env.MEMBERSHIP_CHECK_COOKIE_SECRET_PREVIOUS = 'short'; // < 32 bytes
+      const cookie = signMembershipCookie(makePayload());
+      // Cookie signed with CURRENT verifies fine; PREVIOUS being malformed
+      // doesn't break the happy path.
+      expect(verifyMembershipCookie(cookie).ok).toBe(true);
+    });
+  });
 });

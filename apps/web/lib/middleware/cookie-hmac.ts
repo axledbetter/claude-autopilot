@@ -11,6 +11,27 @@
 // secret isn't injected at build time. Throwing the typed
 // `MembershipCheckError({code: 'cookie_secret_missing'})` from the first
 // helper call lets the middleware catch and fail closed at runtime.
+//
+// v7.1.1 — DUAL-SECRET ROTATION SUPPORT.
+//
+// To rotate `MEMBERSHIP_CHECK_COOKIE_SECRET` without invalidating every
+// outstanding cookie at once (= thundering herd of RPC calls when every
+// active dashboard user falls through to check_membership_status on the
+// next request), set the OLD secret as `MEMBERSHIP_CHECK_COOKIE_SECRET_PREVIOUS`
+// when you set the NEW value as `MEMBERSHIP_CHECK_COOKIE_SECRET`. Verify
+// tries CURRENT first; if signature mismatches, tries PREVIOUS. New
+// cookies are always signed with CURRENT. Once 60s elapses (the cookie
+// TTL), every cached cookie is signed with CURRENT; you can drop
+// PREVIOUS at the next deploy.
+//
+// Rotation flow for operators:
+//   1. Generate new secret: NEW=$(openssl rand -hex 32)
+//   2. Set MEMBERSHIP_CHECK_COOKIE_SECRET_PREVIOUS = current value
+//   3. Set MEMBERSHIP_CHECK_COOKIE_SECRET = NEW
+//   4. Deploy.
+//   5. Wait ≥60s (one cookie TTL — every cached cookie has now been
+//      re-signed with NEW).
+//   6. (Optional next deploy) Unset MEMBERSHIP_CHECK_COOKIE_SECRET_PREVIOUS.
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { MembershipCheckError } from '../supabase/check-membership';
@@ -49,6 +70,36 @@ export function getMembershipCheckSecret(): string {
     });
   }
   return raw;
+}
+
+/** v7.1.1 — Resolve the OPTIONAL previous-generation HMAC secret used
+ *  during a rotation window. Returns `null` when unset (the common case
+ *  outside an active rotation). When set but malformed/too-short, returns
+ *  `null` AND emits a one-shot warn so operators see the misconfig but
+ *  don't suffer a hard outage during rotation. (Verify can still succeed
+ *  via the CURRENT secret in that case.) */
+let warnedAboutInvalidPrevious = false;
+export function getPreviousMembershipCheckSecret(): string | null {
+  const raw = process.env.MEMBERSHIP_CHECK_COOKIE_SECRET_PREVIOUS;
+  if (!raw || typeof raw !== 'string') return null;
+  const bytes = Buffer.byteLength(raw, 'utf8');
+  if (bytes < MIN_SECRET_BYTES) {
+    if (!warnedAboutInvalidPrevious) {
+      warnedAboutInvalidPrevious = true;
+      console.warn(
+        `[cookie-hmac] MEMBERSHIP_CHECK_COOKIE_SECRET_PREVIOUS is set but `
+          + `<${MIN_SECRET_BYTES} bytes (got ${bytes}); ignoring. Cookies signed `
+          + `with the previous secret will fail verification and fall through to RPC.`,
+      );
+    }
+    return null;
+  }
+  return raw;
+}
+
+// Test seam — reset the one-shot warn latch between tests.
+export function _resetPreviousSecretWarnLatchForTests(): void {
+  warnedAboutInvalidPrevious = false;
 }
 
 function base64urlEncode(buf: Buffer): string {
@@ -111,17 +162,33 @@ export function verifyMembershipCookie(
     return { ok: false, reason: 'malformed' };
   }
 
-  const expected = createHmac('sha256', secret).update(payloadB64).digest();
   let actual: Buffer;
   try {
     actual = base64urlDecode(sigB64);
   } catch {
     return { ok: false, reason: 'malformed' };
   }
-  if (actual.length !== expected.length) {
+
+  // v7.1.1 — try CURRENT first, then PREVIOUS (during rotation only).
+  // Constant-time compare on each candidate. We don't return early on
+  // length mismatch from CURRENT before checking PREVIOUS — both
+  // candidates produce the same fixed length (32 bytes for SHA256), so
+  // a length mismatch implies the cookie is malformed regardless.
+  const expectedCurrent = createHmac('sha256', secret).update(payloadB64).digest();
+  if (actual.length !== expectedCurrent.length) {
     return { ok: false, reason: 'bad_signature' };
   }
-  if (!timingSafeEqual(actual, expected)) {
+  let signatureOk = timingSafeEqual(actual, expectedCurrent);
+  if (!signatureOk) {
+    const previous = getPreviousMembershipCheckSecret();
+    if (previous) {
+      const expectedPrevious = createHmac('sha256', previous).update(payloadB64).digest();
+      // Lengths are guaranteed to match (both SHA256 = 32 bytes) — already
+      // checked actual.length above.
+      signatureOk = timingSafeEqual(actual, expectedPrevious);
+    }
+  }
+  if (!signatureOk) {
     return { ok: false, reason: 'bad_signature' };
   }
 
