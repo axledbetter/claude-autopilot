@@ -37,6 +37,23 @@ const MAP: Record<string, number> = {
   workos_org_already_bound: 422,
   bad_workos_org_id: 422,
   webhook_signature_invalid: 401,
+  // Phase 5.6 — WorkOS SSO sign-in.
+  invalid_domain: 422,
+  invalid_challenge_token: 422,
+  domain_already_claimed: 422,
+  domain_already_pending: 409,
+  domain_not_found: 404,
+  domain_revoked: 422,
+  no_active_sso: 422,
+  state_not_found: 401,
+  state_expired: 401,
+  state_already_consumed: 401,
+  state_nonce_mismatch: 401,
+  state_workos_org_mismatch: 401,
+  state_workos_connection_mismatch: 401,
+  email_domain_not_claimed_for_org: 403,
+  unknown_org: 422,
+  invalid_email: 422,
 };
 
 export function mapPostgresError(err: PgError): { status: number; body: { error: string } } {
