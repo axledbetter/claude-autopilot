@@ -2,6 +2,37 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 6.3.0-pre.12 (2026-05-09)
+
+**v7.0 Phase 5.7 — Admin lifecycle controls + session revocation.** Closes the lifecycle/revocation gap that Phases 5.4 and 5.6 explicitly deferred.
+
+Three lifecycle controls:
+
+1. **Admin disable-user** — `POST /api/dashboard/orgs/:orgId/members/:userId/disable` flips `memberships.status='disabled'`, captures `disabled_at`/`disabled_by`, deletes `auth.refresh_tokens` for the user. Existing access tokens expire ≤1h (Supabase default; documented in spec). Idempotent on already-disabled (returns `noop:true`, no duplicate audit, no duplicate revocation). Owner-protection (admin cannot disable owner) + last-owner guard.
+2. **SSO disconnect cascade** — `apply_workos_event(connection.deleted)` set-based DELETE of refresh tokens for org members (status active OR disabled per codex plan-pass WARNING #1) with verified-domain emails. Audit metadata captures `cascadeRevokedUserCount` + `cascadeRevokedTokenCount` (no user IDs per plan-pass WARNING #5).
+3. **`cleanup_expired_sso_states` RPC** — service-role only, called via `scripts/cleanup-expired-sso-state.ts` (no HTTP route per codex pass-1 CRITICAL #3). Phase 6 wires a cron.
+
+Migration `data/deltas/20260509140000_phase5_7_lifecycle.sql`:
+- ALTER `memberships.status` CHECK extended with `'disabled'` + `disabled_at`/`disabled_by` columns.
+- 4 new SECURITY DEFINER RPCs (REVOKE FROM PUBLIC,anon,authenticated; GRANT TO service_role): `revoke_user_sessions`, `disable_member`, `enable_member`, `cleanup_expired_sso_states`.
+- 2 RPC REPLACEs: `record_workos_sign_in` now refuses `member_disabled` / `member_inactive` / `invite_pending` (codex pass-2 WARNING #1); `apply_workos_event` adds set-based cascade DELETE on `connection.deleted`.
+
+Surfaces:
+- `POST /api/dashboard/orgs/:orgId/members/:userId/disable` (admin/owner-gated).
+- `POST /api/dashboard/orgs/:orgId/members/:userId/enable` (admin/owner-gated, symmetric owner protection — only owners can re-enable owners per pass-2 WARNING #3).
+- `GET /api/auth/sso/callback` modified to redirect 302 → `/login/sso?reason={member_disabled|member_inactive|invite_pending}` instead of returning 403 JSON.
+
+`/login/sso` page renders 3 new banner reasons. `lib/dashboard/membership-guard.ts` MAP gains 10 new error codes. `package.json` 6.3.0-pre.11 → 6.3.0-pre.12.
+
+Tests: 6 new test files (49 tests). disable.test.ts (11), enable.test.ts (4), webhook-cascade.test.ts (5), sso-signin-phase5-7.test.ts (4), phase5-7-privilege.test.ts (16 grep assertions), cleanup-expired-sso-state.test.ts (4), disabled-user-jwt.test.ts (4 — codex plan-pass CRITICAL #2 regression: proves disabled member with still-valid JWT can't access dashboard routes via 4 representative paths). 451 → 500 web tests. tsc clean.
+
+**Known gaps (Phase 5.8):**
+- API keys (Phase 2.3) are user-scoped not org-scoped; disabling membership in org A doesn't auto-revoke. Phase 5.8 will add a membership-active check in the API-key auth helper.
+- Access-token expiry is the upper bound on revocation latency (≤1h Supabase default). Real-time revocation requires a request-time denylist + middleware (Phase 6).
+- Cleanup script not yet cron-scheduled (Phase 6).
+
+**Codex passes folded:** spec pass-1 (3C+5W+2N), pass-2 (1C+6W), plan-pass (2C+6W+2N). Highlights: dropped global API-key revocation due to cross-tenant blast (gap explicitly documented + deferred); cascade scope includes `'disabled'` per plan WARNING #1; audit metadata drops user IDs sample per plan WARNING #5; explicit disabled-user-JWT regression test proves spec's enforcement-audit table is correct.
+
 ## 6.3.0-pre.11 (2026-05-09)
 
 **v7.0 Phase 5.6 — WorkOS SSO sign-in flow.** End-to-end SSO sign-in built on the Phase 5.4 foundation. Three sub-features that ship together (any subset is unusable):

@@ -22,6 +22,21 @@ export default async function SsoLoginPage(
           Your organization requires SSO sign-in. Enter your work email below.
         </div>
       )}
+      {sp.reason === 'member_disabled' && (
+        <div className="text-xs bg-red-500/10 text-red-300 border border-red-500/30 rounded p-3">
+          Your account has been disabled by an administrator. Contact your organization owner if this is unexpected.
+        </div>
+      )}
+      {sp.reason === 'member_inactive' && (
+        <div className="text-xs bg-amber-500/10 text-amber-300 border border-amber-500/30 rounded p-3">
+          You&apos;re no longer a member of this organization. Ask an administrator to re-invite you.
+        </div>
+      )}
+      {sp.reason === 'invite_pending' && (
+        <div className="text-xs bg-amber-500/10 text-amber-300 border border-amber-500/30 rounded p-3">
+          Your invitation is still pending. Check your email for the acceptance link.
+        </div>
+      )}
       <p className="text-sm opacity-70">
         Enter your work email. We&apos;ll redirect you to your identity provider.
       </p>

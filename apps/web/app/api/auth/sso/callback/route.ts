@@ -134,6 +134,15 @@ export async function GET(req: Request): Promise<Response> {
       p_workos_connection_id: profile.connectionId,
     });
     if (rwErr) {
+      // Phase 5.7 — disabled/inactive/pending refusals redirect to
+      // /login/sso with a reason banner instead of returning 403 JSON.
+      const code = rwErr.message;
+      if (code === 'member_disabled' || code === 'member_inactive' || code === 'invite_pending') {
+        return clearStateCookie(NextResponse.redirect(
+          `${url.origin}/login/sso?email=${encodeURIComponent(profile.email)}&reason=${code}`,
+          302,
+        ));
+      }
       const mapped = mapPostgresError(rwErr);
       return fail(mapped.status, mapped.body);
     }

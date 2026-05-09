@@ -1005,6 +1005,9 @@ export class SupabaseStub {
       // Step 4: state transition.
       const previousStatus = (settingsRow.sso_connection_status as string | null | undefined) ?? 'inactive';
       let newStatus = previousStatus;
+      // Phase 5.7 — cascade counters (populated only on connection.deleted).
+      let cascadeRevokedUserCount = 0;
+      let cascadeRevokedTokenCount = 0;
       if (['connection.activated', 'dsync.connection.activated'].includes(eventType)) {
         newStatus = 'active';
         settingsRow.sso_connected_at = now.toISOString();
@@ -1016,6 +1019,33 @@ export class SupabaseStub {
         newStatus = 'disabled';
         settingsRow.sso_disabled_at = now.toISOString();
         settingsRow.workos_connection_id = null;
+        // Phase 5.7 — set-based cascade refresh-token revocation.
+        // Codex plan-pass WARNING #1 — include 'active' AND 'disabled'.
+        const cascadeMemberships = (this.tables.get('memberships') ?? []).filter(
+          (m) => m.organization_id === settingsRow.organization_id
+            && (m.status === 'active' || m.status === 'disabled'),
+        );
+        const verifiedDomains = new Set(
+          (this.tables.get('organization_domain_claims') ?? [])
+            .filter((c) => c.organization_id === settingsRow.organization_id && c.status === 'verified')
+            .map((c) => (c.domain as string).toLowerCase()),
+        );
+        const users = this.tables.get('auth.users') ?? [];
+        const affectedUserIds = new Set<string>();
+        for (const m of cascadeMemberships) {
+          const u = users.find((x) => x.id === m.user_id);
+          if (!u || typeof u.email !== 'string') continue;
+          const at = u.email.lastIndexOf('@');
+          if (at < 0) continue;
+          const dom = u.email.slice(at + 1).toLowerCase();
+          if (verifiedDomains.has(dom)) affectedUserIds.add(m.user_id as string);
+        }
+        const tokens = this.tables.get('auth.refresh_tokens') ?? [];
+        const tokensBefore = tokens.length;
+        const remainingTokens = tokens.filter((t) => !affectedUserIds.has(t.user_id as string));
+        this.tables.set('auth.refresh_tokens', remainingTokens);
+        cascadeRevokedUserCount = affectedUserIds.size;
+        cascadeRevokedTokenCount = tokensBefore - remainingTokens.length;
       } else {
         eventRow.status = 'processed';
         eventRow.processed_at = now.toISOString();
@@ -1046,6 +1076,8 @@ export class SupabaseStub {
           previousStatus,
           newStatus,
           occurredAt: eventOccurredAt,
+          cascadeRevokedUserCount,
+          cascadeRevokedTokenCount,
         },
         created_at: now.toISOString(),
       });
@@ -1064,6 +1096,8 @@ export class SupabaseStub {
           organizationId: settingsRow.organization_id,
           previousStatus,
           newStatus,
+          cascadeRevokedUserCount,
+          cascadeRevokedTokenCount,
         },
         error: null,
       };
@@ -1368,6 +1402,22 @@ export class SupabaseStub {
       }
       const memberships = this.tables.get('memberships') ?? [];
       let membershipCreated = false;
+      // Phase 5.7 — refuse disabled/inactive/pending BEFORE upsert.
+      const anyExistingMembership = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === userId,
+      );
+      if (anyExistingMembership) {
+        const st = anyExistingMembership.status as string;
+        if (st === 'disabled') {
+          return { data: null, error: { code: 'P0001', message: 'member_disabled' } };
+        }
+        if (st === 'inactive') {
+          return { data: null, error: { code: 'P0001', message: 'member_inactive' } };
+        }
+        if (st === 'pending') {
+          return { data: null, error: { code: 'P0001', message: 'invite_pending' } };
+        }
+      }
       const existingMembership = memberships.find(
         (m) => m.organization_id === orgId && m.user_id === userId && m.status === 'active',
       );
@@ -1419,6 +1469,199 @@ export class SupabaseStub {
       });
       this.tables.set('audit_events', audits);
       return { data: 1, error: null };
+    }
+
+    // ========================================================================
+    // Phase 5.7 — admin lifecycle controls.
+    //
+    // Mirror data/deltas/20260509140000_phase5_7_lifecycle.sql.
+    // ========================================================================
+
+    if (fn === 'revoke_user_sessions') {
+      const userId = args.p_user_id as string;
+      if (!userId) return { data: null, error: { code: 'P0001', message: 'invalid_user_id' } };
+      const tokens = this.tables.get('auth.refresh_tokens') ?? [];
+      const before = tokens.length;
+      const remaining = tokens.filter((t) => t.user_id !== userId);
+      this.tables.set('auth.refresh_tokens', remaining);
+      return { data: { revokedTokenCount: before - remaining.length }, error: null };
+    }
+
+    if (fn === 'disable_member') {
+      const callerUserId = args.p_caller_user_id as string;
+      const orgId = args.p_org_id as string;
+      const targetUserId = args.p_target_user_id as string;
+      if (targetUserId === callerUserId) {
+        return { data: null, error: { code: 'P0001', message: 'cannot_disable_self' } };
+      }
+      const memberships = this.tables.get('memberships') ?? [];
+      const callerRow = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === callerUserId && m.status === 'active',
+      );
+      const callerRole = callerRow?.role as string | undefined;
+      if (!callerRole || !['admin', 'owner'].includes(callerRole)) {
+        return { data: null, error: { code: 'P0001', message: 'not_admin' } };
+      }
+      const targetRow = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === targetUserId,
+      );
+      if (!targetRow) {
+        return { data: null, error: { code: 'P0001', message: 'target_not_member' } };
+      }
+      // Idempotent noop.
+      if (targetRow.status === 'disabled') {
+        return {
+          data: {
+            membershipId: targetRow.id,
+            status: 'disabled',
+            noop: true,
+            revokedTokenCount: 0,
+            revokedApiKeyCount: 0,
+          },
+          error: null,
+        };
+      }
+      if (targetRow.status !== 'active') {
+        return { data: null, error: { code: 'P0001', message: 'invalid_status_transition' } };
+      }
+      // Owner protection.
+      if (targetRow.role === 'owner' && callerRole !== 'owner') {
+        return { data: null, error: { code: 'P0001', message: 'cannot_disable_owner' } };
+      }
+      // Last-owner guard.
+      if (targetRow.role === 'owner') {
+        const otherOwners = memberships.filter(
+          (m) => m.organization_id === orgId
+            && m.user_id !== targetUserId
+            && m.role === 'owner'
+            && m.status === 'active',
+        );
+        if (otherOwners.length === 0) {
+          return { data: null, error: { code: 'P0001', message: 'last_owner' } };
+        }
+      }
+      const previousRole = targetRow.role as string;
+      const previousStatus = targetRow.status as string;
+      targetRow.status = 'disabled';
+      targetRow.disabled_at = new Date().toISOString();
+      targetRow.disabled_by = callerUserId;
+      // Revoke refresh tokens.
+      const tokens = this.tables.get('auth.refresh_tokens') ?? [];
+      const before = tokens.length;
+      const remaining = tokens.filter((t) => t.user_id !== targetUserId);
+      this.tables.set('auth.refresh_tokens', remaining);
+      const revokedTokenCount = before - remaining.length;
+      // Audit.
+      const audits = this.tables.get('audit_events') ?? [];
+      audits.push({
+        organization_id: orgId,
+        actor_user_id: callerUserId,
+        action: 'org.member.disabled',
+        subject_type: 'user',
+        subject_id: targetUserId,
+        metadata: {
+          targetUserId,
+          previousRole,
+          previousStatus,
+          revokedTokenCount,
+          revokedApiKeyCount: 0,
+        },
+        created_at: new Date().toISOString(),
+      });
+      this.tables.set('audit_events', audits);
+      return {
+        data: {
+          membershipId: targetRow.id,
+          status: 'disabled',
+          noop: false,
+          revokedTokenCount,
+          revokedApiKeyCount: 0,
+        },
+        error: null,
+      };
+    }
+
+    if (fn === 'enable_member') {
+      const callerUserId = args.p_caller_user_id as string;
+      const orgId = args.p_org_id as string;
+      const targetUserId = args.p_target_user_id as string;
+      const memberships = this.tables.get('memberships') ?? [];
+      const callerRow = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === callerUserId && m.status === 'active',
+      );
+      const callerRole = callerRow?.role as string | undefined;
+      if (!callerRole || !['admin', 'owner'].includes(callerRole)) {
+        return { data: null, error: { code: 'P0001', message: 'not_admin' } };
+      }
+      const targetRow = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === targetUserId,
+      );
+      if (!targetRow) {
+        return { data: null, error: { code: 'P0001', message: 'target_not_member' } };
+      }
+      if (targetRow.status !== 'disabled') {
+        return { data: null, error: { code: 'P0001', message: 'invalid_status_transition' } };
+      }
+      // Symmetric owner protection.
+      if (targetRow.role === 'owner' && callerRole !== 'owner') {
+        return { data: null, error: { code: 'P0001', message: 'cannot_enable_owner' } };
+      }
+      const previousStatus = targetRow.status as string;
+      const targetRole = targetRow.role as string;
+      targetRow.status = 'active';
+      targetRow.disabled_at = null;
+      targetRow.disabled_by = null;
+      const audits = this.tables.get('audit_events') ?? [];
+      audits.push({
+        organization_id: orgId,
+        actor_user_id: callerUserId,
+        action: 'org.member.enabled',
+        subject_type: 'user',
+        subject_id: targetUserId,
+        metadata: { targetUserId, targetRole, previousStatus },
+        created_at: new Date().toISOString(),
+      });
+      this.tables.set('audit_events', audits);
+      return {
+        data: { membershipId: targetRow.id, status: 'active' },
+        error: null,
+      };
+    }
+
+    if (fn === 'cleanup_expired_sso_states') {
+      const stateAgeHours = Number(args.p_state_age_hours ?? 24);
+      const eventAgeDays = Number(args.p_event_age_days ?? 30);
+      if (stateAgeHours < 1 || stateAgeHours > 720) {
+        return { data: null, error: { code: 'P0001', message: 'invalid_state_age' } };
+      }
+      if (eventAgeDays < 1 || eventAgeDays > 365) {
+        return { data: null, error: { code: 'P0001', message: 'invalid_event_age' } };
+      }
+      const now = Date.now();
+      const stateThresholdMs = now - stateAgeHours * 3600_000;
+      const eventThresholdMs = now - eventAgeDays * 86400_000;
+      const states = this.tables.get('sso_authentication_states') ?? [];
+      const stateBefore = states.length;
+      const remainingStates = states.filter((s) => {
+        if (s.consumed_at && new Date(s.consumed_at as string).getTime() < stateThresholdMs) return false;
+        if (!s.consumed_at && s.expires_at && new Date(s.expires_at as string).getTime() < stateThresholdMs) return false;
+        return true;
+      });
+      this.tables.set('sso_authentication_states', remainingStates);
+      const events = this.tables.get('processed_workos_events') ?? [];
+      const eventBefore = events.length;
+      const remainingEvents = events.filter((e) => {
+        if (e.processed_at && new Date(e.processed_at as string).getTime() < eventThresholdMs) return false;
+        return true;
+      });
+      this.tables.set('processed_workos_events', remainingEvents);
+      return {
+        data: {
+          expiredStatesDeleted: stateBefore - remainingStates.length,
+          oldEventsDeleted: eventBefore - remainingEvents.length,
+        },
+        error: null,
+      };
     }
 
     return { data: null, error: { message: `unknown rpc: ${fn}` } };
