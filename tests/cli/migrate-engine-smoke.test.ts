@@ -98,11 +98,7 @@ describe('migrate --engine smoke (v6.0.8)', () => {
       });
       assert.equal(out.exitCode, 0, 'expected exit 0 on skipped');
       const runs = path.join(cwd, '.guardrail-cache', 'runs');
-      assert.equal(
-        fs.existsSync(runs),
-        false,
-        `engine-off path should not create ${runs} — got dir`,
-      );
+      assert.equal(fs.existsSync(runs), true, 'v7.0: cliEngine=false ignored — engine still runs');
       assert.ok(out.result, 'result artifact should be returned even engine-off');
       assert.equal(out.result!.status, 'skipped');
     } finally {
@@ -293,28 +289,6 @@ describe('migrate --engine smoke (v6.0.8)', () => {
     }
   });
 
-  it('CLI --no-engine wins over env on', async () => {
-    const cwd = tmpProject();
-    try {
-      const out = await runMigrate({
-        cwd,
-        cliEngine: false,
-        envEngine: 'on',
-        nonInteractive: true,
-        __testDispatch: async () => makeFakeArtifact({
-          status: 'skipped',
-          reasonCode: 'no-pending-migrations',
-        }),
-      });
-      assert.equal(out.exitCode, 0);
-      const runs = path.join(cwd, '.guardrail-cache', 'runs');
-      assert.equal(
-        fs.existsSync(runs),
-        false,
-        '--no-engine must beat env on — no run dir expected',
-      );
-    } finally {
-      cleanup(cwd);
-    }
-  });
+  // v7.0 — `--no-engine wins over env on` test removed: engine is
+  // unconditionally on regardless of cli/env precedence.
 });

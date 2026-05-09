@@ -268,31 +268,68 @@ function boolFlag(name: string): boolean {
 }
 
 /**
- * Parse the `--engine` / `--no-engine` flag pair into a tri-state.
+ * v7.0 — `--no-engine` removed; `--engine` becomes a no-op shim with a
+ * one-shot per-process deprecation warning to stderr (codex pass-3
+ * NOTE #2). The engine is unconditionally on.
  *
- * Returns:
- *   - true  if `--engine` was passed
- *   - false if `--no-engine` was passed
- *   - undefined if neither was passed
- *
- * If BOTH are passed, exits 1 with `invalid_config` — the spec is explicit
- * that this is single-version-supported, you can't ask for both at once.
+ * Behavior:
+ *   - `--no-engine` → exit 1 with `invalid_config` and a removal hint.
+ *   - `--engine`    → emit one stderr deprecation line per process; return.
+ *   - neither       → no-op; return.
  */
-function parseEngineCliFlag(): boolean | undefined {
-  const on = args.includes('--engine');
-  const off = args.includes('--no-engine');
-  if (on && off) {
+let __engineDeprecationWarned = false;
+import {
+  ENGINE_FLAG_DEPRECATION_MESSAGE,
+  ENGINE_OFF_REMOVED_MESSAGE,
+  ENGINE_OFF_ENV_REMOVED_MESSAGE,
+} from './engine-flag-deprecation.ts';
+
+function parseEngineCliFlag(): undefined {
+  if (args.includes('--no-engine')) {
     console.error(
-      `\x1b[31m[claude-autopilot] invalid_config: --engine and --no-engine cannot both be passed\x1b[0m`,
-    );
-    console.error(
-      `\x1b[2m  hint: pass exactly one. Precedence: CLI > env > config > default.\x1b[0m`,
+      `\x1b[31m[claude-autopilot] invalid_config: ${ENGINE_OFF_REMOVED_MESSAGE}\x1b[0m`,
     );
     process.exit(1);
   }
-  if (on) return true;
-  if (off) return false;
+  if (args.includes('--engine') && !__engineDeprecationWarned) {
+    __engineDeprecationWarned = true;
+    process.stderr.write(`${ENGINE_FLAG_DEPRECATION_MESSAGE}\n`);
+  }
+  checkEngineOffEnvDeprecation();
+  // v7.0 — engine is always on; the resolver ignores cliEngine. We
+  // return undefined so `cliEngine` never gets spread into the
+  // resolver opts (keeps call sites identical and source-compatible).
   return undefined;
+}
+
+// Test seam: reset the per-process deprecation latch so tests that drive
+// the flag multiple times in one process can exercise the "warn once"
+// behavior repeatably.
+export function _resetEngineDeprecationLatchForTests(): void {
+  __engineDeprecationWarned = false;
+}
+
+/**
+ * v7.0 — `CLAUDE_AUTOPILOT_ENGINE=off` is softer than `--no-engine`:
+ * emit a one-shot warning + return undefined so the engine remains on.
+ * Per spec: env vars in CI are sticky and silently breaking every
+ * v6.x → v7 upgrade in CI on day one would burn user trust.
+ */
+let __engineEnvOffWarned = false;
+function checkEngineOffEnvDeprecation(): void {
+  const raw = process.env.CLAUDE_AUTOPILOT_ENGINE;
+  if (!raw) return;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === 'off' || normalized === 'false' || normalized === '0' || normalized === 'no') {
+    if (!__engineEnvOffWarned) {
+      __engineEnvOffWarned = true;
+      process.stderr.write(`${ENGINE_OFF_ENV_REMOVED_MESSAGE}\n`);
+    }
+  }
+}
+
+export function _resetEngineEnvOffLatchForTests(): void {
+  __engineEnvOffWarned = false;
 }
 
 /**

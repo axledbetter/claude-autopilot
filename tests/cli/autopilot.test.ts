@@ -260,40 +260,8 @@ describe('autopilot — pre-run validation', () => {
   });
 });
 
-describe('autopilot — engine-off rejected', () => {
-  it('CLAUDE_AUTOPILOT_ENGINE=off → exits 1 invalid_config, no run dir', async () => {
-    const cwd = tmpProject();
-    try {
-      const result = await silenced(() => runAutopilot({
-        cwd,
-        envEngine: 'off',
-        __silent: true,
-      }));
-
-      assert.equal(result.exitCode, 1);
-      assert.equal(result.errorCode, 'invalid_config');
-      assert.ok(/engine/i.test(result.errorMessage ?? ''), `errorMessage should mention engine: ${result.errorMessage}`);
-
-      const runs = path.join(cwd, '.guardrail-cache', 'runs');
-      assert.equal(fs.existsSync(runs), false, 'no run dir should be created when engine is off');
-    } finally {
-      cleanup(cwd);
-    }
-  });
-
-  it('cliEngine=false (--no-engine) → exits 1 invalid_config', async () => {
-    const cwd = tmpProject();
-    try {
-      const result = await silenced(() => runAutopilot({
-        cwd,
-        cliEngine: false,
-        __silent: true,
-      }));
-
-      assert.equal(result.exitCode, 1);
-      assert.equal(result.errorCode, 'invalid_config');
-    } finally {
-      cleanup(cwd);
-    }
-  });
-});
+// v7.0 — engine-off rejection tests removed: engine is always on, so
+// envEngine='off' / cliEngine=false never reach the rejection branch.
+// See tests/cli/no-engine-flag-removed.test.ts for the v7.0 flag-level
+// rejection (the dispatcher exits 1 on `--no-engine` before reaching
+// runAutopilot).

@@ -98,9 +98,10 @@ function findRunDir(cwd: string): string | null {
 }
 
 describe('fix --engine smoke (v6.0.2)', () => {
-  it('engine off + dry-run: no run dir / no engine artifacts', async () => {
-    // Dry-run short-circuits BEFORE the engine route — same shape as the
-    // legacy v5.x flow. The engine-off invariant (no run dir) holds.
+  it('dry-run short-circuits BEFORE the engine — no run dir', async () => {
+    // Dry-run returns 0 before reaching runPhaseWithLifecycle, so no
+    // engine artifacts are produced (intentional shape — dry-run is
+    // listing-only, no fix loop). v7.0 unchanged from v6.x for this path.
     const cwd = tmpProject();
     try {
       const exit = await runFix({
@@ -110,11 +111,7 @@ describe('fix --engine smoke (v6.0.2)', () => {
       });
       assert.equal(exit, 0);
       const runs = path.join(cwd, '.guardrail-cache', 'runs');
-      assert.equal(
-        fs.existsSync(runs),
-        false,
-        `engine-off path should not create ${runs} — got dir`,
-      );
+      assert.equal(fs.existsSync(runs), false, 'dry-run never reaches engine route');
     } finally {
       cleanup(cwd);
     }
@@ -132,7 +129,7 @@ describe('fix --engine smoke (v6.0.2)', () => {
       });
       assert.equal(exit, 0);
       const runs = path.join(cwd, '.guardrail-cache', 'runs');
-      assert.equal(fs.existsSync(runs), false, 'engine-off path should not create run dir');
+      assert.equal(fs.existsSync(runs), true, 'v7.0: cliEngine=false ignored — engine still runs');
     } finally {
       cleanup(cwd);
     }
@@ -217,26 +214,6 @@ describe('fix --engine smoke (v6.0.2)', () => {
     }
   });
 
-  it('CLI --no-engine wins over env on', async () => {
-    const cwd = tmpProject();
-    try {
-      const exit = await runFix({
-        cwd,
-        severity: 'all',
-        yes: true,
-        cliEngine: false,
-        envEngine: 'on',
-        __testReviewEngine: makeFakeEngine(),
-      });
-      assert.equal(exit, 0);
-      const runs = path.join(cwd, '.guardrail-cache', 'runs');
-      assert.equal(
-        fs.existsSync(runs),
-        false,
-        '--no-engine must beat env on — no run dir expected',
-      );
-    } finally {
-      cleanup(cwd);
-    }
-  });
+  // v7.0 — `--no-engine wins over env on` test removed: engine is
+  // unconditionally on regardless of cli/env precedence.
 });

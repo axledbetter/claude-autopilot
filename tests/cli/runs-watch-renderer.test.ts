@@ -25,7 +25,7 @@ import type { BudgetConfig } from '../../src/core/run-state/budget.ts';
 // Tiny fixture builders.
 // ----------------------------------------------------------------------------
 
-function mkBaseEvent(seq: number): { schema_version: 1; ts: string; runId: string; seq: number; writerId: { pid: 0; hostHash: '' } } {
+function mkBaseEvent(seq: number): { schema_version: typeof RUN_STATE_SCHEMA_VERSION; ts: string; runId: string; seq: number; writerId: { pid: 0; hostHash: '' } } {
   return {
     schema_version: RUN_STATE_SCHEMA_VERSION,
     ts: '2026-05-04T12:00:42.123Z',

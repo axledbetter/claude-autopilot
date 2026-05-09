@@ -2,6 +2,138 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.0.0 (2026-05-09)
+
+**v7.0 — hosted product MVP cutover.** First major bump since v6.0
+(2026-04-22). Drops the engine-off code path, ships the autopilot.dev
+hosted dashboard MVP, closes the last operational gap in dashboard
+session revocation, and bumps the run-state schema_version to mark the
+v7 era.
+
+### Breaking changes (read this first)
+
+See [docs/v7/breaking-changes.md](docs/v7/breaking-changes.md) for the
+full migration checklist. The shortlist:
+
+- **`--no-engine` removed.** Exits 1 with `invalid_config` if passed.
+  The engine is unconditionally on.
+- **`CLAUDE_AUTOPILOT_ENGINE=off` removed (soft).** The env value is
+  ignored — engine still runs — but a one-shot stderr deprecation
+  banner fires + a `run.warning` event with code `engine_off_removed`
+  is emitted into the durable run log. Softer than `--no-engine`
+  because env vars in CI are sticky.
+- **`ENGINE_DEFAULT_V6_0` and `ENGINE_DEFAULT_V6_1` exports removed**
+  from `src/core/run-state/resolve-engine.ts`. Direct importers must
+  replace with literal `true`. `resolveEngineEnabled()` itself is
+  preserved for source compatibility but always returns
+  `{enabled: true, source: 'default'}`.
+- **`runEngineOff` callback on `runPhaseWithLifecycle` is preserved as
+  optional**, but the helper NEVER invokes it in v7.0. New call sites
+  should omit it.
+- **`RUN_STATE_SCHEMA_VERSION` bumped 1 → 2.** v6.x runs are still
+  readable on v7 (`MIN_SUPPORTED` stays at 1). v6 binaries reading v7
+  runs hit a `corrupted_state` error with a "downgrade resume is not
+  supported" hint + `[1..1]` range.
+- **`--engine` becomes a no-op shim** with one-shot per-process
+  stderr deprecation banner. Flag preserved so existing scripts don't
+  break; remove at your leisure (slated for v8).
+
+### apps/web — real-time membership revocation
+
+- New middleware extension on `/dashboard/**` and `/api/dashboard/**`.
+  Verifies the `cao_active_org` cookie + the HMAC-signed
+  `cao_membership_check` cookie cache; on miss/expired/wrong-identity,
+  calls the new `check_membership_status(p_org_id, p_user_id)` RPC
+  (1.5s timeout, fail-closed on error).
+- Worst-case revocation window collapses from ≤1h (= access-token
+  expiry, the v6 baseline) to ≤60s (= cookie cache TTL).
+- New env var: `MEMBERSHIP_CHECK_COOKIE_SECRET` (≥32 bytes;
+  `openssl rand -hex 32`). Lazy/runtime validation — `next build` in
+  CI without the secret won't crash; middleware fails closed at
+  request time if missing.
+- Middleware runtime explicitly set to `nodejs` (was Edge default).
+  Required for `node:crypto` HMAC + `crypto.timingSafeEqual`.
+- New page: `/access-revoked?reason=<code>` (Server Component, NOT
+  auth-gated, does NOT auto-forward authenticated users to avoid
+  redirect loops). Renders one of four reasons with a Sign-out form.
+- Status → reason mapping table is the single source of truth (codex
+  pass-3 WARNING #5):
+  - `disabled` → `member_disabled`
+  - `inactive` / `invite_pending` → `member_inactive`
+  - `no_row` → `no_membership`
+  - RPC error / timeout → `check_failed`
+- New SQL migration: `data/deltas/20260509200000_phase6_check_membership_rpc.sql`.
+  `SECURITY INVOKER` (NOT DEFINER per codex pass-2 WARNING #5 +
+  pass-3 WARNING #2 — `service_role` bypasses RLS already, so DEFINER
+  would only widen blast radius). REVOKE'd from PUBLIC/anon/authenticated;
+  GRANT EXECUTE to `service_role` only.
+
+### Deferred to v7.1
+
+- `MEMBERSHIP_CHECK_TTL_SECONDS` env var to let enterprise customers
+  tighten the 60s cache window.
+- Server-side cache invalidation on `change_member_role` /
+  `disable_member` (would tighten role-change visibility from ≤60s to
+  immediate).
+- Phase 2.2 ingest API JWT mint embeds `mint_membership_status` so
+  finalize/event endpoints can refuse disabled members within the
+  ≤30min JWT TTL.
+
+### Documentation
+
+- New: `docs/v7/breaking-changes.md` — explicit v6 → v7 migration
+  checklist.
+- New: `docs/v7/runbook.md` — production deployment runbook for the
+  hosted product (Vercel env vars grouped by purpose, WorkOS dashboard
+  hookups, Stripe products + webhook config, cron secret rotation,
+  first-deploy checklist).
+- README — new "Hosted product (v7)" section pointing at autopilot.dev,
+  install snippet updated to `npm install -g
+  @delegance/claude-autopilot@latest`.
+- `docs/v6/migration-guide.md` — appended v6.2.x → v7.0 section.
+
+### CI / publishing
+
+- `.github/workflows/ci.yml` now tags pushes matching
+  `v[0-9]+.[0-9]+.[0-9]+` (no suffix) with `--tag latest`; everything
+  else stays `--tag next`. `package.json` `publishConfig.tag` stays at
+  `next` as a hand-publish fallback only — the workflow is the source
+  of truth.
+
+### Phase rollup (v7.0 cycle)
+
+- **Phase 1** (schema/RLS) — multi-tenant Postgres + RLS policies for
+  the hosted product.
+- **Phase 2.1** (Next.js scaffold) — `apps/web/` workspace, Vercel
+  deploy.
+- **Phase 2.2** (ingest API) — signed-session JWT pipeline for
+  CLI → dashboard run uploads.
+- **Phase 2.3** (CLI dashboard verbs) — `dashboard {login,logout,
+  status,upload}` + cli-auth loopback OAuth.
+- **Phase 3** (Stripe) — entitlements, tiered pricing, webhook.
+- **Phase 4** (dashboard UI + cli-auth hardening) — homepage, auth,
+  CSP-locked /cli-auth.
+- **Phases 5.1-5.4** (org admin / WorkOS setup) — members, audit, cost,
+  per-tenant SSO connection management.
+- **Phase 5.6** (WorkOS sign-in) — domain verification, SSO
+  enforcement chokepoint.
+- **Phase 5.7** (admin lifecycle) — disable_member, sso_disconnect,
+  enable_member, last-owner race protection.
+- **Phase 5.8** (lifecycle gap closure) — disabled-API-key
+  authorization fix + Vercel cron for cleanup_expired_sso_states.
+- **Phase 6** (this release) — engine-off removal, schema bump, real-
+  time membership revocation, runbook, breaking-changes docs.
+
+### Tests
+
+- 1500+ existing CLI tests pass (engine-off tests collapsed to
+  always-on; net delta near zero).
+- 510 → 566 web tests (+56 across cookie-hmac, check-membership, RPC
+  privilege grep, middleware revocation surface, response composition,
+  matcher, integration).
+- tsc clean across both `@delegance/claude-autopilot` and
+  `@delegance/claude-autopilot-web`.
+
 ## 6.3.0-pre.13 (2026-05-09)
 
 **v7.0 Phase 5.8 — Lifecycle gap closure.** Closes the two known gaps from Phase 5.7:

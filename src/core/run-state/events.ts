@@ -336,9 +336,17 @@ export function replayState(runDir: string): RunState {
       typeof observed === 'number' &&
       (observed < minSupported || observed > maxSupported)
     ) {
+      // v7.0 — when the observed version is HIGHER than this binary
+      // supports, the run was written by a newer Autopilot. Surface the
+      // "downgrade resume is not supported" hint so operators understand
+      // why a v6 binary can't pick up a v7-written run dir.
+      const downgradeHint = observed > maxSupported
+        ? ` state was written by a newer Autopilot version (schema_version=${observed}; this binary supports [${minSupported}..${maxSupported}]); downgrade resume is not supported.`
+        : '';
       throw new GuardrailError(
-        `run dir at ${runDir} has schema_version ${observed}; this binary supports schema_version ${minSupported}..${maxSupported}. ` +
-        `Use the version of claude-autopilot that created this run dir, or delete the run dir to start fresh.`,
+        `run dir at ${runDir} has schema_version ${observed}; this binary supports schema_version ${minSupported}..${maxSupported}.` +
+        downgradeHint +
+        ` Use the version of claude-autopilot that created this run dir, or delete the run dir to start fresh.`,
         {
           code: 'corrupted_state',
           provider: 'run-state',
