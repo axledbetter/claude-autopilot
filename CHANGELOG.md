@@ -2,6 +2,31 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 6.3.0-pre.10 (2026-05-08)
+
+**v7.0 Phase 5.4 — WorkOS SSO setup.** Foundational SSO wiring: server-owned WorkOS organization correlation, admin-gated portal link, signature-verified lifecycle webhook, owner-gated disconnect.
+
+New env vars: `WORKOS_API_KEY`, `WORKOS_WEBHOOK_SECRET`.
+
+Migration `data/deltas/20260508180000_phase5_4_workos_setup.sql`:
+- ALTER `organization_settings` adds 7 SSO columns (workos_organization_id, workos_connection_id, sso_connection_status, sso_connected_at, sso_disabled_at, sso_last_workos_event_at, sso_last_workos_event_id) + unique partial indexes on workos_organization_id and workos_connection_id.
+- New `processed_workos_events` ledger with claim/lease/complete columns (status, processing_started_at, locked_until, attempt_count) — enables idempotent webhook retry.
+- Three SECURITY DEFINER RPCs (REVOKE FROM PUBLIC,anon,authenticated; GRANT service_role): `record_sso_setup_initiated` (admin-gated, raises `workos_org_already_bound` if a different active WorkOS org would be swapped), `apply_workos_event` (claim/lease/complete + lifecycle ordering via sso_last_workos_event_at + state transition + audit append in one txn — connection.deleted always wins over older updated), `disable_sso_connection` (owner-only soft-disable).
+
+Surfaces:
+- `POST /api/dashboard/orgs/:orgId/sso/setup` — 6-step admin-gated portal-link sequence. Server-creates the WorkOS org via `externalId=orgId` so correlation is server-owned; idempotent on retry. Returns `{ portalUrl, workosOrganizationId }` with `Cache-Control: private, no-store`.
+- `DELETE /api/dashboard/orgs/:orgId/sso` — owner-only two-step disconnect (RPC sets status='disabled'; route then calls `workos.sso.deleteConnection`; failure non-fatal — eventual `connection.deleted` webhook clears connection_id via apply_workos_event).
+- `POST /api/workos/webhook` — runtime nodejs, raw `req.text()` body, HMAC verified via `workos.webhooks.constructEvent` (5-min tolerance). Maps connection.activated/deactivated/deleted (and dsync.* variants) through apply_workos_event RPC. 401 on bad signature, 500 on RPC error so WorkOS retries.
+- `/dashboard/admin/sso` page (owner-only, 404 otherwise) + `<SsoSetupCard>` client component.
+
+Helpers:
+- `lib/workos/client.ts` — lazy `getWorkOS()` singleton + async `verifyWorkOSSignature()` wrapper (returns `{ok, event} | {ok:false, reason}`).
+- `lib/dashboard/membership-guard.ts` MAP gains `workos_org_already_bound: 422`, `bad_workos_org_id: 422`, `webhook_signature_invalid: 401`.
+
+Sidebar: admin layout adds "SSO" link.
+
+Tests: 5 new test files (40 tests). setup.test.ts (11), disconnect.test.ts (6), webhook.test.ts (6), client.test.ts (6), sso-privilege.test.ts (11 — REVOKE/GRANT, SECURITY DEFINER, schema-qualified refs, claim/lease/complete columns, lifecycle handlers). Stub extensions for `record_sso_setup_initiated`, `apply_workos_event`, `disable_sso_connection` RPCs + `processed_workos_events` table behavior.
+
 ## 6.3.0-pre.9 (2026-05-08)
 
 **v7.0 Phase 5.3 — Org switcher.** Replaces the "first admin/owner membership" hack across `/dashboard` + `/dashboard/admin/*` with a real org switcher backed by an HTTP-only cookie.

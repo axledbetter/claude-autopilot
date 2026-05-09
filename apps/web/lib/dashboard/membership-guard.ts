@@ -33,6 +33,10 @@ const MAP: Record<string, number> = {
   bad_group_by: 422,
   bad_period: 422,
   bad_cursor: 422,
+  // Phase 5.4 — WorkOS SSO setup.
+  workos_org_already_bound: 422,
+  bad_workos_org_id: 422,
+  webhook_signature_invalid: 401,
 };
 
 export function mapPostgresError(err: PgError): { status: number; body: { error: string } } {
