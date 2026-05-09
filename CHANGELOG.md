@@ -2,6 +2,35 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.1.3 (2026-05-09)
+
+**v7.1.3 — `/api/health/v7-readiness` deploy-verification endpoint.**
+Hosted product (`apps/web/`) only. Operator-facing improvement; no
+breaking changes; no migration.
+
+* New `GET /api/health/v7-readiness` route, gated by
+  `Authorization: Bearer ${CRON_SECRET}` (constant-time compare via
+  `crypto.timingSafeEqual`).
+* Verifies in one HTTP call:
+  - `check_membership_status` RPC is present + executable (closes
+    codex PR #141 PR-pass WARNING #3 — the Phase 6 migration must
+    be applied before deploying any v7.0+ web image, or every
+    org-scoped dashboard request returns `check_failed` within 60s).
+  - All 12 required env vars are set (Supabase, Stripe, WorkOS,
+    JWT/SSO/cookie secrets meeting ≥32-byte minimums where
+    applicable).
+* Response: `200 {ok: true, totalChecks, passed, failed: 0, checks}`
+  on full pass; `503 {ok: false, ...}` with per-check
+  `{name, status, required, message?}` diagnostic on any required
+  failure.
+* Operator runbook updated with `curl -fsSL` example for an
+  automated deploy-step gate.
+* 8 new tests in `apps/web/__tests__/api/health/v7-readiness.test.ts`
+  covering happy path, missing env, too-short secret, RPC missing,
+  three auth-failure modes (no header, wrong secret, malformed
+  Bearer), and missing CRON_SECRET → 500.
+* 613 → 621 web tests; 1536 CLI unchanged; tsc clean.
+
 ## 7.1.2 (2026-05-09)
 
 **v7.1.2 — configurable membership-check TTL.** Hosted product
