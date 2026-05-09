@@ -2,6 +2,17 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 6.3.0-pre.13 (2026-05-09)
+
+**v7.0 Phase 5.8 — Lifecycle gap closure.** Closes the two known gaps from Phase 5.7:
+
+1. **Disabled-API-key authorization fix.** The Phase 2.2 `upload-session` and Phase 4 `artifact` routes had `let allowed = run.user_id === auth.userId` as the first authorization check. This allowed a member who got disabled AFTER creating an org-scoped run to keep uploading via their API key. Both routes now ALWAYS require active membership when `run.organization_id` is set, regardless of ownership. Personal (un-org-scoped) runs still use the ownership check. Regression test (`__tests__/api/dashboard/runs/disabled-api-key.test.ts`, 4 cases) locks this in.
+2. **Vercel cron wiring for `cleanup_expired_sso_states` RPC.** New `GET /api/cron/cleanup-expired-sso-state` route (Vercel cron-secret-gated; rejects any caller without `Authorization: Bearer ${CRON_SECRET}`). Schedule `0 3 * * *` (daily 03:00 UTC) added to `vercel.json`. Calls the Phase 5.7 RPC with default args (24h state age, 30d event age). 4-test coverage (auth happy/fail paths + missing env).
+
+New env: `CRON_SECRET` (Vercel sets automatically on production cron-attached projects; local-dev override via `.env.local`). Documented in `.env.example`.
+
+Tests: 502 → 510 web. tsc clean.
+
 ## 6.3.0-pre.12 (2026-05-09)
 
 **v7.0 Phase 5.7 — Admin lifecycle controls + session revocation.** Closes the lifecycle/revocation gap that Phases 5.4 and 5.6 explicitly deferred.

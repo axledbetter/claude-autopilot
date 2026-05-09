@@ -42,8 +42,13 @@ export async function GET(req: Request, { params }: RouteParams): Promise<Respon
   if (!run) return NextResponse.json({ error: 'not found' }, { status: 404 });
   const r = run as RunRow;
 
-  let allowed = r.user_id === auth.userId;
-  if (!allowed && r.organization_id) {
+  // Phase 5.8 — when the run is org-scoped, ALWAYS require active
+  // membership (even for the original creator). Without this, a member
+  // who got disabled after creating the run could still upload to it
+  // via their API key. For personal (un-org-scoped) runs, ownership is
+  // the only check.
+  let allowed = false;
+  if (r.organization_id) {
     const { data: membership } = await supabase.from('memberships')
       .select('user_id, status')
       .eq('organization_id', r.organization_id)
@@ -51,6 +56,8 @@ export async function GET(req: Request, { params }: RouteParams): Promise<Respon
       .eq('status', 'active')
       .maybeSingle();
     allowed = membership !== null && membership !== undefined;
+  } else {
+    allowed = r.user_id === auth.userId;
   }
   // Codex pass 2 CRITICAL #3 — ownership-scoped 404 (don't leak existence
   // of runs the caller can't see).

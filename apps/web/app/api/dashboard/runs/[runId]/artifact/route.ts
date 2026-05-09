@@ -100,9 +100,10 @@ export async function GET(req: Request, { params }: RouteParams): Promise<Respon
   } else {
     const callerUserId = await resolveCallerUserId(req);
     if (!callerUserId) return NextResponse.json({ error: 'unauthenticated' }, { status: 401 });
-    if (run.user_id === callerUserId) {
-      allowed = true;
-    } else if (run.organization_id) {
+    // Phase 5.8 — when org-scoped, ALWAYS check active membership
+    // (even for the original creator). Otherwise a disabled member who
+    // created the run could still mint signed URLs against it.
+    if (run.organization_id) {
       const { data: m } = await supabase.from('memberships')
         .select('user_id')
         .eq('organization_id', run.organization_id)
@@ -110,6 +111,8 @@ export async function GET(req: Request, { params }: RouteParams): Promise<Respon
         .eq('status', 'active')
         .maybeSingle();
       if (m) allowed = true;
+    } else if (run.user_id === callerUserId) {
+      allowed = true;
     }
   }
   if (!allowed) {
