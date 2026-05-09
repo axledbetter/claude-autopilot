@@ -8,12 +8,21 @@ const ISS = 'autopilot.dev';
 export interface UploadTokenClaims {
   sub: string;          // user_id
   run_id: string;       // ULID
-  org_id: string;       // organization_id or '' for free-tier
+  /** Organization ID for org-scoped runs; null for personal/free-tier.
+   *  This is the SOLE authority for membership-recheck dispatch
+   *  (truthy → check). On the wire, personal runs serialize as the
+   *  empty string for v7.0 compatibility; verify normalizes '' → null
+   *  so consumers always see `string | null`. */
+  org_id: string | null;
   jti: string;          // upload_sessions.jti
   aud: string;
   iss: string;
   exp: number;
   iat: number;
+  /** Observability-only snapshot of membership status at mint time.
+   *  NOT used for authorization (codex pass-1 CRITICAL #2). Optional
+   *  for forward-compat with v7.0 tokens during rollout. */
+  mint_status?: 'active' | 'personal';
 }
 
 export interface MintInput {
@@ -21,6 +30,10 @@ export interface MintInput {
   runId: string;
   orgId: string | null;
   jti: string;
+  /** Required as of v7.1 — embedded as the `mint_status` claim for
+   *  observability/audit. Not consulted at verify time for authorization
+   *  (codex pass-1 CRITICAL #2). */
+  mintStatus: 'active' | 'personal';
 }
 
 function getSecret(): string {
@@ -33,15 +46,19 @@ function getSecret(): string {
 
 export function mintUploadToken(input: MintInput): { token: string; expiresAt: Date } {
   const now = Math.floor(Date.now() / 1000);
-  const claims: UploadTokenClaims = {
+  // Wire format: keep org_id as '' for personal runs to match v7.0
+  // token shape (verify normalizes back to null).
+  const wireOrgId: string = input.orgId ?? '';
+  const claims = {
     sub: input.userId,
     run_id: input.runId,
-    org_id: input.orgId ?? '',
+    org_id: wireOrgId,
     jti: input.jti,
     aud: AUD,
     iss: ISS,
     exp: now + TTL_SECONDS,
     iat: now,
+    mint_status: input.mintStatus,
   };
   const token = jwt.sign(claims, getSecret(), { algorithm: 'HS256' });
   return { token, expiresAt: new Date(claims.exp * 1000) };
@@ -62,7 +79,15 @@ export class TokenError extends Error {
   }
 }
 
-export function verifyUploadToken(rawToken: string): UploadTokenClaims {
+/**
+ * @internal Use `verifyTokenAndAssertRunMembership()` from
+ * `@/lib/upload/auth` instead. This function is the bare JWT decode +
+ * shape check; it does NOT enforce the per-request membership re-check
+ * that v7.1 adds. ESLint `no-restricted-imports` rule on
+ * `apps/web/app/api/runs/**` rejects direct imports of this module
+ * outside of `lib/upload/auth.ts`.
+ */
+export function _verifyUploadTokenInternal(rawToken: string): UploadTokenClaims {
   let decoded: jwt.JwtPayload | string;
   try {
     decoded = jwt.verify(rawToken, getSecret(), {
@@ -82,5 +107,21 @@ export function verifyUploadToken(rawToken: string): UploadTokenClaims {
   for (const k of required) {
     if (!(k in decoded)) throw new TokenError('missing_claim');
   }
-  return decoded as UploadTokenClaims;
+  // Normalize '' org_id → null so the helper's truthy check is the
+  // single source of authority (codex pass-1 CRITICAL #3).
+  const rawOrgId = decoded.org_id;
+  const normalizedOrgId: string | null =
+    typeof rawOrgId === 'string' && rawOrgId.length > 0 ? rawOrgId : null;
+  return { ...decoded, org_id: normalizedOrgId } as UploadTokenClaims;
+}
+
+/**
+ * @deprecated v7.1 — use `verifyTokenAndAssertRunMembership()` from
+ * `@/lib/upload/auth` instead. Direct callers from `app/api/runs/**`
+ * are blocked by the ESLint `no-restricted-imports` rule. This export
+ * is preserved ONLY for the JWT-shape unit tests in
+ * `__tests__/lib/jwt.test.ts`.
+ */
+export function verifyUploadToken(rawToken: string): UploadTokenClaims {
+  return _verifyUploadTokenInternal(rawToken);
 }

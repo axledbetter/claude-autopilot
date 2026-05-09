@@ -20,6 +20,28 @@ import { createServiceRoleClient } from '@/lib/supabase/service';
 // New API-key-authenticated routes touching org-scoped data must add the
 // same active-membership check; Phase 5.8 left no shared helper because
 // the org context is route-specific (run, billing, etc).
+//
+// ----------------------------------------------------------------------------
+// v7.1 — JWT-authenticated ingest API extension.
+//
+// Symmetric to the API-key invariant above: every ingest endpoint that
+// operates on an org-scoped run MUST call `assertActiveMembership(claims)`
+// after `verifyUploadToken()`. In practice this is enforced via the
+// `verifyTokenAndAssertRunMembership()` orchestrator in
+// `lib/upload/auth.ts` — routes call THAT, not the bare verifier.
+// ESLint `no-restricted-imports` (apps/web/.eslintrc.json) blocks direct
+// `verifyUploadToken` imports under `app/api/runs/**` as defense in depth.
+//
+// Caller audit (ingest):
+//   * POST /api/upload-session                 — mint endpoint. Calls
+//     `checkMembershipStatus` directly pre-mint (no JWT yet) and embeds
+//     `mint_status` in the JWT for observability.
+//   * PUT  /api/runs/:runId/events/:seq        — JWT-auth. MUST call
+//     `verifyTokenAndAssertRunMembership()` before claim_chunk_slot.
+//   * POST /api/runs/:runId/finalize           — JWT-auth. MUST call
+//     `verifyTokenAndAssertRunMembership()` before manifest write.
+//
+// Future ingest endpoints touching org-scoped runs: same rule.
 // ============================================================================
 
 export interface ApiKeyAuth { userId: string; keyId: string }

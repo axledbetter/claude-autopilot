@@ -72,13 +72,18 @@ export async function GET(req: Request, { params }: RouteParams): Promise<Respon
   if (!existing) return NextResponse.json({ error: 'not found' }, { status: 404 });
   const s = existing as SessionRow;
 
+  // v7.1 — derive mint_status from run scope. Org-scoped path above already
+  // enforces active membership; if we got here with org_id set, the caller
+  // is active. Personal runs use 'personal'.
+  const mintStatus: 'active' | 'personal' = r.organization_id ? 'active' : 'personal';
+
   // If still valid, re-mint fresh JWT bound to the SAME jti so the same
   // upload_sessions row can keep accepting chunks. Update token_hash +
   // expires_at on the row.
   const expired = new Date(s.expires_at) < new Date();
   if (!expired) {
     const { token, expiresAt } = mintUploadToken({
-      userId: s.user_id, runId: s.run_id, orgId: s.organization_id, jti: s.jti,
+      userId: s.user_id, runId: s.run_id, orgId: s.organization_id, jti: s.jti, mintStatus,
     });
     const tokenHash = createHash('sha256').update(token).digest('hex');
     await supabase.from('upload_sessions')
@@ -106,7 +111,7 @@ export async function GET(req: Request, { params }: RouteParams): Promise<Respon
   const sessionId = randomUUID();
   const jti = randomUUID();
   const { token, expiresAt } = mintUploadToken({
-    userId: s.user_id, runId: s.run_id, orgId: s.organization_id, jti,
+    userId: s.user_id, runId: s.run_id, orgId: s.organization_id, jti, mintStatus,
   });
   const tokenHash = createHash('sha256').update(token).digest('hex');
   const zeroHash = '0'.repeat(64);

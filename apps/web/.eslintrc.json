@@ -1,0 +1,23 @@
+{
+  "root": false,
+  "_comment": "v7.1 — minimal ESLint config focused on the JWT-orchestrator chokepoint enforcement (codex pass-3 WARNING #5). Routes under app/api/runs/** MUST go through @/lib/upload/auth's verifyTokenAndAssertRunMembership() — they may NOT import the bare verifier from @/lib/upload/jwt directly. TokenError + UploadTokenClaims type imports are still permitted for typed catch / signature purposes.",
+  "overrides": [
+    {
+      "files": ["app/api/runs/**/*.ts", "app/api/runs/**/*.tsx"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@/lib/upload/jwt",
+                "importNames": ["verifyUploadToken", "_verifyUploadTokenInternal"],
+                "message": "v7.1: ingest routes MUST use verifyTokenAndAssertRunMembership() from '@/lib/upload/auth'. The bare verifier skips the per-request membership re-check (codex pass-3 WARNING #5)."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

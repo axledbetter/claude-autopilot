@@ -364,6 +364,28 @@ export class SupabaseStub {
       return { data: rows.length - keep.length, error: null };
     }
 
+    if (fn === 'check_membership_status') {
+      // v7.0 Phase 6 — narrow status lookup for the dashboard middleware
+      // and the v7.1 ingest membership re-check. SECURITY INVOKER in
+      // prod; the stub trusts service-role callers.
+      const orgId = args.p_org_id as string;
+      const userId = args.p_user_id as string;
+      const memberships = this.tables.get('memberships') ?? [];
+      const row = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === userId,
+      );
+      const status = (row?.status as string | undefined) ?? 'no_row';
+      const role = (row?.role as string | null | undefined) ?? null;
+      return {
+        data: {
+          status,
+          role,
+          checked_at: Math.floor(Date.now() / 1000),
+        },
+        error: null,
+      };
+    }
+
     if (fn === 'count_runs_this_month') {
       // Phase 3 entitlement gate — count runs for the current calendar month
       // (UTC). Mirrors the SQL `date_trunc('month', NOW() AT TIME ZONE 'UTC')`.

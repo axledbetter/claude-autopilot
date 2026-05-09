@@ -5,6 +5,10 @@ import { resolveCaller } from '@/lib/upload/auth';
 import { mintUploadToken } from '@/lib/upload/jwt';
 import { zeroHash } from '@/lib/upload/chain';
 import { checkEntitlement } from '@/lib/billing/check-entitlement';
+import {
+  checkMembershipStatus,
+  MembershipCheckError,
+} from '@/lib/supabase/check-membership';
 
 interface Body {
   runId: string;
@@ -60,6 +64,49 @@ export async function POST(req: Request): Promise<Response> {
     }, { status: 402 });
   }
 
+  // v7.1 — mint-time membership snapshot. For org-scoped runs, the JWT
+  // is only minted if (r.organization_id, r.user_id) is currently
+  // 'active'. Personal runs (organization_id IS NULL) skip this RPC and
+  // mint with `mint_status: 'personal'`. Authority for the per-request
+  // re-check is always claims.org_id; mint_status is observability-only
+  // (codex pass-1 CRITICAL #2).
+  let mintStatus: 'active' | 'personal' = 'personal';
+  if (r.organization_id) {
+    try {
+      const ms = await checkMembershipStatus(r.organization_id, r.user_id);
+      if (ms.status !== 'active') {
+        // Audit: structured trail for the refusal.
+        try {
+          await supabase.from('audit_events').insert({
+            organization_id: r.organization_id,
+            actor_user_id: r.user_id,
+            action: 'ingest.mint_refused',
+            subject_type: 'run',
+            subject_id: body.runId,
+            metadata: {
+              run_id: body.runId,
+              organization_id: r.organization_id,
+              user_id: r.user_id,
+              reason: 'member_not_active',
+              membership_status: ms.status,
+            },
+          });
+        } catch {
+          // Audit insert failure must NOT downgrade the 403 response.
+        }
+        return NextResponse.json({ error: 'member_not_active' }, { status: 403 });
+      }
+      mintStatus = 'active';
+    } catch (err) {
+      if (err instanceof MembershipCheckError) {
+        // Transient — retryable 503 to match event-write/finalize parity
+        // (codex pass-2 WARNING #2).
+        return NextResponse.json({ error: 'member_check_failed' }, { status: 503 });
+      }
+      throw err;
+    }
+  }
+
   // Cancel any expired-but-unconsumed session for this run before checking
   // app-level uniqueness — otherwise stale sessions block forever (codex
   // final WARNING).
@@ -77,7 +124,7 @@ export async function POST(req: Request): Promise<Response> {
   const sessionId = randomUUID();
   const jti = randomUUID();
   const { token, expiresAt } = mintUploadToken({
-    userId: r.user_id, runId: r.id, orgId: r.organization_id, jti,
+    userId: r.user_id, runId: r.id, orgId: r.organization_id, jti, mintStatus,
   });
   const tokenHash = createHash('sha256').update(token).digest('hex');
 
