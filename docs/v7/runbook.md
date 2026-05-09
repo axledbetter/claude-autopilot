@@ -72,13 +72,23 @@ purpose:
   without it, but the middleware will fail closed on every request
   until the secret is set.
 
-  **Rotation (v7.0):** rotating this secret invalidates every
-  outstanding `cao_membership_check` cookie at once — every active
-  dashboard session falls through to the `check_membership_status`
-  RPC on its next request. Rotate during a low-traffic window and
-  watch RPC + Supabase latency. Dual-secret support
-  (`MEMBERSHIP_CHECK_COOKIE_SECRET_CURRENT` +
-  `_PREVIOUS`) is deferred to v7.1 (codex PR-pass WARNING #7).
+  **Rotation (v7.1.1+):** dual-secret rotation is supported via the
+  optional `MEMBERSHIP_CHECK_COOKIE_SECRET_PREVIOUS` env var. Verify
+  tries CURRENT first; on signature mismatch, tries PREVIOUS. New
+  cookies always sign with CURRENT. Operator flow:
+
+  1. `NEW=$(openssl rand -hex 32)`
+  2. Set `MEMBERSHIP_CHECK_COOKIE_SECRET_PREVIOUS` = current value.
+  3. Set `MEMBERSHIP_CHECK_COOKIE_SECRET` = `$NEW`.
+  4. Deploy.
+  5. Wait ≥60s (one cookie TTL — every cached cookie has now been
+     re-signed with `$NEW`).
+  6. Unset `MEMBERSHIP_CHECK_COOKIE_SECRET_PREVIOUS` at the next deploy.
+
+  Without `_PREVIOUS` (v7.0/v7.1.0 behavior), rotating `CURRENT`
+  invalidates every outstanding cookie at once = thundering herd of
+  `check_membership_status` RPC calls. Always set `_PREVIOUS` when
+  rotating.
 
 ## Supabase
 
