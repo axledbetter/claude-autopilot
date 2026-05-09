@@ -261,4 +261,75 @@ describe('cookie-hmac', () => {
       expect(verifyMembershipCookie(cookie).ok).toBe(true);
     });
   });
+
+  // v7.1.2 — configurable membership-check TTL
+  describe('v7.1.2 — getMembershipCheckTtlSeconds()', () => {
+    let getMembershipCheckTtlSeconds: () => number;
+    let MEMBERSHIP_TTL_DEFAULT_SECONDS: number;
+    let resetTtlLatch: () => void;
+
+    beforeEach(async () => {
+      const mod = await import('@/lib/middleware/cookie-hmac');
+      getMembershipCheckTtlSeconds = mod.getMembershipCheckTtlSeconds;
+      MEMBERSHIP_TTL_DEFAULT_SECONDS = mod.MEMBERSHIP_TTL_DEFAULT_SECONDS;
+      resetTtlLatch = mod._resetTtlWarnLatchForTests;
+      resetTtlLatch();
+      delete process.env.MEMBERSHIP_CHECK_TTL_SECONDS;
+    });
+    afterEach(() => {
+      delete process.env.MEMBERSHIP_CHECK_TTL_SECONDS;
+    });
+
+    it('returns default 60 when env var unset', () => {
+      expect(getMembershipCheckTtlSeconds()).toBe(60);
+      expect(MEMBERSHIP_TTL_DEFAULT_SECONDS).toBe(60);
+    });
+
+    it('returns the env value when valid integer in range', () => {
+      process.env.MEMBERSHIP_CHECK_TTL_SECONDS = '15';
+      expect(getMembershipCheckTtlSeconds()).toBe(15);
+      process.env.MEMBERSHIP_CHECK_TTL_SECONDS = '3600';
+      expect(getMembershipCheckTtlSeconds()).toBe(3600);
+      process.env.MEMBERSHIP_CHECK_TTL_SECONDS = '1';
+      expect(getMembershipCheckTtlSeconds()).toBe(1);
+    });
+
+    it('falls back to default on non-integer / non-numeric (warn-once)', () => {
+      process.env.MEMBERSHIP_CHECK_TTL_SECONDS = 'abc';
+      expect(getMembershipCheckTtlSeconds()).toBe(60);
+    });
+
+    it('falls back to default on float (warn-once — Number.isInteger rejects)', () => {
+      process.env.MEMBERSHIP_CHECK_TTL_SECONDS = '15.5';
+      expect(getMembershipCheckTtlSeconds()).toBe(60);
+    });
+
+    it('falls back to default on out-of-range values', () => {
+      // Below min.
+      process.env.MEMBERSHIP_CHECK_TTL_SECONDS = '0';
+      expect(getMembershipCheckTtlSeconds()).toBe(60);
+      resetTtlLatch();
+      process.env.MEMBERSHIP_CHECK_TTL_SECONDS = '-30';
+      expect(getMembershipCheckTtlSeconds()).toBe(60);
+      resetTtlLatch();
+      // Above max.
+      process.env.MEMBERSHIP_CHECK_TTL_SECONDS = '7200';
+      expect(getMembershipCheckTtlSeconds()).toBe(60);
+    });
+
+    it('signed cookie exp respects TTL value (sign + verify roundtrip with non-default TTL)', () => {
+      process.env.MEMBERSHIP_CHECK_TTL_SECONDS = '5';
+      const ttl = getMembershipCheckTtlSeconds();
+      expect(ttl).toBe(5);
+      // Mint a cookie that uses the TTL (mirroring middleware behavior).
+      const exp = Math.floor(Date.now() / 1000) + ttl;
+      const cookie = signMembershipCookie(makePayload({ exp }));
+      // Verify NOW — should still be valid.
+      expect(verifyMembershipCookie(cookie).ok).toBe(true);
+      // Verify with simulated clock past exp — should reject.
+      const result = verifyMembershipCookie(cookie, exp + 1);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('expired');
+    });
+  });
 });
