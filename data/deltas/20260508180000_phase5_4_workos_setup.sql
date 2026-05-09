@@ -401,7 +401,91 @@ END;
 $$;
 
 -- ============================================================================
--- 5. Privilege model — Phase 5.1 codex pass 2 CRITICAL #1 pattern.
+-- 5. disable_sso_connection — owner-only soft-disable.
+--
+-- Two-step disconnect flow per spec:
+--   1. Route calls this RPC → sets status='disabled', sso_disabled_at=now,
+--      audit append. connection_id remains so the route can call WorkOS
+--      DELETE /connections/:id with it.
+--   2. Route calls workos.connections.deleteConnection(connection_id).
+--      Failure here is non-fatal: the org is already locally disabled;
+--      the eventual connection.deleted webhook (or a manual retry) clears
+--      the connection_id via apply_workos_event.
+--
+-- Returns the connection_id so the route can pass it to WorkOS without a
+-- second read.
+-- ============================================================================
+CREATE OR REPLACE FUNCTION public.disable_sso_connection(
+  p_caller_user_id uuid,
+  p_org_id uuid
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, audit, auth, pg_temp
+AS $$
+DECLARE
+  v_caller_role text;
+  v_existing_status text;
+  v_existing_connection_id text;
+BEGIN
+  -- Owner-only (admins are not enough for SSO disconnect — explicit
+  -- destructive action gated to org owners).
+  SELECT role INTO v_caller_role
+    FROM public.memberships
+   WHERE organization_id = p_org_id
+     AND user_id = p_caller_user_id
+     AND status = 'active';
+  IF v_caller_role IS NULL OR v_caller_role <> 'owner' THEN
+    RAISE EXCEPTION 'not_owner' USING ERRCODE = 'P0001';
+  END IF;
+
+  SELECT sso_connection_status, workos_connection_id
+    INTO v_existing_status, v_existing_connection_id
+    FROM public.organization_settings
+   WHERE organization_id = p_org_id
+   FOR UPDATE;
+
+  -- Idempotent: if already disabled or never connected, return current state.
+  IF v_existing_status IS NULL OR v_existing_status IN ('inactive', 'disabled') THEN
+    RETURN jsonb_build_object(
+      'organizationId', p_org_id,
+      'status', coalesce(v_existing_status, 'inactive'),
+      'workosConnectionId', v_existing_connection_id,
+      'noop', true
+    );
+  END IF;
+
+  UPDATE public.organization_settings
+     SET sso_connection_status = 'disabled',
+         sso_disabled_at = NOW(),
+         updated_at = NOW(),
+         updated_by = p_caller_user_id
+   WHERE organization_id = p_org_id;
+
+  PERFORM audit.append(
+    p_org_id,
+    p_caller_user_id,
+    'org.sso.disabled',
+    'organization',
+    p_org_id::text,
+    jsonb_build_object(
+      'previousStatus', v_existing_status,
+      'workosConnectionId', v_existing_connection_id
+    ),
+    true
+  );
+
+  RETURN jsonb_build_object(
+    'organizationId', p_org_id,
+    'status', 'disabled',
+    'workosConnectionId', v_existing_connection_id,
+    'noop', false
+  );
+END;
+$$;
+
+-- ============================================================================
+-- 6. Privilege model — Phase 5.1 codex pass 2 CRITICAL #1 pattern.
 --
 -- Default GRANT EXECUTE TO PUBLIC is implicit. Explicit REVOKE blocks
 -- direct authenticated/anon RPC calls; only service-role (used by route
@@ -409,10 +493,12 @@ $$;
 -- ============================================================================
 REVOKE ALL ON FUNCTION
   public.record_sso_setup_initiated(uuid, uuid, text),
-  public.apply_workos_event(text, text, text, text, timestamptz, text, int)
+  public.apply_workos_event(text, text, text, text, timestamptz, text, int),
+  public.disable_sso_connection(uuid, uuid)
   FROM PUBLIC, anon, authenticated;
 
 GRANT EXECUTE ON FUNCTION
   public.record_sso_setup_initiated(uuid, uuid, text),
-  public.apply_workos_event(text, text, text, text, timestamptz, text, int)
+  public.apply_workos_event(text, text, text, text, timestamptz, text, int),
+  public.disable_sso_connection(uuid, uuid)
   TO service_role;
