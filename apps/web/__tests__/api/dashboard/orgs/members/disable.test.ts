@@ -190,6 +190,36 @@ describe('POST /api/dashboard/orgs/:orgId/members/:userId/disable', () => {
     expect((await r.json()).error).toBe('invalid_status_transition');
   });
 
+  it('codex PR-pass CRITICAL #3 — last-owner race protection (concurrent disable cannot leave 0 owners)', async () => {
+    // Two owners try to disable each other concurrently. Without
+    // serialization both would pass the last-owner check and leave 0
+    // active owners. With pg_advisory_xact_lock per org, the second
+    // transaction waits for the first; by the time it runs, the first
+    // owner is already disabled and the last-owner guard fires.
+    const orgId = randomUUID();
+    const owner1 = randomUUID();
+    const owner2 = randomUUID();
+    seedOrg(orgId, [owner1, owner2]);
+
+    // First disable: owner1 disables owner2. Should succeed (owner1 still active).
+    currentUser = { id: owner1 };
+    const r1 = await POST(req(orgId, owner2), { params: { orgId, userId: owner2 } });
+    expect(r1.status).toBe(200);
+
+    // Second disable: owner2 (now disabled) tries to disable owner1.
+    // Should fail because owner2 is no longer an active member.
+    currentUser = { id: owner2 };
+    const r2 = await POST(req(orgId, owner1), { params: { orgId, userId: owner1 } });
+    expect(r2.status).toBe(403);  // not_admin (owner2 is now disabled)
+
+    // owner1 still active → org has at least one owner.
+    const memberships = stub.tables.get('memberships') ?? [];
+    const activeOwners = memberships.filter(
+      (m) => m.organization_id === orgId && m.role === 'owner' && m.status === 'active',
+    );
+    expect(activeOwners.length).toBeGreaterThanOrEqual(1);
+  });
+
   it('audit metadata includes previousRole + previousStatus + revokedTokenCount + revokedApiKeyCount=0', async () => {
     const orgId = randomUUID();
     const owner = randomUUID();

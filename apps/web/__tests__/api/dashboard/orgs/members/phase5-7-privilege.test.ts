@@ -86,4 +86,8 @@ describe('Phase 5.7 lifecycle migration privilege model + hardening', () => {
     expect(sql).not.toMatch(/UPDATE public\.api_keys[\s\S]*SET revoked_at/);
     expect(sql).toMatch(/DROPPED API-key revocation/);
   });
+
+  it('disable_member uses pg_advisory_xact_lock per-org (codex PR-pass CRITICAL #3 — last-owner race)', () => {
+    expect(sql).toMatch(/pg_advisory_xact_lock\(hashtext\('org-lifecycle:'/);
+  });
 });

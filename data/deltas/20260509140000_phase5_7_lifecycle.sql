@@ -84,6 +84,13 @@ BEGIN
     RAISE EXCEPTION 'cannot_disable_self' USING ERRCODE = 'P0001';
   END IF;
 
+  -- Codex PR-pass CRITICAL #3 — serialize lifecycle mutations per org
+  -- via transaction-scoped advisory lock. Without this, two owners
+  -- could concurrently disable each other and leave the org with zero
+  -- active owners (last-owner check sees the other as still active in
+  -- both transactions).
+  PERFORM pg_advisory_xact_lock(hashtext('org-lifecycle:' || p_org_id::text));
+
   SELECT role INTO v_caller_role
     FROM public.memberships
    WHERE organization_id = p_org_id
