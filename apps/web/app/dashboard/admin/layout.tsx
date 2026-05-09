@@ -37,6 +37,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const settingsHref = `/dashboard/admin/settings?orgId=${orgId}` as Route;
   const auditHref = `/dashboard/admin/audit?orgId=${orgId}` as Route;
   const costHref = `/dashboard/admin/cost?orgId=${orgId}` as Route;
+  const ssoHref = `/dashboard/admin/sso?orgId=${orgId}` as Route;
 
   return (
     <div className="grid grid-cols-[200px_1fr] gap-8">
@@ -46,6 +47,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         </Link>
         <Link href={settingsHref} className="px-2 py-1 rounded hover:bg-white/5">
           Settings
+        </Link>
+        <Link href={ssoHref} className="px-2 py-1 rounded hover:bg-white/5">
+          SSO
         </Link>
         <Link href={auditHref} className="px-2 py-1 rounded hover:bg-white/5">
           Audit log

@@ -40,23 +40,26 @@ export type VerifyResult =
  *
  * rawBody must be the unmodified request body string — the HMAC is computed
  * over the byte stream, so any reserialization breaks it.
+ *
+ * SDK constructEvent returns a Promise — keep this function async so callers
+ * `await` it.
  */
-export function verifyWorkOSSignature(
+export async function verifyWorkOSSignature(
   rawBody: string,
   signatureHeader: string | null,
   toleranceMs = 5 * 60_000,
-): VerifyResult {
+): Promise<VerifyResult> {
   if (!signatureHeader) return { ok: false, reason: 'missing_signature' };
   const secret = process.env.WORKOS_WEBHOOK_SECRET;
   if (!secret) return { ok: false, reason: 'webhook_secret_not_configured' };
   try {
     const workos = getWorkOS();
-    const event = workos.webhooks.constructEvent({
+    const event = (await workos.webhooks.constructEvent({
       payload: JSON.parse(rawBody),
       sigHeader: signatureHeader,
       secret,
       tolerance: toleranceMs,
-    }) as VerifiedEvent;
+    })) as unknown as VerifiedEvent;
     return { ok: true, event };
   } catch (err) {
     const reason = err instanceof Error ? err.message : 'unknown_error';

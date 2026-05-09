@@ -804,6 +804,271 @@ export class SupabaseStub {
       return { data: { rows, total, period: { since, until } }, error: null };
     }
 
+    // ========================================================================
+    // Phase 5.4 — WorkOS SSO setup RPCs.
+    //
+    // Mirror data/deltas/20260508180000_phase5_4_workos_setup.sql.
+    // ========================================================================
+
+    if (fn === 'record_sso_setup_initiated') {
+      const callerUserId = args.p_caller_user_id as string;
+      const orgId = args.p_org_id as string;
+      const workosOrgId = (args.p_workos_organization_id as string | null)?.trim() ?? '';
+      if (!workosOrgId) {
+        return { data: null, error: { code: 'P0001', message: 'bad_workos_org_id' } };
+      }
+      const memberships = this.tables.get('memberships') ?? [];
+      const callerRow = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === callerUserId && m.status === 'active',
+      );
+      if (!callerRow || !['admin', 'owner'].includes(callerRow.role as string)) {
+        return { data: null, error: { code: 'P0001', message: 'not_admin' } };
+      }
+      const settings = this.tables.get('organization_settings') ?? [];
+      const existing = settings.find((s) => s.organization_id === orgId);
+      const existingWorkosOrg = existing?.workos_organization_id as string | null | undefined;
+      const existingStatus = existing?.sso_connection_status as string | null | undefined;
+      if (
+        existingWorkosOrg
+        && existingWorkosOrg !== workosOrgId
+        && existingStatus === 'active'
+      ) {
+        return { data: null, error: { code: 'P0001', message: 'workos_org_already_bound' } };
+      }
+      const newStatus = existingStatus === 'active' ? 'active' : 'pending';
+      if (existing) {
+        existing.workos_organization_id = workosOrgId;
+        existing.sso_connection_status = newStatus;
+        existing.updated_at = new Date().toISOString();
+        existing.updated_by = callerUserId;
+      } else {
+        settings.push({
+          organization_id: orgId,
+          workos_organization_id: workosOrgId,
+          sso_connection_status: newStatus,
+          updated_at: new Date().toISOString(),
+          updated_by: callerUserId,
+        });
+        this.tables.set('organization_settings', settings);
+      }
+      const audits = this.tables.get('audit_events') ?? [];
+      audits.push({
+        organization_id: orgId,
+        actor_user_id: callerUserId,
+        action: 'org.sso.setup_initiated',
+        subject_type: 'organization',
+        subject_id: orgId,
+        metadata: {
+          workosOrganizationId: workosOrgId,
+          previousStatus: existingStatus ?? 'inactive',
+          newStatus,
+        },
+        created_at: new Date().toISOString(),
+      });
+      this.tables.set('audit_events', audits);
+      return {
+        data: {
+          organizationId: orgId,
+          workosOrganizationId: workosOrgId,
+          status: newStatus,
+        },
+        error: null,
+      };
+    }
+
+    if (fn === 'disable_sso_connection') {
+      const callerUserId = args.p_caller_user_id as string;
+      const orgId = args.p_org_id as string;
+      const memberships = this.tables.get('memberships') ?? [];
+      const callerRow = memberships.find(
+        (m) => m.organization_id === orgId && m.user_id === callerUserId && m.status === 'active',
+      );
+      if (!callerRow || callerRow.role !== 'owner') {
+        return { data: null, error: { code: 'P0001', message: 'not_owner' } };
+      }
+      const settings = this.tables.get('organization_settings') ?? [];
+      const existing = settings.find((s) => s.organization_id === orgId);
+      const existingStatus = existing?.sso_connection_status as string | null | undefined;
+      const existingConnId = (existing?.workos_connection_id as string | null | undefined) ?? null;
+      if (!existingStatus || ['inactive', 'disabled'].includes(existingStatus)) {
+        return {
+          data: {
+            organizationId: orgId,
+            status: existingStatus ?? 'inactive',
+            workosConnectionId: existingConnId,
+            noop: true,
+          },
+          error: null,
+        };
+      }
+      existing!.sso_connection_status = 'disabled';
+      existing!.sso_disabled_at = new Date().toISOString();
+      existing!.updated_at = new Date().toISOString();
+      existing!.updated_by = callerUserId;
+      const audits = this.tables.get('audit_events') ?? [];
+      audits.push({
+        organization_id: orgId,
+        actor_user_id: callerUserId,
+        action: 'org.sso.disabled',
+        subject_type: 'organization',
+        subject_id: orgId,
+        metadata: { previousStatus: existingStatus, workosConnectionId: existingConnId },
+        created_at: new Date().toISOString(),
+      });
+      this.tables.set('audit_events', audits);
+      return {
+        data: {
+          organizationId: orgId,
+          status: 'disabled',
+          workosConnectionId: existingConnId,
+          noop: false,
+        },
+        error: null,
+      };
+    }
+
+    if (fn === 'apply_workos_event') {
+      const eventId = args.p_event_id as string;
+      const eventType = args.p_event_type as string;
+      const workosOrgId = args.p_workos_organization_id as string;
+      const workosConnId = args.p_workos_connection_id as string | null;
+      const eventOccurredAt = args.p_event_occurred_at as string;
+      const payloadHash = args.p_payload_hash as string;
+      const lockSeconds = Math.max(Number(args.p_lock_seconds ?? 60), 10);
+
+      const events = this.tables.get('processed_workos_events') ?? [];
+      const existing = events.find((e) => e.event_id === eventId);
+      const now = new Date();
+
+      // Step 1: claim/recover.
+      if (!existing) {
+        events.push({
+          event_id: eventId,
+          event_type: eventType,
+          payload_hash: payloadHash,
+          status: 'processing',
+          processing_started_at: now.toISOString(),
+          locked_until: new Date(now.getTime() + lockSeconds * 1000).toISOString(),
+          attempt_count: 1,
+          organization_id: null,
+          last_error: null,
+          processed_at: null,
+          created_at: now.toISOString(),
+        });
+        this.tables.set('processed_workos_events', events);
+      } else if (existing.status === 'processed') {
+        return { data: { result: 'duplicate', eventId }, error: null };
+      } else if (
+        existing.status === 'processing'
+        && existing.locked_until
+        && new Date(existing.locked_until as string).getTime() > now.getTime()
+      ) {
+        return { data: { result: 'in_flight', eventId }, error: null };
+      } else {
+        existing.status = 'processing';
+        existing.processing_started_at = now.toISOString();
+        existing.locked_until = new Date(now.getTime() + lockSeconds * 1000).toISOString();
+        existing.attempt_count = Number(existing.attempt_count ?? 0) + 1;
+        existing.last_error = null;
+      }
+
+      const eventRow = events.find((e) => e.event_id === eventId)!;
+
+      // Step 2: resolve org.
+      const settings = this.tables.get('organization_settings') ?? [];
+      const settingsRow = settings.find((s) => s.workos_organization_id === workosOrgId);
+      if (!settingsRow) {
+        eventRow.status = 'processed';
+        eventRow.processed_at = now.toISOString();
+        eventRow.organization_id = null;
+        eventRow.last_error = 'unknown_workos_organization';
+        return {
+          data: { result: 'unknown_org', eventId, workosOrganizationId: workosOrgId },
+          error: null,
+        };
+      }
+      eventRow.organization_id = settingsRow.organization_id;
+
+      // Step 3: lifecycle ordering.
+      const lastEventAt = settingsRow.sso_last_workos_event_at as string | null | undefined;
+      const isDelete = ['connection.deleted', 'dsync.connection.deleted'].includes(eventType);
+      if (lastEventAt && new Date(eventOccurredAt) <= new Date(lastEventAt) && !isDelete) {
+        eventRow.status = 'processed';
+        eventRow.processed_at = now.toISOString();
+        eventRow.last_error = 'stale_event';
+        return {
+          data: { result: 'stale_event', eventId, organizationId: settingsRow.organization_id },
+          error: null,
+        };
+      }
+
+      // Step 4: state transition.
+      const previousStatus = (settingsRow.sso_connection_status as string | null | undefined) ?? 'inactive';
+      let newStatus = previousStatus;
+      if (['connection.activated', 'dsync.connection.activated'].includes(eventType)) {
+        newStatus = 'active';
+        settingsRow.sso_connected_at = now.toISOString();
+        if (workosConnId) settingsRow.workos_connection_id = workosConnId;
+      } else if (['connection.deactivated', 'dsync.connection.deactivated'].includes(eventType)) {
+        newStatus = 'disabled';
+        settingsRow.sso_disabled_at = now.toISOString();
+      } else if (isDelete) {
+        newStatus = 'disabled';
+        settingsRow.sso_disabled_at = now.toISOString();
+        settingsRow.workos_connection_id = null;
+      } else {
+        eventRow.status = 'processed';
+        eventRow.processed_at = now.toISOString();
+        eventRow.last_error = 'unhandled_event_type';
+        return {
+          data: { result: 'unhandled_type', eventId, eventType },
+          error: null,
+        };
+      }
+      settingsRow.sso_connection_status = newStatus;
+      settingsRow.sso_last_workos_event_at = eventOccurredAt;
+      settingsRow.sso_last_workos_event_id = eventId;
+      settingsRow.updated_at = now.toISOString();
+
+      // Step 5: audit.
+      const audits = this.tables.get('audit_events') ?? [];
+      audits.push({
+        organization_id: settingsRow.organization_id,
+        actor_user_id: null,
+        action: 'org.sso.lifecycle',
+        subject_type: 'organization',
+        subject_id: settingsRow.organization_id,
+        metadata: {
+          eventId,
+          eventType,
+          workosOrganizationId: workosOrgId,
+          workosConnectionId: workosConnId,
+          previousStatus,
+          newStatus,
+          occurredAt: eventOccurredAt,
+        },
+        created_at: now.toISOString(),
+      });
+      this.tables.set('audit_events', audits);
+
+      // Step 6: complete.
+      eventRow.status = 'processed';
+      eventRow.processed_at = now.toISOString();
+      eventRow.locked_until = null;
+      eventRow.last_error = null;
+
+      return {
+        data: {
+          result: 'applied',
+          eventId,
+          organizationId: settingsRow.organization_id,
+          previousStatus,
+          newStatus,
+        },
+        error: null,
+      };
+    }
+
     return { data: null, error: { message: `unknown rpc: ${fn}` } };
   }
 

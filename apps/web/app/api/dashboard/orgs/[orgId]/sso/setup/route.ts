@@ -90,13 +90,14 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
     return NextResponse.json(mapped.body, { status: mapped.status });
   }
 
-  // Step 6: generate Admin Portal link.
+  // Step 6: generate Admin Portal link. SDK exposes this as `adminPortal`,
+  // not `portal`. Intent literal must match GenerateLinkIntent enum.
   let portalUrl: string;
   try {
     const workos = getWorkOS();
-    const portal = (await workos.portal.generateLink({
+    const portal = (await workos.adminPortal.generateLink({
       organization: workosOrgId,
-      intent: 'sso',
+      intent: 'sso' as never,
     })) as { link: string };
     portalUrl = portal.link;
   } catch (err) {

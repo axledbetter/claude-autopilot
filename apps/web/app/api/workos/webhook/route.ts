@@ -50,7 +50,7 @@ export async function POST(req: Request): Promise<Response> {
   const rawBody = await req.text();
   const sigHeader = req.headers.get('workos-signature');
 
-  const verify = verifyWorkOSSignature(rawBody, sigHeader);
+  const verify = await verifyWorkOSSignature(rawBody, sigHeader);
   if (!verify.ok) {
     return NextResponse.json(
       { error: 'webhook_signature_invalid', reason: verify.reason },

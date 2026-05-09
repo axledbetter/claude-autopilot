@@ -59,7 +59,8 @@ export async function DELETE(req: Request, { params }: RouteParams): Promise<Res
   if (result && !result.noop && result.workosConnectionId) {
     try {
       const workos = getWorkOS();
-      await workos.connections.deleteConnection(result.workosConnectionId);
+      // SDK exposes connection delete via the SSO sub-client.
+      await workos.sso.deleteConnection(result.workosConnectionId);
     } catch (err) {
       workosDeleted = false;
       workosError = err instanceof Error ? err.message : 'workos_delete_failed';
