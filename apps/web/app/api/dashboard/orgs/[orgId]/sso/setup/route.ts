@@ -1,19 +1,23 @@
 // POST /api/dashboard/orgs/:orgId/sso/setup — Phase 5.4.
 //
-// 6-step admin-gated portal-link sequence:
+// Admin-gated portal-link sequence. Codex PR-pass CRITICAL #1: explicit
+// admin check BEFORE any WorkOS API call (defense-in-depth — RPC also
+// re-checks).
+//
+// Sequence:
 //   1. assertSameOrigin
 //   2. resolveSessionUserId (cookie-verified getUser)
-//   3. Read org name + existing workos_organization_id from settings.
-//   4. If no workos_organization_id stored, server-create the WorkOS org
-//      via SDK (idempotent on retry — externalId=orgId returns the
-//      existing org if it was already created).
-//   5. record_sso_setup_initiated RPC (admin auth + reassignment guard +
-//      audit append + status flip to pending).
-//   6. Generate Admin Portal link via SDK and return { portalUrl }.
-//
-// On idempotent retry: re-mapping the same WorkOS org succeeds and
-// re-emits the portal link. If a DIFFERENT WorkOS org is already mapped
-// and active, RPC raises workos_org_already_bound (422).
+//   3. Verify caller is active admin/owner of orgId (route-level check;
+//      RPC re-validates).
+//   4. Read org name + existing workos_organization_id from settings.
+//   5. If no workos_organization_id stored:
+//      a. Try getOrganizationByExternalId(orgId) — recovers from a
+//         previous successful WorkOS create whose RPC persist failed
+//         (codex PR-pass CRITICAL #2). 404 → fall through to create.
+//      b. Otherwise createOrganization({ externalId: orgId }).
+//   6. record_sso_setup_initiated RPC (admin auth + reassignment guard +
+//      audit append + status flip to pending). Persists the binding.
+//   7. Generate Admin Portal link via SDK and return { portalUrl }.
 //
 // Cache-Control: private, no-store — portal links are short-lived secrets.
 
@@ -41,9 +45,22 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
 
   const supabase = createServiceRoleClient();
 
-  // Step 3: read org + existing mapping. (Admin authz lives in RPC; the
-  // route reads with service role only to source org name + idempotent
-  // WorkOS-org-id lookup. RPC will reject non-admin callers.)
+  // Step 3: route-level admin check. Codex PR-pass CRITICAL #1 — must
+  // happen BEFORE any WorkOS API call so non-admins can't trigger
+  // external side effects. The RPC re-validates as defense-in-depth.
+  const { data: callerRow } = await supabase
+    .from('memberships')
+    .select('role')
+    .eq('organization_id', p.orgId)
+    .eq('user_id', callerUserId)
+    .eq('status', 'active')
+    .maybeSingle();
+  const callerRole = (callerRow as { role: string } | null)?.role;
+  if (!callerRole || !['admin', 'owner'].includes(callerRole)) {
+    return NextResponse.json({ error: 'not_admin' }, { status: 403 });
+  }
+
+  // Step 4: read org + existing mapping.
   const { data: orgRow, error: orgErr } = await supabase
     .from('organizations')
     .select('id, name')
@@ -64,18 +81,34 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
   let workosOrgId: string | null =
     (settingsRow as { workos_organization_id: string | null } | null)?.workos_organization_id ?? null;
 
-  // Step 4: create WorkOS org if not yet mapped.
+  // Step 5: resolve WorkOS org. Codex PR-pass CRITICAL #2 — try
+  // getOrganizationByExternalId first to recover from a previous
+  // successful WorkOS create whose subsequent RPC persist failed
+  // (otherwise we'd orphan the WorkOS org on every retry).
   if (!workosOrgId) {
+    const workos = getWorkOS();
     try {
-      const workos = getWorkOS();
-      const created = (await workos.organizations.createOrganization({
-        name: (orgRow as { name: string }).name,
-        externalId: p.orgId,
-      })) as { id: string };
-      workosOrgId = created.id;
+      const found = (await workos.organizations.getOrganizationByExternalId(p.orgId)) as { id: string } | null;
+      if (found?.id) workosOrgId = found.id;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'workos_create_failed';
-      return NextResponse.json({ error: 'workos_create_failed', detail: msg }, { status: 502 });
+      // Treat any lookup error (typically 404) as "not found" and fall
+      // through to create. SDK throws NotFoundException for 404.
+      const name = err instanceof Error ? err.constructor.name : '';
+      if (name !== 'NotFoundException' && !(err instanceof Error && err.message.toLowerCase().includes('not found'))) {
+        return NextResponse.json({ error: 'workos_lookup_failed', detail: err instanceof Error ? err.message : 'unknown' }, { status: 502 });
+      }
+    }
+    if (!workosOrgId) {
+      try {
+        const created = (await workos.organizations.createOrganization({
+          name: (orgRow as { name: string }).name,
+          externalId: p.orgId,
+        })) as { id: string };
+        workosOrgId = created.id;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'workos_create_failed';
+        return NextResponse.json({ error: 'workos_create_failed', detail: msg }, { status: 502 });
+      }
     }
   }
 

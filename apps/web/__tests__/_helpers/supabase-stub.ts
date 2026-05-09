@@ -978,10 +978,10 @@ export class SupabaseStub {
       const settings = this.tables.get('organization_settings') ?? [];
       const settingsRow = settings.find((s) => s.workos_organization_id === workosOrgId);
       if (!settingsRow) {
-        eventRow.status = 'processed';
-        eventRow.processed_at = now.toISOString();
+        eventRow.status = 'failed';
         eventRow.organization_id = null;
         eventRow.last_error = 'unknown_workos_organization';
+        eventRow.locked_until = null;
         return {
           data: { result: 'unknown_org', eventId, workosOrganizationId: workosOrgId },
           error: null,

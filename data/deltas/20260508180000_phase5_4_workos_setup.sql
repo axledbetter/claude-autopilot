@@ -280,11 +280,15 @@ BEGIN
    FOR UPDATE;
 
   IF v_org_id IS NULL THEN
+    -- Codex PR-pass WARNING — leave unknown-org events as 'failed' (not
+    -- 'processed') so a later setup binding could trigger a manual
+    -- replay. WorkOS still gets 200 from the route (so they don't
+    -- retry), but we keep the event row available for reconciliation.
     UPDATE public.processed_workos_events
-       SET status = 'processed',
-           processed_at = NOW(),
+       SET status = 'failed',
            organization_id = NULL,
-           last_error = 'unknown_workos_organization'
+           last_error = 'unknown_workos_organization',
+           locked_until = NULL
      WHERE event_id = p_event_id;
     RETURN jsonb_build_object(
       'result', 'unknown_org',

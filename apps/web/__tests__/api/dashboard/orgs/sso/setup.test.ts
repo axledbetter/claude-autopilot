@@ -10,10 +10,17 @@ vi.mock('@supabase/ssr', () => ({
 }));
 
 const createOrgMock = vi.fn();
+const getByExternalIdMock = vi.fn();
 const generateLinkMock = vi.fn();
+class FakeNotFound extends Error {
+  constructor() { super('not found'); this.name = 'NotFoundException'; }
+}
 vi.mock('@/lib/workos/client', () => ({
   getWorkOS: () => ({
-    organizations: { createOrganization: createOrgMock },
+    organizations: {
+      createOrganization: createOrgMock,
+      getOrganizationByExternalId: getByExternalIdMock,
+    },
     adminPortal: { generateLink: generateLinkMock },
   }),
   verifyWorkOSSignature: async () => ({ ok: false, reason: 'unused' }),
@@ -25,6 +32,9 @@ beforeEach(() => {
   stub.reset();
   currentUser = null;
   createOrgMock.mockReset();
+  getByExternalIdMock.mockReset();
+  // Default lookup to "not found" so most tests follow the create path.
+  getByExternalIdMock.mockRejectedValue(new FakeNotFound());
   generateLinkMock.mockReset();
   process.env.NEXT_PUBLIC_SUPABASE_URL = 'http://stub';
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'anon';
@@ -190,6 +200,45 @@ describe('POST /api/dashboard/orgs/:orgId/sso/setup', () => {
       p_workos_organization_id: 'org_workos_NEW',
     });
     expect(error?.message).toBe('workos_org_already_bound');
+  });
+
+  it('codex-pr CRITICAL #1: non-admin must NOT trigger any WorkOS API call', async () => {
+    const orgId = randomUUID();
+    const memberUser = randomUUID();
+    stub.seed('memberships', [{
+      id: randomUUID(), organization_id: orgId, user_id: memberUser,
+      role: 'member', status: 'active', joined_at: new Date().toISOString(),
+    }]);
+    stub.seed('organizations', [{ id: orgId, name: 'A' }]);
+    currentUser = { id: memberUser };
+
+    const r = await POST(req(orgId), { params: { orgId } });
+    expect(r.status).toBe(403);
+    expect((await r.json()).error).toBe('not_admin');
+    // Defense-in-depth: NO WorkOS calls before authz.
+    expect(createOrgMock).not.toHaveBeenCalled();
+    expect(getByExternalIdMock).not.toHaveBeenCalled();
+    expect(generateLinkMock).not.toHaveBeenCalled();
+  });
+
+  it('codex-pr CRITICAL #2: lookup-by-externalId recovers orphan WorkOS org from prior failed RPC', async () => {
+    const orgId = randomUUID();
+    const owner = seedOwner(orgId);
+    currentUser = { id: owner };
+    // Simulate: previous attempt created WorkOS org but local persist failed.
+    // No workos_organization_id stored; lookup returns the existing org.
+    getByExternalIdMock.mockReset();
+    getByExternalIdMock.mockResolvedValue({ id: 'org_workos_orphan' });
+    generateLinkMock.mockResolvedValue({ link: 'https://portal.example/recover' });
+
+    const r = await POST(req(orgId), { params: { orgId } });
+    expect(r.status).toBe(200);
+    const body = await r.json();
+    expect(body.workosOrganizationId).toBe('org_workos_orphan');
+    // Must NOT create a duplicate WorkOS org.
+    expect(createOrgMock).not.toHaveBeenCalled();
+    const settings = stub.tables.get('organization_settings')!.find((s) => s.organization_id === orgId);
+    expect(settings?.workos_organization_id).toBe('org_workos_orphan');
   });
 
   it('test 10: portal link failure → 502', async () => {

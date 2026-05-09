@@ -147,4 +147,21 @@ describe('POST /api/workos/webhook', () => {
     expect(r.status).toBe(200);
     expect((await r.json()).result).toBe('unknown_org');
   });
+
+  it('codex-pr WARNING: unknown_org leaves event row in failed (not processed) for later reconciliation', async () => {
+    nextVerifyResult = {
+      ok: true,
+      event: {
+        id: 'evt_unk_recon', event: 'connection.activated',
+        data: { organization_id: 'org_workos_no_match', id: 'conn_y' },
+        createdAt: new Date().toISOString(),
+      },
+    };
+    await POST(req({}));
+    const row = stub.tables.get('processed_workos_events')!.find((e) => e.event_id === 'evt_unk_recon');
+    expect(row?.status).toBe('failed');
+    expect(row?.last_error).toBe('unknown_workos_organization');
+    // processed_at stays null so a reconciliation job can re-process.
+    expect(row?.processed_at ?? null).toBe(null);
+  });
 });
