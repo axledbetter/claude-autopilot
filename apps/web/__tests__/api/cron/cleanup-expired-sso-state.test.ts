@@ -20,13 +20,19 @@ function req(authHeader?: string): Request {
 }
 
 describe('GET /api/cron/cleanup-expired-sso-state', () => {
-  it('valid CRON_SECRET → 200 with counts', async () => {
+  it('valid CRON_SECRET → 200 with counts; codex PR-pass WARNING #2 — RPC called with exact args', async () => {
+    const rpcSpy = vi.spyOn(stub, 'callRpc');
     const r = await GET(req('Bearer cron-secret-stub'));
     expect(r.status).toBe(200);
     const body = await r.json();
     expect(body.ok).toBe(true);
     expect(body.expiredStatesDeleted).toBe(0);
     expect(body.oldEventsDeleted).toBe(0);
+    expect(rpcSpy).toHaveBeenCalledWith('cleanup_expired_sso_states', {
+      p_state_age_hours: 24,
+      p_event_age_days: 30,
+    });
+    rpcSpy.mockRestore();
   });
 
   it('missing Authorization header → 401', async () => {

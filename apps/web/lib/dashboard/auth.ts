@@ -1,6 +1,27 @@
 import { createHash } from 'crypto';
 import { createServiceRoleClient } from '@/lib/supabase/service';
 
+// ============================================================================
+// API-key auth + the org-membership invariant (Phase 5.8 audit).
+//
+// Codex PR-pass WARNING #3 — every authViaApiKey caller that operates on
+// org-scoped resources MUST require an active membership for auth.userId
+// in the relevant organization. authViaApiKey itself returns user only —
+// no org context — because API keys are user-scoped.
+//
+// Caller audit (kept current as new routes are added):
+//   * /api/dashboard/api-keys/revoke — user-scoped (revoke own keys). N/A.
+//   * /api/dashboard/me              — user-scoped (returns user info). N/A.
+//   * /api/dashboard/runs/:runId/upload-session — REQUIRES active membership
+//     when run.organization_id is set. Wired in Phase 5.8.
+//   * /api/dashboard/runs/:runId/artifact       — REQUIRES active membership
+//     when run.organization_id is set. Wired in Phase 5.8.
+//
+// New API-key-authenticated routes touching org-scoped data must add the
+// same active-membership check; Phase 5.8 left no shared helper because
+// the org context is route-specific (run, billing, etc).
+// ============================================================================
+
 export interface ApiKeyAuth { userId: string; keyId: string }
 
 export class AuthHelperError extends Error {
