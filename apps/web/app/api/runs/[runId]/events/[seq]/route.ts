@@ -56,6 +56,7 @@ export async function PUT(req: Request, { params }: RouteParams): Promise<Respon
         case 'run_mismatch':
         case 'run_not_found':
         case 'run_org_mismatch':
+        case 'run_user_mismatch':
           // No enumeration leakage — opaque 404 per existing ingest convention.
           return NextResponse.json({ error: 'not_found' }, { status: 404 });
         case 'member_disabled':

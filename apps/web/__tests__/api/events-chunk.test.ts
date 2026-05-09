@@ -199,6 +199,11 @@ describe('PUT chunk — concurrency + token + recovery', () => {
     const liveJti = randomUUID();
     const userId = randomUUID();
     const { token: validToken } = mintUploadToken({ userId, runId, orgId: null, jti: liveJti, mintStatus: 'personal' });
+    // v7.1 — orchestrator now asserts JWT.sub === runs.user_id BEFORE the
+    // session-expired check fires. Must update the seeded run row so the
+    // session-expired path is what gets exercised, not run_user_mismatch.
+    const runs = (stub as unknown as { tables: Map<string, { user_id: string }[]> }).tables.get('runs');
+    if (runs && runs[0]) runs[0].user_id = userId;
     const session = firstSession();
     session.jti = liveJti;
     session.user_id = userId;

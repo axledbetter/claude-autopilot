@@ -23,11 +23,13 @@ export type IngestMembershipReason =
   | 'no_membership'
   | 'member_check_failed'
   // Wrapper-level reasons, raised by verifyTokenAndAssertRunMembership()
-  // before assertActiveMembership() runs. All three map to 404 not_found
-  // at the HTTP layer (no enumeration leakage).
+  // before assertActiveMembership() runs. All four map to 404 not_found
+  // at the HTTP layer (no enumeration leakage). `run_user_mismatch` is
+  // codex PR-pass CRITICAL — JWT.sub differs from runs.user_id.
   | 'run_mismatch'
   | 'run_not_found'
-  | 'run_org_mismatch';
+  | 'run_org_mismatch'
+  | 'run_user_mismatch';
 
 export class IngestMembershipError extends Error {
   constructor(public readonly reason: IngestMembershipReason) {

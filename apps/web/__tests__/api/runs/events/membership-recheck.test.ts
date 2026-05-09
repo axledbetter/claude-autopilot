@@ -208,6 +208,48 @@ describe('PUT /api/runs/:runId/events/:seq — v7.1 membership re-check', () => 
     callRpcSpy.mockRestore();
   });
 
+  it('(i) JWT.sub differs from runs.user_id → 404 not_found (codex PR-pass CRITICAL)', async () => {
+    // Setup: org X has two ACTIVE members, alice (run owner) + mallory.
+    // Mallory crafts a signed JWT with sub=mallory + run_id=alice's run.
+    // Without the sub===user_id check, the orchestrator would validate
+    // mallory's (active) membership against alice's run + accept the
+    // upload. The check raises run_user_mismatch → opaque 404.
+    const orgId = randomUUID();
+    const aliceId = randomUUID();
+    const malloryId = randomUUID();
+    const runId = '01HQK8' + 'A'.repeat(20);
+    const sessionId = randomUUID();
+    const jti = randomUUID();
+    stub.seed('runs', [{ id: runId, user_id: aliceId, organization_id: orgId }]);
+    stub.seed('upload_sessions', [{
+      id: sessionId, run_id: runId, user_id: aliceId, organization_id: orgId,
+      jti, token_hash: 'h', expires_at: new Date(Date.now() + 600_000).toISOString(),
+      consumed_at: null, next_expected_seq: 0, chain_tip_hash: zeroHash,
+    }]);
+    stub.seed('memberships', [
+      { id: randomUUID(), organization_id: orgId, user_id: aliceId, status: 'active', role: 'member' },
+      { id: randomUUID(), organization_id: orgId, user_id: malloryId, status: 'active', role: 'member' },
+    ]);
+    // Forge: same secret, valid signature, but sub=mallory.
+    const forgedToken = jwt.sign(
+      { sub: malloryId, run_id: runId, org_id: orgId, jti, mint_status: 'active',
+        aud: 'claude-autopilot-upload', iss: 'autopilot.dev' },
+      SECRET,
+      { algorithm: 'HS256', expiresIn: '15m' },
+    );
+    const callRpcSpy = vi.spyOn(stub, 'callRpc');
+    const res = await PUT(chunkReq(forgedToken, runId, 0, zeroHash, Buffer.from('a')), { params: { runId, seq: '0' } });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toBe('not_found');
+    // Membership RPC and claim_chunk_slot MUST NOT have run.
+    const memberRpcCalls = callRpcSpy.mock.calls.filter(([fn]) => fn === 'check_membership_status');
+    expect(memberRpcCalls.length).toBe(0);
+    const claimCalls = callRpcSpy.mock.calls.filter(([fn]) => fn === 'claim_chunk_slot');
+    expect(claimCalls.length).toBe(0);
+    callRpcSpy.mockRestore();
+  });
+
   it('(h) ordering: assertActiveMembership runs BEFORE claim_chunk_slot', async () => {
     const s = seedOrgScoped('active');
     const callOrder: string[] = [];

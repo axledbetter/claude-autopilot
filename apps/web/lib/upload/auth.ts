@@ -172,7 +172,17 @@ export async function verifyTokenAndAssertRunMembership(
     throw new IngestMembershipError('run_org_mismatch');
   }
 
-  // 5. Membership re-check (only for org-scoped — personal short-circuits
+  // 5. JWT sub MUST match persisted run.user_id (codex PR-pass CRITICAL —
+  //    prevents a malformed/forged signed token where `run_id` points to
+  //    one user's run and `sub` points to a different active org member.
+  //    Without this, assertActiveMembership(claims) would validate the
+  //    wrong principal's membership against the target run). Maps to
+  //    opaque 404 not_found at the HTTP layer (no enumeration leakage).
+  if (claims.sub !== run.user_id) {
+    throw new IngestMembershipError('run_user_mismatch');
+  }
+
+  // 6. Membership re-check (only for org-scoped — personal short-circuits
   //    safely now that step 4 proves the run is genuinely personal).
   await assertActiveMembership(claims);
 
