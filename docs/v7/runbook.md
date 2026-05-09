@@ -90,6 +90,16 @@ purpose:
   `check_membership_status` RPC calls. Always set `_PREVIOUS` when
   rotating.
 
+- `MEMBERSHIP_CHECK_TTL_SECONDS` (v7.1.2+, optional, default `60`) —
+  override the cookie TTL. Bounded `[1, 3600]`. Lower = tighter
+  revocation window (a disabled member sees 403 on the next request
+  after ≤N seconds, not ≤60s) at the cost of more `check_membership_status`
+  RPC calls per dashboard navigation. Higher = fewer RPC calls but
+  slower revocation visibility — don't exceed 60s unless you have a
+  specific reason; the v7.0 documented guarantee is "≤60s revocation
+  latency" and raising the TTL extends it. Invalid values silently
+  fall back to 60 with a one-shot warn.
+
 ## Supabase
 
 ### Migration

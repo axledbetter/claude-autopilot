@@ -2,6 +2,28 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.1.2 (2026-05-09)
+
+**v7.1.2 — configurable membership-check TTL.** Hosted product
+(`apps/web/`) only. Operator-facing improvement; no breaking changes;
+no migration.
+
+* New optional env var `MEMBERSHIP_CHECK_TTL_SECONDS` overrides the
+  default 60s `cao_membership_check` cookie TTL. Bounded `[1, 3600]`.
+* Lower TTL = tighter revocation window (≤N seconds for a disabled
+  member to see 403 on next dashboard request) at the cost of more
+  `check_membership_status` RPC calls per dashboard navigation.
+* Higher TTL = fewer RPC calls but extends the v7.0 documented
+  "≤60s revocation latency" guarantee.
+* Invalid values (non-integer, < 1, > 3600) silently fall back to 60
+  with a one-shot warn (same pattern as the v7.1.1 PREVIOUS-secret
+  validator).
+* 6 new tests in `cookie-hmac.test.ts` cover: default 60 when unset;
+  valid integer in range; non-numeric falls back; float falls back;
+  out-of-range (< 1, < 0, > 3600) falls back; signed cookie exp
+  respects the configured TTL via sign+verify roundtrip.
+* 607 → 613 web tests; 1536 CLI unchanged; tsc clean.
+
 ## 7.1.1 (2026-05-09)
 
 **v7.1.1 — dual-secret rotation for `MEMBERSHIP_CHECK_COOKIE_SECRET`.**

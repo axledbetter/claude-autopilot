@@ -102,6 +102,60 @@ export function _resetPreviousSecretWarnLatchForTests(): void {
   warnedAboutInvalidPrevious = false;
 }
 
+// ---- v7.1.2 — Configurable membership-check TTL --------------------------
+//
+// Default 60 seconds (Phase 6 baseline). Enterprise customers can tighten
+// the dashboard revocation window via `MEMBERSHIP_CHECK_TTL_SECONDS`.
+//
+// Bounded [1, 3600]: a TTL ≤0 would defeat the cache entirely (every
+// dashboard request hits Supabase = ~50-200ms latency overhead per nav);
+// a TTL >1h would exceed the documented "≤60s revocation latency" v7.0
+// guarantee in the runbook. Values outside the bound fall back to 60
+// with a one-shot warn — same pattern as the previous-secret validator.
+
+export const MEMBERSHIP_TTL_DEFAULT_SECONDS = 60;
+const MEMBERSHIP_TTL_MIN_SECONDS = 1;
+const MEMBERSHIP_TTL_MAX_SECONDS = 3600;
+
+let warnedAboutInvalidTtl = false;
+
+/** Resolve the membership-check cookie TTL in seconds. Returns the
+ *  default (60) on missing / non-numeric / out-of-bound values, with a
+ *  one-shot warn for the misconfig (so operators see it once, not on
+ *  every request). */
+export function getMembershipCheckTtlSeconds(): number {
+  const raw = process.env.MEMBERSHIP_CHECK_TTL_SECONDS;
+  if (!raw || typeof raw !== 'string') return MEMBERSHIP_TTL_DEFAULT_SECONDS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+    if (!warnedAboutInvalidTtl) {
+      warnedAboutInvalidTtl = true;
+      console.warn(
+        `[cookie-hmac] MEMBERSHIP_CHECK_TTL_SECONDS=${JSON.stringify(raw)} is `
+          + `not a valid integer; using default ${MEMBERSHIP_TTL_DEFAULT_SECONDS}s.`,
+      );
+    }
+    return MEMBERSHIP_TTL_DEFAULT_SECONDS;
+  }
+  if (parsed < MEMBERSHIP_TTL_MIN_SECONDS || parsed > MEMBERSHIP_TTL_MAX_SECONDS) {
+    if (!warnedAboutInvalidTtl) {
+      warnedAboutInvalidTtl = true;
+      console.warn(
+        `[cookie-hmac] MEMBERSHIP_CHECK_TTL_SECONDS=${parsed} is outside `
+          + `[${MEMBERSHIP_TTL_MIN_SECONDS}, ${MEMBERSHIP_TTL_MAX_SECONDS}]; `
+          + `using default ${MEMBERSHIP_TTL_DEFAULT_SECONDS}s.`,
+      );
+    }
+    return MEMBERSHIP_TTL_DEFAULT_SECONDS;
+  }
+  return parsed;
+}
+
+// Test seam — reset the one-shot warn latch between tests.
+export function _resetTtlWarnLatchForTests(): void {
+  warnedAboutInvalidTtl = false;
+}
+
 function base64urlEncode(buf: Buffer): string {
   return buf.toString('base64')
     .replace(/=+$/g, '')

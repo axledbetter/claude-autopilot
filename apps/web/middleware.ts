@@ -57,6 +57,7 @@ import {
 import {
   signMembershipCookie,
   verifyMembershipCookie,
+  getMembershipCheckTtlSeconds,
 } from './lib/middleware/cookie-hmac';
 
 // Force Node.js runtime — node:crypto is not available on Edge.
@@ -89,7 +90,9 @@ export function isCliAuthPath(pathname: string): boolean {
 
 const ACTIVE_ORG_COOKIE = 'cao_active_org';
 export const MEMBERSHIP_CHECK_COOKIE = 'cao_membership_check';
-const MEMBERSHIP_TTL_SECONDS = 60;
+// v7.1.2 — TTL is now resolved per-request via getMembershipCheckTtlSeconds()
+// which reads MEMBERSHIP_CHECK_TTL_SECONDS env var (default 60, bounded
+// [1, 3600]). Inlined at use-site to avoid module-load env reads.
 
 /** Whitelisted /dashboard sub-paths that a user without an active org
  *  must be able to reach to bootstrap one. A revoked user landing on
@@ -303,21 +306,23 @@ async function evaluateRevocation(opts: RevocationCheckOpts): Promise<Revocation
     };
   }
 
-  // 4) Positive result → mint a new signed cookie (60s TTL).
+  // 4) Positive result → mint a new signed cookie (default 60s TTL,
+  //    operator-configurable via MEMBERSHIP_CHECK_TTL_SECONDS).
   const nowSeconds = Math.floor(Date.now() / 1000);
+  const ttlSeconds = getMembershipCheckTtlSeconds();
   try {
     const signed = signMembershipCookie({
       orgId: activeOrgId,
       userId,
       status: 'active',
       role: result.role ?? 'member',
-      exp: nowSeconds + MEMBERSHIP_TTL_SECONDS,
+      exp: nowSeconds + ttlSeconds,
     });
     mutations.push({
       kind: 'set',
       name: MEMBERSHIP_CHECK_COOKIE,
       value: signed,
-      options: { ...baseAttrs, maxAge: MEMBERSHIP_TTL_SECONDS },
+      options: { ...baseAttrs, maxAge: ttlSeconds },
     });
   } catch (err) {
     // Sign failed (secret missing). Allow the request through this
