@@ -39,6 +39,39 @@ jobs:
       - name: Apply migrations
         run: supabase db reset --no-seed --workdir db
 
+      - name: Wait for PostgREST schema cache to warm up
+        # Recurring flake (Phase 5.1, 5.7, 7.1.3 all hit it): PostgREST
+        # caches the schema asynchronously AFTER `supabase db reset`
+        # finishes. The first SDK queries from the test runner often
+        # arrive while the cache is still being built and fail with
+        #   PGRST002: "Could not query the database for the schema cache.
+        #   Retrying."
+        # PostgREST exposes the cache state implicitly through the OpenAPI
+        # spec at GET / — once the spec resolves to a valid JSON document
+        # with an `info` field, the cache is warm.
+        env:
+          SUPABASE_URL: http://127.0.0.1:54321
+        run: |
+          export SUPABASE_ANON_KEY=$(jq -r '.ANON_KEY // .anon_key' supabase-status.json)
+          if [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "Failed to extract anon key from supabase status output" >&2
+            cat supabase-status.json >&2
+            exit 1
+          fi
+          # Poll up to 60s; success when the schema OpenAPI doc returns
+          # 200 AND parses as JSON with an `info` field. Re-tries every 1s.
+          for i in $(seq 1 60); do
+            body=$(curl -fsSL \
+              -H "apikey: $SUPABASE_ANON_KEY" \
+              "$SUPABASE_URL/rest/v1/" 2>/dev/null) && \
+              echo "$body" | jq -e 'has("info")' >/dev/null 2>&1 && \
+              echo "[wait-postgrest] schema cache warm after ${i}s" && exit 0
+            sleep 1
+          done
+          echo "[wait-postgrest] timeout: PostgREST schema cache did not warm after 60s" >&2
+          curl -i -H "apikey: $SUPABASE_ANON_KEY" "$SUPABASE_URL/rest/v1/" >&2 || true
+          exit 1
+
       - name: Run RLS tests
         env:
           SUPABASE_URL: http://127.0.0.1:54321

@@ -2,6 +2,32 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.1.4 (2026-05-09)
+
+**v7.1.4 — fix recurring PGRST002 RLS workflow flake.** CI infra
+fix; no application code change; no test additions. Phase 5.1, 5.7,
+and 7.1.3 all hit the same intermittent failure in the RLS negative
+tests workflow:
+
+```
+PGRST002 — Could not query the database for the schema cache. Retrying.
+```
+
+PostgREST caches the database schema asynchronously AFTER
+`supabase db reset` returns. The first SDK queries from the test
+runner often arrive before the cache has finished warming, hard-
+failing instead of waiting.
+
+Fix: new "Wait for PostgREST schema cache to warm up" workflow step
+between `Apply migrations` and `Run RLS tests`. Polls
+`GET /rest/v1/` (PostgREST OpenAPI doc) up to 60s; succeeds on the
+first response that parses as JSON with an `info` field. Times out
+with diagnostic body if the cache doesn't warm.
+
+Changes only `.github/workflows/db-tests.yml`. No package code
+change, but bumping to 7.1.4 to keep version-line/CHANGELOG in
+lockstep with master HEAD.
+
 ## 7.1.3 (2026-05-09)
 
 **v7.1.3 — `/api/health/v7-readiness` deploy-verification endpoint.**
