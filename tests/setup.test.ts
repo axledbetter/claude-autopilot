@@ -50,4 +50,70 @@ describe('runSetup', () => {
     assert.ok(content.includes('testCommand:'));
     fs.rmSync(dir, { recursive: true });
   });
+
+  // v7.1.7 — day-1 polish (benchmark-driven)
+
+  it('appends node_modules/ + .guardrail-cache/ to existing .gitignore (idempotent)', async () => {
+    const dir = makeTmp();
+    fs.writeFileSync(path.join(dir, 'go.mod'), 'module ex.com/x\ngo 1.22\n');
+    const presetDir = path.join(dir, 'node_modules', '@delegance', 'claude-autopilot', 'presets', 'go');
+    fs.mkdirSync(presetDir, { recursive: true });
+    fs.writeFileSync(path.join(presetDir, 'guardrail.config.yaml'), 'configVersion: 1\n');
+    fs.writeFileSync(path.join(dir, '.gitignore'), '.env.local\n');
+    await runSetup({ cwd: dir, skipHook: true });
+    const gi = fs.readFileSync(path.join(dir, '.gitignore'), 'utf8');
+    assert.ok(gi.includes('.env.local'), 'preserves existing entries');
+    assert.ok(gi.includes('node_modules/'), 'adds node_modules/');
+    assert.ok(gi.includes('.guardrail-cache/'), 'adds .guardrail-cache/');
+    // Idempotency: re-running shouldn't duplicate.
+    fs.rmSync(path.join(dir, 'guardrail.config.yaml'));
+    await runSetup({ cwd: dir, skipHook: true });
+    const gi2 = fs.readFileSync(path.join(dir, '.gitignore'), 'utf8');
+    const matches = gi2.match(/node_modules\//g) ?? [];
+    assert.equal(matches.length, 1, `node_modules/ should appear once, got ${matches.length}:\n${gi2}`);
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  it('creates .gitignore from scratch when missing', async () => {
+    const dir = makeTmp();
+    fs.writeFileSync(path.join(dir, 'go.mod'), 'module ex.com/x\ngo 1.22\n');
+    const presetDir = path.join(dir, 'node_modules', '@delegance', 'claude-autopilot', 'presets', 'go');
+    fs.mkdirSync(presetDir, { recursive: true });
+    fs.writeFileSync(path.join(presetDir, 'guardrail.config.yaml'), 'configVersion: 1\n');
+    assert.equal(fs.existsSync(path.join(dir, '.gitignore')), false);
+    await runSetup({ cwd: dir, skipHook: true });
+    const gi = fs.readFileSync(path.join(dir, '.gitignore'), 'utf8');
+    assert.ok(gi.includes('node_modules/'));
+    assert.ok(gi.includes('.guardrail-cache/'));
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  it('writes starter CLAUDE.md when missing, including detected stack + test command', async () => {
+    const dir = makeTmp();
+    fs.writeFileSync(path.join(dir, 'go.mod'), 'module ex.com/x\ngo 1.22\n');
+    const presetDir = path.join(dir, 'node_modules', '@delegance', 'claude-autopilot', 'presets', 'go');
+    fs.mkdirSync(presetDir, { recursive: true });
+    fs.writeFileSync(path.join(presetDir, 'guardrail.config.yaml'), 'configVersion: 1\n');
+    await runSetup({ cwd: dir, skipHook: true });
+    const claudeMd = fs.readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8');
+    assert.ok(claudeMd.startsWith('# CLAUDE.md'), 'has header');
+    assert.ok(/Detected:.*Go/i.test(claudeMd), 'mentions Go stack');
+    assert.ok(claudeMd.includes('go test'), 'mentions test command');
+    assert.ok(claudeMd.includes('Conventional Commits'), 'commit-message convention present');
+    assert.ok(claudeMd.includes('TODO:'), 'has TODOs for the operator to fill in');
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  it('does NOT overwrite existing CLAUDE.md', async () => {
+    const dir = makeTmp();
+    fs.writeFileSync(path.join(dir, 'go.mod'), 'module ex.com/x\ngo 1.22\n');
+    const presetDir = path.join(dir, 'node_modules', '@delegance', 'claude-autopilot', 'presets', 'go');
+    fs.mkdirSync(presetDir, { recursive: true });
+    fs.writeFileSync(path.join(presetDir, 'guardrail.config.yaml'), 'configVersion: 1\n');
+    fs.writeFileSync(path.join(dir, 'CLAUDE.md'), '# my own claude doc, do not touch\n');
+    await runSetup({ cwd: dir, skipHook: true });
+    const claudeMd = fs.readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8');
+    assert.equal(claudeMd, '# my own claude doc, do not touch\n', 'existing CLAUDE.md preserved');
+    fs.rmSync(dir, { recursive: true });
+  });
 });

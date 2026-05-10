@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as fsAsync from 'node:fs/promises';
 import * as path from 'node:path';
-import { detectProject } from './detector.ts';
+import { detectProject, type DetectionResult } from './detector.ts';
 import { runHook } from './hook.ts';
 import { runDoctor } from './preflight.ts';
 import { detectLLMKey, LLM_KEY_NAMES } from '../core/detect/llm-key.ts';
@@ -161,6 +161,28 @@ export async function runSetup(options: SetupOptions = {}): Promise<void> {
     console.log(`  ${DIM(line)}`);
   }
 
+  // v7.1.7 — Auto-add `.guardrail-cache/` and `node_modules/` to .gitignore.
+  // Per the v7.1.6 blank-repo benchmark, these are the two most common
+  // day-1 paper cuts: `setup` creates the cache dir on first run, and (for
+  // Node projects) `npm install` creates `node_modules` — neither belongs
+  // in git. Skipped silently if already present or no .gitignore exists
+  // and we don't want to create one without consent.
+  const gitignoreAdds = await ensureGitignoreEntries(cwd, [
+    '.guardrail-cache/',
+    'node_modules/',
+  ]);
+  if (gitignoreAdds.length > 0) {
+    console.log(`\n  ${PASS}  Added to .gitignore: ${DIM(gitignoreAdds.join(', '))}`);
+  }
+
+  // v7.1.7 — Auto-scaffold a starter CLAUDE.md if none exists. Closes ~5 of
+  // 6 friction points the benchmark agent hit on a blank repo (commit
+  // style, error class shape, test runner choice, etc.).
+  const claudeMdAdded = await ensureStarterClaudeMd(cwd, detection);
+  if (claudeMdAdded) {
+    console.log(`  ${PASS}  Wrote starter CLAUDE.md`);
+  }
+
   let hookInstalled = false;
   if (!options.skipHook) {
     const hookCode = await runHook('install', { cwd, silent: true });
@@ -197,4 +219,118 @@ export async function runSetup(options: SetupOptions = {}): Promise<void> {
       console.log(`    npx guardrail hook install\n`);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// v7.1.7 — setup-verb day-1 polish helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Append `entries` to `<cwd>/.gitignore` if missing. Returns the entries
+ * actually added (empty array when all already present, .gitignore is empty
+ * + we don't want to create one, etc.).
+ *
+ * Behavior:
+ *   - .gitignore exists: parse line-by-line, skip entries already present
+ *     (exact match after trim, ignoring leading `!`), append the rest.
+ *   - .gitignore missing: create it with the entries. Reasonable default
+ *     for a fresh `setup` since the user is opting into autopilot's cache.
+ *
+ * Idempotent: safe to call twice with the same entries.
+ */
+export async function ensureGitignoreEntries(
+  cwd: string,
+  entries: string[],
+): Promise<string[]> {
+  const gitignorePath = path.join(cwd, '.gitignore');
+  let existing: string[] = [];
+  let existingContent = '';
+  try {
+    existingContent = await fsAsync.readFile(gitignorePath, 'utf8');
+    existing = existingContent
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && !l.startsWith('#'));
+  } catch {
+    // File doesn't exist — that's fine, we'll create it below.
+  }
+
+  const present = new Set(existing.map((l) => l.replace(/^!/, '')));
+  const missing = entries.filter((e) => !present.has(e.replace(/^!/, '')));
+  if (missing.length === 0) return [];
+
+  // Build the appended block. Add a trailing newline first so we don't
+  // collide with a no-final-newline file.
+  const needsLeadingNewline = existingContent.length > 0 && !existingContent.endsWith('\n');
+  const block =
+    (needsLeadingNewline ? '\n' : '') +
+    (existingContent.length > 0 ? '# claude-autopilot (v7.1.7+)\n' : '') +
+    missing.join('\n') +
+    '\n';
+  await fsAsync.writeFile(gitignorePath, existingContent + block, 'utf8');
+  return missing;
+}
+
+/**
+ * Write a starter `<cwd>/CLAUDE.md` if none exists. Pulls stack-detection
+ * info from the same `detection` result that drove preset selection, so the
+ * scaffolded conventions match the actual project.
+ *
+ * The starter doc is intentionally short (~35 lines) — a real project will
+ * grow it. The goal is to give downstream agents an anchor for the most
+ * common "I had to guess" decisions the v7.1.6 benchmark agent reported:
+ * commit-message style, test command, error class shape, prompt location.
+ *
+ * Returns true when the file was written (false if it already exists; we
+ * never overwrite — operator opted into autopilot, not into us nuking
+ * their docs).
+ */
+export async function ensureStarterClaudeMd(
+  cwd: string,
+  detection: DetectionResult,
+): Promise<boolean> {
+  const dest = path.join(cwd, 'CLAUDE.md');
+  if (fs.existsSync(dest)) return false;
+
+  const stackLabel = PRESET_LABELS[detection.preset] ?? detection.preset;
+  const today = new Date().toISOString().slice(0, 10);
+  const body = [
+    `# CLAUDE.md`,
+    ``,
+    `Project conventions for AI-assisted contributions. Auto-scaffolded by`,
+    `\`claude-autopilot setup\` on ${today}; edit freely.`,
+    ``,
+    `## Stack`,
+    ``,
+    `- **Detected:** ${stackLabel} (${detection.confidence} confidence)`,
+    `- **Test command:** \`${detection.testCommand}\``,
+    `- **Evidence:** ${detection.evidence}`,
+    ``,
+    `## Conventions`,
+    ``,
+    `- **Commit messages:** Conventional Commits (\`feat:\`, \`fix:\`,`,
+    `  \`docs:\`, \`refactor:\`, \`test:\`, \`chore:\`). One sentence first`,
+    `  line, optional body.`,
+    `- **Branches:** \`feat/<topic>\`, \`fix/<topic>\`, \`chore/<topic>\`.`,
+    `- **Errors:** prefer custom \`Error\` subclasses with a string \`code\``,
+    `  field for programmatic handling. Example:`,
+    `  \`\`\`ts`,
+    `  class FetchFailed extends Error { code = 'fetch_failed' as const; }`,
+    `  \`\`\``,
+    `- **Tests:** colocated with source under \`tests/\` or \`__tests__/\`.`,
+    `  Run via \`${detection.testCommand}\`.`,
+    ``,
+    `## Patterns to mimic`,
+    ``,
+    `- TODO: as the project grows, list 2-3 example files agents should`,
+    `  read first to learn local style.`,
+    ``,
+    `## Common pitfalls`,
+    ``,
+    `- TODO: list any non-obvious gotchas — env-var quirks, ordering`,
+    `  requirements, footguns the test suite won't catch.`,
+    ``,
+  ].join('\n');
+  await fsAsync.writeFile(dest, body, 'utf8');
+  return true;
 }
