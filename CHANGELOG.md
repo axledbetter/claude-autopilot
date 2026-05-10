@@ -2,6 +2,33 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.1.6 (2026-05-09)
+
+**v7.1.6 — blank-repo benchmark report.** Docs-only PR. Captures
+the day-1 experience of using `claude-autopilot` on a true `git init`
+repo, end-to-end from "empty directory" to "feature shipped + tests
+passing." Triggered by codex W5 from the autopilot product-direction
+brainstorm.
+
+**Headline:** ~17 minutes from `git init` to working MVP (small CLI,
+Node 22 ESM, with a real Anthropic API call). Setup itself is ~6
+seconds. Pre-commit static-rules hook caught accidentally-staged
+secrets on day 1 (real-world value, not theoretical).
+
+**Top friction points:** no `CLAUDE.md` scaffolded by `setup`;
+deprecation banner prints on every commit; `.gitignore` doesn't
+auto-add `node_modules/` or `.guardrail-cache/`; no `scaffold
+--from-spec` verb.
+
+**Top recommendations:** dedup deprecation banner (~30min ship),
+auto-add cache dirs to `.gitignore` (~10min ship), auto-scaffold
+starter `CLAUDE.md` on `setup` (~2-4hr ship). Fully-autonomous-from-
+blank requires Option C (standalone daemon) work first — flagged as
+v8 dependency.
+
+Full report at `docs/benchmarks/2026-05-09-blank-repo.md`. Bumping
+to 7.1.6 to keep CHANGELOG/version line in lockstep with master HEAD.
+
 ## 7.1.5 (2026-05-09)
 
 **v7.1.5 — change-aware CI matrix.** CI infra optimization;
