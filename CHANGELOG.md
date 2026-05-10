@@ -2,6 +2,36 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.1.7 (2026-05-10)
+
+**v7.1.7 — `setup` verb day-1 polish.** Three fixes from the v7.1.6
+blank-repo benchmark report. Operator-facing improvements; no
+breaking changes; no migration.
+
+* **Per-calendar-day deprecation dedup** (`bin/_launcher.js`). The
+  v6.3+ stamp was keyed by `process.ppid + tty/pipe` — fine for
+  interactive shells, broken for git hooks (fresh shell per hook =
+  fresh ppid = stamp re-created every commit, notice printed every
+  commit). New stamp at `~/.claude-autopilot/.deprecation-shown`
+  contains `YYYY-MM-DD` and dedups by UTC day per machine.
+  Override env vars (`CLAUDE_AUTOPILOT_DEPRECATION=always|never`)
+  preserved.
+* **Auto-add `node_modules/` + `.guardrail-cache/` to `.gitignore`**
+  on `setup` (`src/cli/setup.ts`). New `ensureGitignoreEntries()`
+  helper: idempotent (re-running never duplicates), preserves
+  existing entries, creates `.gitignore` from scratch if missing.
+* **Auto-scaffold starter `CLAUDE.md`** when one doesn't exist
+  (`src/cli/setup.ts`). New `ensureStarterClaudeMd()` helper writes
+  ~35 lines covering: detected stack + confidence, test command,
+  Conventional Commits convention, error class shape, branch naming,
+  TODO slots for "patterns to mimic" + "common pitfalls". Closes
+  ~5 of 6 friction points the benchmark agent reported. Never
+  overwrites an existing `CLAUDE.md`.
+
+13 new tests (4 setup + 6 launcher + 3 idempotency / overwrite-safety).
+1539 → 1546 CLI tests. tsc clean. Version bump 7.1.6 → 7.1.7 to
+keep CHANGELOG/version line in lockstep with master HEAD.
+
 ## 7.1.6 (2026-05-09)
 
 **v7.1.6 — blank-repo benchmark report.** Docs-only PR. Captures

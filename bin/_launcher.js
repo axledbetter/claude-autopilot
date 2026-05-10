@@ -31,44 +31,52 @@ function findTsx() {
   return 'tsx';
 }
 
-// Tracks per-terminal-session whether the deprecation notice has been shown.
-// Uses a temp file keyed by parent PID + stderr's tty so parallel CI jobs don't
-// collide. Falls back to always-emit if the stamp can't be written.
-const DEPRECATION_STAMP_DIR = path.join(os.tmpdir(), 'claude-autopilot');
-function hasShownDeprecation() {
+// v7.1.7 — Per-calendar-day deprecation dedup, keyed in the user's home dir.
+//
+// The previous (v6.3+) implementation used a temp file keyed by `process.ppid
+// + stderr.isTTY` to dedup once per "terminal session." That worked in
+// interactive shells but FAILED for the most common deprecation trigger —
+// the pre-commit/pre-push git hooks. Git spawns a fresh shell for each hook
+// invocation, so the parent PID is fresh on every commit, the stamp file
+// path is unique each time, and the notice printed on every single commit.
+// The v7.1.6 blank-repo benchmark agent surfaced this as the #1 paper cut.
+//
+// New strategy: stamp at `~/.claude-autopilot/.deprecation-shown`, contents =
+// `YYYY-MM-DD` (UTC). Show at most once per day per machine. Operator gets a
+// daily reminder of the rename without per-commit spam. Override env vars
+// (`CLAUDE_AUTOPILOT_DEPRECATION=always|never`) preserved.
+const DEPRECATION_STAMP_PATH = path.join(os.homedir(), '.claude-autopilot', '.deprecation-shown');
+function todayUtc() {
+  return new Date().toISOString().slice(0, 10);
+}
+function hasShownDeprecationToday() {
   try {
-    if (!fs.existsSync(DEPRECATION_STAMP_DIR)) {
-      fs.mkdirSync(DEPRECATION_STAMP_DIR, { recursive: true });
-    }
-    const key = `${process.ppid}-${process.stderr.isTTY ? 'tty' : 'pipe'}.stamp`;
-    const stampPath = path.join(DEPRECATION_STAMP_DIR, key);
-    if (fs.existsSync(stampPath)) return true;
-    fs.writeFileSync(stampPath, String(Date.now()));
-    // Best-effort cleanup of stamps older than 1h to keep tmpdir tidy.
-    const cutoff = Date.now() - 60 * 60 * 1000;
-    for (const f of fs.readdirSync(DEPRECATION_STAMP_DIR)) {
-      const p = path.join(DEPRECATION_STAMP_DIR, f);
-      try {
-        if (fs.statSync(p).mtimeMs < cutoff) fs.unlinkSync(p);
-      } catch { /* ignore */ }
-    }
-    return false;
+    if (!fs.existsSync(DEPRECATION_STAMP_PATH)) return false;
+    return fs.readFileSync(DEPRECATION_STAMP_PATH, 'utf8').trim() === todayUtc();
   } catch {
+    // Stamp unreadable — show notice (better than silently swallowing).
     return false;
   }
+}
+function markDeprecationShown() {
+  try {
+    const dir = path.dirname(DEPRECATION_STAMP_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(DEPRECATION_STAMP_PATH, todayUtc());
+  } catch { /* best-effort; missing stamp re-prints next invocation */ }
 }
 
 /**
  * Decide whether to emit the deprecation notice. Order:
  *   CLAUDE_AUTOPILOT_DEPRECATION=never   → never emit (CI/automation)
  *   CLAUDE_AUTOPILOT_DEPRECATION=always  → always emit (deterministic testing)
- *   otherwise                            → once per terminal session (stamp-based)
+ *   otherwise                            → at most once per UTC day
  */
 function shouldEmitDeprecation() {
   const override = process.env.CLAUDE_AUTOPILOT_DEPRECATION;
   if (override === 'never') return false;
   if (override === 'always') return true;
-  return !hasShownDeprecation();
+  return !hasShownDeprecationToday();
 }
 
 /**
@@ -83,6 +91,13 @@ export function launch(opts) {
       'Migration guide: https://github.com/axledbetter/claude-autopilot/blob/master/docs/migration/v4-to-v5.md\n' +
       'Silence: set CLAUDE_AUTOPILOT_DEPRECATION=never\n',
     );
+    // v7.1.7 — mark stamp AFTER successful emission so a write-failure on
+    // stderr still results in the next invocation re-trying. Skip when
+    // CLAUDE_AUTOPILOT_DEPRECATION=always (deterministic-testing override
+    // shouldn't write the stamp).
+    if (process.env.CLAUDE_AUTOPILOT_DEPRECATION !== 'always') {
+      markDeprecationShown();
+    }
   }
 
   const entry = resolveEntry();
