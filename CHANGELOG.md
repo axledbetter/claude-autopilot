@@ -2,6 +2,72 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.4.1 (2026-05-11)
+
+**v7.4.1 — strategic pivot doc from codex 5.5 review.** Docs-only
+PR. Records the decision to pause v8 daemon implementation pending
+customer discovery, plus 8 other findings from the codex strategic
+review of full project state on 2026-05-11.
+
+**Key outcome:** "ship v8 daemon" is NOT the next milestone. The CLI
+chat-session loop is the validated asset; v8 is unvalidated. New
+priority order: (1) customer discovery sprint, (2) hosted beta
+readiness slice (operational), (3) org-tier revocation completion,
+(4) risk-tiered codex pass policy in the autopilot skill.
+
+**Process changes adopted:**
+
+* **Risk-tiered codex passes** (1 for low-risk CLI UX, 2 for new
+  exec/auth/billing/data-access modes, 3 for sandboxing /
+  multi-tenancy / repo-mutation).
+* **Strategic codex review every ~10 PRs** (separate from per-spec
+  passes — catches "ship more without validating demand" trap).
+* **Bounded benchmark suite gate** (4 repo shapes only, run
+  pre-release + after major workflow changes — already in v8 spec).
+
+**v8 IF customer discovery validates demand:** local-only alpha
+first (per W5 of codex review). NO hosted workers, NO billing, NO
+auto-merge until alpha demand is proven.
+
+Full doc at `docs/strategy/2026-05-11-codex-pivot.md`.
+
+## 7.4.0 (2026-05-11)
+
+**v7.4.0 — scaffold per-stack support (Python + FastAPI).** Closes
+the v7.1.6/v7.1.8 benchmark caveat ("n=1, Node 22 ESM only —
+Python/Rust/Go remain v8 follow-ups") and gates v8 spec
+stabilization criteria #2 (4-repo benchmark suite).
+
+* **Stack detection precedence** (codex C1): explicit `--stack` >
+  FastAPI > Python > Node > detected-but-unsupported > Node fallback.
+  FastAPI checked BEFORE Python so FastAPI specs that include
+  `pyproject.toml` aren't mis-classified.
+* **FastAPI scaffold completeness** (codex C2): generates a runnable
+  `src/<package>/main.py` with `app = FastAPI()`, `/health` route,
+  `run()` function, plus `tests/test_main.py` (otherwise the
+  `[project.scripts]` entry was dangling).
+* **Name normalization** (codex W1): PEP 503 distribution name +
+  valid Python identifier package name. `my-pkg-2` → distribution
+  `my-pkg-2`, package `my_pkg_2`. Hatchling explicit `packages`
+  config always present.
+* **Detected-but-unsupported** (codex W2): Go/Rust/Ruby specs →
+  exit 3 with diagnostic, NOT silent fallback to Node.
+* **Polyglot guard** (codex W3): specs listing both `package.json`
+  AND `pyproject.toml` without `--stack` → exit 3.
+* **Narrow dep extraction** (codex W6): 3 patterns only, no inferred
+  versions, dedup by PEP 503 normalized name. FastAPI auto-includes
+  `fastapi>=0.110` + `uvicorn[standard]>=0.27`.
+* **Module split**: `scaffold.ts` is now the dispatcher;
+  per-stack scaffolders live under
+  `src/cli/scaffold/{node,python,types}.ts`.
+* **New flags**: `--stack <node|python|fastapi>`, `--list-stacks`.
+* **Integration test** (codex N3): scaffolds FastAPI + creates
+  isolated venv (handles PEP 668) + `pip install -e .` + import-
+  app. Skipped cleanly when `python3` unavailable.
+
+1563 → 1597 CLI tests; tsc clean; build clean. PR #155 spec +
+#156 impl. Version 7.3.0 → 7.4.0.
+
 ## 7.3.0 (2026-05-10)
 
 **v7.3.0 — library export surface for v8 daemon.** Minor bump
