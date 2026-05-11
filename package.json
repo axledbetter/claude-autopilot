@@ -1,6 +1,6 @@
 {
   "name": "@delegance/claude-autopilot",
-  "version": "7.2.1",
+  "version": "7.3.0",
   "type": "module",
   "publishConfig": {
     "tag": "next"
@@ -36,7 +36,8 @@
   "types": "./dist/src/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/src/index.d.ts"
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
     },
     "./bin/claude-autopilot.js": "./bin/claude-autopilot.js",
     "./bin/guardrail.js": "./bin/guardrail.js",
