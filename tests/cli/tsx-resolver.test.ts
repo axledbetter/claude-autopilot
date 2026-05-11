@@ -57,6 +57,17 @@ function makePathDirWithTsx(): string {
   return dir;
 }
 
+/**
+ * Windows-style fixture: only a `tsx.cmd` shim in the PATH dir (no bare
+ * `tsx`). Mirrors `npm`'s shim layout on Windows. Used to validate the
+ * `shell: true` opt-in for `.cmd`/`.bat` PATH hits.
+ */
+function makeWindowsPathDirWithTsxCmd(): string {
+  const dir = fs.mkdtempSync(path.join(FIXTURE_ROOT, 'winpath-'));
+  fs.writeFileSync(path.join(dir, 'tsx.cmd'), '@echo off\nexit /b 0\n');
+  return dir;
+}
+
 // Capture stderr writes so we can assert the deprecation warning fires.
 function captureStderr<T>(fn: () => T): { result: T; stderr: string } {
   const orig = process.stderr.write.bind(process.stderr);
@@ -334,6 +345,66 @@ describe('tsx-resolver: A3 self-pointer check', () => {
       stderr.includes('[deprecation]'),
       'and the deprecation warning should still fire',
     );
+  });
+});
+
+describe('tsx-resolver: Windows .cmd shim handling', () => {
+  it('TR10: PATH-hit on tsx.cmd (win32) → returns shell: true', () => {
+    const projectRoot = makeProjectWithoutTsx();
+    const winPathDir = makeWindowsPathDirWithTsxCmd();
+    const { result, stderr } = captureStderr(() =>
+      resolveTsx({
+        projectRoot,
+        env: {
+          PATH: winPathDir,
+          PATHEXT: '.EXE;.CMD',
+          CLAUDE_AUTOPILOT_STATE_DIR: freshStateDir(),
+        },
+        platform: 'win32',
+      }),
+    );
+    assert.equal(result.source, 'path');
+    assert.equal(
+      result.shell,
+      true,
+      '.cmd shims require shell: true on Windows — spawn() cannot launch them directly',
+    );
+    assert.ok(
+      result.command.toLowerCase().endsWith('tsx.cmd'),
+      `expected .cmd shim path, got: ${result.command}`,
+    );
+    assert.equal(stderr, '', 'PATH hit should not emit deprecation warning');
+  });
+
+  it('TR11: PATH-hit on plain tsx (linux) → shell unset', () => {
+    const projectRoot = makeProjectWithoutTsx();
+    const pathDir = makePathDirWithTsx();
+    const { result } = captureStderr(() =>
+      resolveTsx({
+        projectRoot,
+        env: {
+          PATH: pathDir,
+          CLAUDE_AUTOPILOT_STATE_DIR: freshStateDir(),
+        },
+        platform: 'linux',
+      }),
+    );
+    assert.equal(result.source, 'path');
+    assert.equal(result.shell, undefined, 'POSIX shebang exec does not need shell');
+  });
+
+  it('TR12: bundled/project-local resolution → shell unset (runs via node)', () => {
+    const projectRoot = makeProjectWithTsx({ binShape: 'object' });
+    const { result } = captureStderr(() =>
+      resolveTsx({
+        projectRoot,
+        env: { CLAUDE_AUTOPILOT_STATE_DIR: freshStateDir() },
+        platform: 'win32', // even on Windows, we exec node <bin.js> directly
+      }),
+    );
+    assert.equal(result.source, 'project-local');
+    assert.equal(result.command, process.execPath);
+    assert.equal(result.shell, undefined, 'node + bin.js needs no shell');
   });
 });
 

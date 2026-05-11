@@ -49,6 +49,14 @@ export interface TsxResolution {
   source: TsxSource;
   /** Override origin if env var or CLI flag forced this resolution. */
   forcedBy?: 'env' | 'flag';
+  /**
+   * If true, callers MUST spawn this resolution with `shell: true` (or via
+   * cmd.exe). Set on Windows PATH hits that resolve to a `.cmd`/`.bat` shim —
+   * Node's `spawn()` cannot execute those reliably without a shell.
+   * Bundled / project-local hits run `process.execPath <bin.js>` directly and
+   * don't need a shell.
+   */
+  shell?: boolean;
 }
 
 export interface ResolveOpts {
@@ -159,7 +167,19 @@ function tryPath(opts: PathLookupOpts): TsxResolution | null {
 
       // For a PATH-resolved bin, spawn it directly. On Windows the .cmd
       // shim handles dispatching to node; on Unix the shebang does.
-      return { command: candidate, args: [], source: 'path' };
+      //
+      // Critical: Node's `spawn()` on Windows cannot launch `.cmd`/`.bat`
+      // files directly — the OS exec syscalls require `cmd.exe`. Mark
+      // those hits so callers pass `shell: true` to `spawn()`. POSIX
+      // shebang hits don't need a shell.
+      const needsShell =
+        isWin && /\.(cmd|bat)$/i.test(candidate);
+      return {
+        command: candidate,
+        args: [],
+        source: 'path',
+        ...(needsShell ? { shell: true } : {}),
+      };
     }
   }
   return null;

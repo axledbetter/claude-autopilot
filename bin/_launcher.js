@@ -74,21 +74,69 @@ function pathTsxPath() {
   const sep = isWin ? ';' : ':';
   const exts = isWin ? (process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM').split(';') : [''];
   const bundled = bundledTsxPath();
-  const bundledDir = bundled ? path.dirname(bundled) : null;
   for (const dir of PATH.split(sep)) {
     if (!dir) continue;
     for (const ext of exts) {
       const cand = path.join(dir, `tsx${ext}`);
       if (fs.existsSync(cand)) {
-        // A3 self-pointer: if PATH-resolved bin lives inside our bundled
-        // node_modules, treat it as bundled so the deprecation warning
-        // still fires.
-        if (bundledDir && path.resolve(cand).startsWith(path.resolve(bundledDir))) {
+        // A3 self-pointer: if PATH-resolved bin's package root is OUR own
+        // bundled tsx package root, treat it as bundled so the deprecation
+        // warning still fires. Compare package roots (not bin dirs) and
+        // resolve symlinks — `.bin/tsx` is a symlink to `../tsx/dist/...`
+        // on Unix and a `.cmd` shim on Windows.
+        if (isInBundledPackage(cand, bundled)) {
           return null;
+        }
+        // On Windows, `.cmd`/`.bat` shims can't be executed directly by
+        // spawn() — callers must pass `shell: true`. Mark the resolution
+        // with the metadata they need.
+        if (isWin && /\.(cmd|bat)$/i.test(cand)) {
+          return { path: cand, shell: true };
         }
         return cand;
       }
     }
+  }
+  return null;
+}
+
+/**
+ * True iff `candidatePath` resolves into our bundled tsx package directory
+ * (after realpath). `bundled` is the path to our own `node_modules/.bin/tsx`
+ * (or null if it can't be located). We compare PACKAGE ROOTS — `node_modules/
+ * tsx/` — not bin dirs, since `.bin/tsx` and `tsx/dist/cli.mjs` live in
+ * different directories.
+ */
+function isInBundledPackage(candidatePath, bundled) {
+  if (!bundled) return false;
+  try {
+    const realCandidate = fs.realpathSync(candidatePath);
+    const realBundled = fs.realpathSync(bundled);
+    // realBundled now points at the real tsx entry (e.g. .../node_modules/
+    // tsx/dist/cli.mjs on Unix, or remains the .cmd shim on Windows). Walk
+    // up to the tsx package root.
+    const bundledPkgRoot = packageRootContaining(realBundled);
+    if (!bundledPkgRoot) return false;
+    return realCandidate.startsWith(bundledPkgRoot + path.sep) || realCandidate === bundledPkgRoot;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Walk upward from a file path looking for `node_modules/tsx`. Returns the
+ * absolute path to the tsx package root, or null if not found within 5 levels.
+ */
+function packageRootContaining(filePath) {
+  let dir = path.dirname(filePath);
+  for (let i = 0; i < 6; i += 1) {
+    const base = path.basename(dir);
+    if (base === 'tsx' && path.basename(path.dirname(dir)) === 'node_modules') {
+      return dir;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
   }
   return null;
 }
@@ -134,34 +182,82 @@ function emitTsxDeprecationWarningSafe() {
 }
 
 /**
- * Resolve a tsx executable using the v7.8.0 precedence ladder. Returns an
- * absolute path. Honors --tsx-source / CLAUDE_AUTOPILOT_TSX overrides, with
- * --tsx-source taking priority. On bundled fallthrough (no override), emits
- * the once-per-day deprecation warning unless silenced.
+ * Resolve a tsx executable using the v7.8.0 precedence ladder. Returns
+ * `{path, shell?}`. Honors --tsx-source / CLAUDE_AUTOPILOT_TSX overrides,
+ * with --tsx-source taking priority. On bundled fallthrough (no override),
+ * emits the once-per-day deprecation warning unless silenced.
+ *
+ * Forced overrides MUST fail fast: if the user explicitly asked for a
+ * source and it can't be resolved, exit 2 with an actionable stderr message.
+ * Silently falling back to a global `tsx` was a footgun — the user has no
+ * indication their override was ignored.
  */
 function findTsx() {
   const flagOverride = readTsxFlagOverride(process.argv.slice(2));
   const envOverride = process.env.CLAUDE_AUTOPILOT_TSX;
   const override = flagOverride
     || (TSX_VALID_SOURCES.includes(envOverride) ? envOverride : null);
+  const forcedBy = flagOverride ? '--tsx-source' : (override ? 'CLAUDE_AUTOPILOT_TSX' : null);
 
   if (override === 'project') {
-    return projectLocalTsxPath() || 'tsx';
+    const p = projectLocalTsxPath();
+    if (!p) {
+      process.stderr.write(
+        `[claude-autopilot] Error: ${forcedBy}=project requested but no project-local tsx found.\n` +
+        '  Install tsx in your project: npm install -D tsx\n' +
+        '  Or unset the override.\n',
+      );
+      process.exit(2);
+    }
+    return toResolution(p);
   }
   if (override === 'path') {
-    return pathTsxPath() || 'tsx';
+    const p = pathTsxPath();
+    if (!p) {
+      process.stderr.write(
+        `[claude-autopilot] Error: ${forcedBy}=path requested but no tsx found on PATH.\n` +
+        '  Install tsx globally (npm install -g tsx) or unset the override.\n',
+      );
+      process.exit(2);
+    }
+    return toResolution(p);
   }
   if (override === 'bundled') {
-    return bundledTsxPath() || 'tsx';
+    const p = bundledTsxPath();
+    if (!p) {
+      process.stderr.write(
+        `[claude-autopilot] Error: ${forcedBy}=bundled requested but the bundled tsx is missing.\n` +
+        '  Reinstall @delegance/claude-autopilot or unset the override.\n',
+      );
+      process.exit(2);
+    }
+    return toResolution(p);
   }
 
   // Default precedence: project → PATH → bundled (with deprecation warning).
   const project = projectLocalTsxPath();
-  if (project) return project;
+  if (project) return toResolution(project);
   const fromPath = pathTsxPath();
-  if (fromPath) return fromPath;
+  if (fromPath) return toResolution(fromPath);
   emitTsxDeprecationWarningSafe();
-  return bundledTsxPath() || 'tsx';
+  const bundled = bundledTsxPath();
+  if (!bundled) {
+    process.stderr.write(
+      '[claude-autopilot] Error: bundled tsx is missing — reinstall @delegance/claude-autopilot.\n',
+    );
+    process.exit(2);
+  }
+  return toResolution(bundled);
+}
+
+/**
+ * Normalize the result of a tsx-path lookup into a `{path, shell?}`
+ * resolution. `pathTsxPath()` may return either a string or an object with
+ * `{path, shell}` for `.cmd`/`.bat` shims that require `shell: true`.
+ */
+function toResolution(value) {
+  if (typeof value === 'string') return { path: value };
+  return value;
 }
 
 // v7.1.7 — Per-calendar-day deprecation dedup, keyed in the user's home dir.
@@ -251,7 +347,15 @@ export function launch(opts) {
   } else {
     // Dev path — run source via tsx. Used from the repo itself, or by users who
     // installed from git or linked a local copy.
-    result = spawnSync(findTsx(), [entry.path, ...process.argv.slice(2)], { stdio: 'inherit' });
+    //
+    // On Windows, PATH-resolved `.cmd`/`.bat` shims must be spawned with
+    // `shell: true` — Node's exec syscalls can't launch them directly.
+    // Bundled / project-local hits run as bare JS via node and don't need
+    // a shell. The resolver tells us which mode to use.
+    const tsx = findTsx();
+    const spawnOpts = { stdio: 'inherit' };
+    if (tsx.shell) spawnOpts.shell = true;
+    result = spawnSync(tsx.path, [entry.path, ...process.argv.slice(2)], spawnOpts);
   }
 
   if (result.error) {
