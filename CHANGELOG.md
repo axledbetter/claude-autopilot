@@ -2,6 +2,33 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.4.2 (2026-05-11)
+
+**v7.4.2 — risk-tiered codex pass policy in autopilot skill.**
+Docs-only PR. Codifies finding N2 from the v7.4.1 codex strategic
+review into `skills/autopilot/SKILL.md`.
+
+**New policy table** in the skill:
+
+| Spec risk | # of codex passes |
+|---|---|
+| **Low** (CLI UX, doc-only, scaffolding, CI tweaks) | 1 |
+| **Medium** (new exec modes, auth, billing, data-access, env vars, API contracts) | 2 |
+| **High** (sandboxing, multi-tenancy, auto-merge, repo-mutation, secrets, RPC/SECURITY DEFINER) | 3 + external review |
+
+**Convention:** spec docs declare `risk: low | medium | high` in
+frontmatter. Omitted defaults to **medium** (safer than defaulting
+to low).
+
+**v7.x examples** included in the skill text:
+* v7.1.7 (low) — 1 pass, 0 CRITICALs in practice.
+* v7.4.0 (low) — 1 pass, 2 CRITICALs caught pre-impl.
+* v7.0 Phase 6 (high) — 3 passes, would have shipped credential-
+  exfiltration vector C3 without all three.
+* v8.0 spec (high) — 2 passes done, needs 3rd before v8 alpha.
+
+No code change. Bumping to 7.4.2.
+
 ## 7.4.1 (2026-05-11)
 
 **v7.4.1 — strategic pivot doc from codex 5.5 review.** Docs-only
