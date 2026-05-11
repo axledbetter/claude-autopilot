@@ -2,6 +2,50 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.4.3 (2026-05-11)
+
+**v7.4.3 — FastAPI scaffold respects spec-derived package name.**
+Patch release. Real-package end-to-end test on v7.4.2 surfaced
+this regression: the v7.4.0 Python/FastAPI scaffolder always used
+`basename(cwd)` for the package directory and ignored spec-listed
+`src/<pkg>/main.py` paths. Result: scaffolding a spec that listed
+`src/fastapi_test/main.py` from a directory called `v742-fastapi`
+produced TWO competing trees:
+
+* `src/v742_fastapi/` — auto-generated FastAPI app (correct
+  content, wrong location)
+* `src/fastapi_test/main.py` — empty placeholder from the spec's
+  bullet (right location, no content)
+
+`pyproject.toml`'s `[project.scripts]` pointed at the
+auto-generated tree (`v742_fastapi.main:run`) — the spec's intent
+was clearly the named package.
+
+**Fix:** new `packageNameFromSpec(parsed)` extracts the package
+name from the first `src/<pkg>/<*>.py` entry in the spec's
+`## Files` section. Falls back to the cwd-derived default only
+when the spec doesn't list any `src/<pkg>/` path.
+
+8 new tests in `tests/scaffold-python.test.ts` cover:
+* extraction from `src/<pkg>/main.py` (the conventional case)
+* extraction from `src/<pkg>/<other>.py`
+* null when no `src/<pkg>/<*>.py` listed
+* null for non-`src/` paths
+* first-match-wins on multiple `src/<pkg>/` entries
+* rejects invalid Python identifier characters in the path
+* the exact regression case (`src/fastapi_test/main.py` from
+  cwd `v742-fastapi`)
+* fallback to cwd basename when spec has no `src/<pkg>/`
+
+Plus 2 end-to-end tests verifying:
+* scaffold from `cwd=v742-real` + `src/intentional_pkg/main.py`
+  spec → SINGLE `src/intentional_pkg/` directory (no competing
+  tree); `pyproject.toml` consistent throughout
+* scaffold from `cwd=myapp` + spec without `src/<pkg>/` → still
+  uses `src/myapp/` (preserves v7.4.0 default behavior)
+
+1597 → 1606 CLI tests (+9). tsc clean. build clean.
+
 ## 7.4.2 (2026-05-11)
 
 **v7.4.2 — risk-tiered codex pass policy in autopilot skill.**

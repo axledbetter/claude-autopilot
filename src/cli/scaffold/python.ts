@@ -20,7 +20,7 @@ import * as fs from 'node:fs';
 import * as fsAsync from 'node:fs/promises';
 import * as path from 'node:path';
 
-import type { ScaffoldResult, ScaffoldRunContext } from './types.ts';
+import type { ParsedFiles, ScaffoldResult, ScaffoldRunContext } from './types.ts';
 
 const PASS = '\x1b[32m✓\x1b[0m';
 const SKIP = '\x1b[2m·\x1b[0m';
@@ -227,6 +227,23 @@ pytest
  * not listed in `## Files` — without them the generated pyproject.toml
  * is invalid (missing package dir) or has dead config (no tests).
  */
+/**
+ * Extract the Python package name from a spec's `## Files` paths if the
+ * spec lists a `src/<pkg>/<*>.py` entry. Returns null if no spec-derived
+ * package name is present — caller falls back to the cwd-derived default.
+ *
+ * v7.4.3 hotfix — the v7.4.0 scaffolder always used basename(cwd) and
+ * ignored spec-listed src/<pkg>/ paths, producing two competing trees
+ * (one auto-generated, one empty placeholder from the spec).
+ */
+export function packageNameFromSpec(parsed: ParsedFiles): string | null {
+  for (const p of parsed.paths) {
+    const m = /^src\/([a-zA-Z_][a-zA-Z0-9_]*)\/[^/]+\.py$/.exec(p);
+    if (m && m[1]) return m[1];
+  }
+  return null;
+}
+
 export async function scaffoldPython(
   ctx: ScaffoldRunContext,
   opts: { isFastapi: boolean },
@@ -234,8 +251,10 @@ export async function scaffoldPython(
   const { cwd, parsed, dryRun } = ctx;
   const { isFastapi } = opts;
 
+  // v7.4.3: prefer spec-derived package name; fall back to cwd basename.
+  const specPackage = packageNameFromSpec(parsed);
   const distributionName = normalizeDistributionName(path.basename(cwd));
-  const packageName = packageNameFromDistribution(distributionName);
+  const packageName = specPackage ?? packageNameFromDistribution(distributionName);
 
   const filesCreated: string[] = [];
   const filesSkippedExisting: string[] = [];
