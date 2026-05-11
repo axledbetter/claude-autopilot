@@ -15,16 +15,31 @@
 // every request the middleware:
 //   1. Refreshes the Supabase auth cookie (existing).
 //   2. Resolves (active_org, user.id) from cookies.
-//   3. Verifies the HMAC-signed `cao_membership_check` cookie. On hit
-//      AND match AND not-expired, allow.
-//   4. On miss/mismatch/expired, calls `check_membership_status` RPC
-//      with a 1.5s timeout. If `status='active'`, mints a new signed
-//      cookie (60s TTL) and allows. Otherwise clears active-org +
-//      membership cookies and routes:
+//   3. Classifies the route as LOW or HIGH sensitivity
+//      (`isHighSensitivityRoute`, v7.5.0).
+//   4a. LOW: verifies the HMAC-signed `cao_membership_check` cookie.
+//       On hit AND match AND not-expired, allow. On miss/mismatch/
+//       expired, RPC + mint a fresh cookie. Worst-case revocation
+//       window = cookie TTL (default 60s).
+//   4b. HIGH (v7.5.0 — mutations + sensitive reads under
+//       /api/dashboard/orgs/:id/{members,sso,audit,cost,billing} +
+//       /api/dashboard/api-keys/*): SKIP the cookie cache, ALWAYS
+//       RPC. Worst-case revocation window = 1 request. Also
+//       asserts `:id` from the path matches the cookie active-org
+//       (CRITICAL #2 — defense against a user active in Org A
+//       reaching an Org B-scoped handler if the handler is sloppy).
+//   5. On `check_membership_status` non-active result, clears
+//      active-org + membership cookies and routes:
 //        - page request: 302 → /access-revoked?reason=<code>
 //        - API request:  403 JSON {error: <code>}
-//   5. RPC errors / timeouts / missing secrets fall through to
+//   6. RPC errors / timeouts / missing secrets fall through to
 //      `check_failed` (NOT `member_disabled` per codex pass-2 WARNING #4).
+//
+// Defense-in-depth (CRITICAL #3): high-sensitivity route handlers
+// MUST also call `assertActiveMembershipForOrg()` at the top. The
+// middleware is the outer optimization; the helper call is the
+// inner correctness gate that doesn't depend on a regex list
+// staying in sync with the route tree.
 //
 // Status → reason mapping (single source of truth — see spec table):
 //   active          → allow
@@ -59,6 +74,7 @@ import {
   verifyMembershipCookie,
   getMembershipCheckTtlSeconds,
 } from './lib/middleware/cookie-hmac';
+import { isHighSensitivityRoute } from './lib/middleware/route-sensitivity';
 
 // Force Node.js runtime — node:crypto is not available on Edge.
 export const runtime = 'nodejs';
@@ -218,13 +234,29 @@ interface RevocationCheckOpts {
   isApi: boolean;
   userId: string | null;
   activeOrgId: string | null;
+  /** v7.5.0 — when true, the middleware skips the cookie cache and
+   *  forces a per-request `check_membership_status` RPC. No new
+   *  signed cookie is minted on success. */
+  highSensitivity: boolean;
+}
+
+/** v7.5.0 — extract the `:orgId` path segment from a high-sensitivity
+ *  `/api/dashboard/orgs/:orgId/...` request. Returns null when the
+ *  path doesn't follow the org-scoped shape (api-keys/* and other
+ *  non-org-scoped sensitive routes). */
+export function parseOrgIdFromPath(pathname: string): string | null {
+  const orgMatch = /^\/api\/dashboard\/orgs\/([^/]+)(\/|$)/.exec(pathname);
+  if (!orgMatch) return null;
+  const candidate = orgMatch[1];
+  if (typeof candidate !== 'string') return null;
+  return UUID_RE.test(candidate) ? candidate : null;
 }
 
 /** Phase 6 — perform the membership-revocation check. Returns either
  *  null (allow, mutations may still apply to refresh the cookie) or a
  *  terminal response (redirect / 403). */
 async function evaluateRevocation(opts: RevocationCheckOpts): Promise<RevocationDecision> {
-  const { request, isApi, userId, activeOrgId } = opts;
+  const { request, isApi, userId, activeOrgId, highSensitivity } = opts;
   const mutations: CookieMutation[] = [];
   const baseAttrs = membershipCookieBaseAttrs();
 
@@ -244,16 +276,36 @@ async function evaluateRevocation(opts: RevocationCheckOpts): Promise<Revocation
     };
   }
 
-  // 1) Try the signed cookie cache.
-  const cookieRaw = request.cookies.get(MEMBERSHIP_CHECK_COOKIE)?.value;
-  const verified = verifyMembershipCookie(cookieRaw);
-  if (
-    verified.ok &&
-    verified.payload.orgId === activeOrgId &&
-    verified.payload.userId === userId
-  ) {
-    // Cache hit AND matches THIS request's identity. No DB call.
-    return { terminal: null, mutations };
+  // v7.5.0 CRITICAL #2 — for high-sensitivity org-scoped routes,
+  // assert the `:orgId` path segment matches the cookie-resolved
+  // active org BEFORE running the RPC. This prevents a user active
+  // in Org A from passing through to an Org B-scoped handler when
+  // the handler's authorization is sloppy.
+  if (highSensitivity) {
+    const pathOrgId = parseOrgIdFromPath(request.nextUrl.pathname);
+    if (pathOrgId !== null && pathOrgId !== activeOrgId) {
+      return {
+        terminal: buildRevocationResponse(request, isApi, 'no_membership'),
+        mutations,
+      };
+    }
+  }
+
+  // v7.5.0 — high-sensitivity routes skip the cookie cache entirely.
+  // Always RPC; never mint a new cookie (the cookie cache exists
+  // specifically for low-sensitivity bursty navigation).
+  if (!highSensitivity) {
+    // 1) Try the signed cookie cache.
+    const cookieRaw = request.cookies.get(MEMBERSHIP_CHECK_COOKIE)?.value;
+    const verified = verifyMembershipCookie(cookieRaw);
+    if (
+      verified.ok &&
+      verified.payload.orgId === activeOrgId &&
+      verified.payload.userId === userId
+    ) {
+      // Cache hit AND matches THIS request's identity. No DB call.
+      return { terminal: null, mutations };
+    }
   }
 
   // 2) Cache miss / forged / expired / wrong identity → RPC.
@@ -308,6 +360,18 @@ async function evaluateRevocation(opts: RevocationCheckOpts): Promise<Revocation
 
   // 4) Positive result → mint a new signed cookie (default 60s TTL,
   //    operator-configurable via MEMBERSHIP_CHECK_TTL_SECONDS).
+  //
+  // v7.5.0 — for high-sensitivity routes we DO NOT mint a cookie on
+  // success. The whole point of the high tier is per-request RPC;
+  // minting here would let the cookie's later cache hit on a
+  // low-sensitivity request bypass the next high-sensitivity check.
+  // (Bypass is intentional & safe — it'd just become a low-tier
+  // cache hit — but minting from a high-tier path muddies the
+  // policy + costs us nothing to skip.)
+  if (highSensitivity) {
+    return { terminal: null, mutations };
+  }
+
   const nowSeconds = Math.floor(Date.now() / 1000);
   const ttlSeconds = getMembershipCheckTtlSeconds();
   try {
@@ -396,11 +460,15 @@ export async function middleware(request: NextRequest) {
   if (surface.match && !isWhitelistedBootstrapPath(pathname)) {
     const cookieOrgRaw = request.cookies.get(ACTIVE_ORG_COOKIE)?.value;
     const activeOrgId = cookieOrgRaw && UUID_RE.test(cookieOrgRaw) ? cookieOrgRaw : null;
+    // v7.5.0 — route-sensitivity tiering. High = skip cookie cache,
+    // always RPC. Low = existing v7.0 cookie path (≤60s revocation).
+    const highSensitivity = isHighSensitivityRoute(pathname, request.method);
     const decision = await evaluateRevocation({
       request,
       isApi: surface.isApi,
       userId,
       activeOrgId,
+      highSensitivity,
     });
     if (decision.terminal) {
       // Re-apply Supabase refresh cookies + revocation mutations on the

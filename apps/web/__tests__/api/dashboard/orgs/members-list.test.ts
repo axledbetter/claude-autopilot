@@ -52,14 +52,19 @@ describe('GET /api/dashboard/orgs/:orgId/members', () => {
     expect(meRow.email).toBe('me@autopilot.dev');
   });
 
-  it('test 2: non-member → 404 (no enumeration)', async () => {
+  it('test 2: non-member → 403 no_membership (v7.5.0 helper short-circuits before RPC)', async () => {
+    // Pre-v7.5.0 the route returned 404 to avoid org enumeration. The
+    // new helper returns 403 with body `{error:'no_membership'}` which
+    // is also non-enumerating: the same response shape fires whether
+    // the org exists or not.
     const orgId = randomUUID();
     currentUser = { id: randomUUID() };
     stub.seed('memberships', [
       { id: randomUUID(), organization_id: orgId, user_id: randomUUID(), role: 'owner', status: 'active', joined_at: new Date().toISOString() },
     ]);
     const r = await GET(req(orgId), { params: { orgId } });
-    expect(r.status).toBe(404);
+    expect(r.status).toBe(403);
+    expect((await r.json()).error).toBe('no_membership');
   });
 
   it('test 3: not signed in → 401', async () => {
