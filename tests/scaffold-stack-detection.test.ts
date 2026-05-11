@@ -60,18 +60,32 @@ describe('detectStack — precedence ladder', () => {
     if (result.kind === 'resolved') assert.equal(result.stack, 'node');
   });
 
-  it('returns "unsupported" for a Go spec (codex W2 — exit 3, no silent Node fallback)', () => {
+  it('classifies a Go spec (go.mod) as go (v7.6 — was unsupported in v7.4/v7.5)', () => {
     const parsed = parseSpecFiles(GO_SPEC)!;
     const result = detectStack(parsed);
-    assert.equal(result.kind, 'unsupported');
-    if (result.kind === 'unsupported') {
-      assert.equal(result.stack, 'go');
-      assert.match(result.message, /go detected but not supported until v7\.5/);
-    }
+    assert.equal(result.kind, 'resolved');
+    if (result.kind === 'resolved') assert.equal(result.stack, 'go');
   });
 
   it('returns "polyglot" when both package.json + pyproject.toml are listed without --stack (codex W3)', () => {
     const parsed = parseSpecFiles(POLYGLOT_SPEC)!;
+    const result = detectStack(parsed);
+    assert.equal(result.kind, 'polyglot');
+    if (result.kind === 'polyglot') {
+      assert.match(result.message, /polyglot spec — pass --stack to disambiguate/);
+    }
+  });
+
+  it('v7.6 — lone go.mod detects as go (polyglot-aware: single supported signal)', () => {
+    const parsed = parseSpecFiles(`## Files\n\n* \`go.mod\` — module def\n`)!;
+    const result = detectStack(parsed);
+    assert.equal(result.kind, 'resolved');
+    if (result.kind === 'resolved') assert.equal(result.stack, 'go');
+  });
+
+  it('v7.6 — go.mod + package.json without --stack → polyglot exit 3', () => {
+    const md = `## Files\n\n* \`go.mod\` — go side\n* \`package.json\` — node side\n`;
+    const parsed = parseSpecFiles(md)!;
     const result = detectStack(parsed);
     assert.equal(result.kind, 'polyglot');
     if (result.kind === 'polyglot') {
@@ -86,7 +100,7 @@ describe('detectStack — precedence ladder', () => {
     if (result.kind === 'resolved') assert.equal(result.stack, 'node');
   });
 
-  it('also flags Rust (Cargo.toml) and Ruby (Gemfile) as detected-but-unsupported', () => {
+  it('still flags Rust (Cargo.toml) and Ruby (Gemfile) as detected-but-unsupported (Go was promoted in v7.6)', () => {
     const rustParsed = parseSpecFiles(RUST_SPEC)!;
     const rustResult = detectStack(rustParsed);
     assert.equal(rustResult.kind, 'unsupported');
@@ -107,8 +121,8 @@ describe('--stack override', () => {
     if (result.kind === 'resolved') assert.equal(result.stack, 'python');
   });
 
-  it('SUPPORTED_STACKS lists exactly node + python + fastapi', () => {
-    assert.deepEqual([...SUPPORTED_STACKS].sort(), ['fastapi', 'node', 'python']);
+  it('SUPPORTED_STACKS lists node + python + fastapi + go (v7.6)', () => {
+    assert.deepEqual([...SUPPORTED_STACKS].sort(), ['fastapi', 'go', 'node', 'python']);
   });
 });
 
@@ -144,13 +158,13 @@ describe('--list-stacks output', () => {
     assert.match(joined, /\bnode\b.*Node 22 ESM/);
     assert.match(joined, /\bpython\b.*Python 3\.11/);
     assert.match(joined, /\bfastapi\b.*FastAPI/);
+    assert.match(joined, /\bgo\b.*Go 1\.22/);
     // Auto-detected section.
     assert.match(joined, /Auto-detected from `## Files`/);
     // Recognized-but-unsupported section.
     assert.match(joined, /Recognized-but-unsupported \(exit 3\)/);
-    assert.match(joined, /\bgo\b.*v7\.5/);
-    assert.match(joined, /\brust\b.*v7\.5/);
-    assert.match(joined, /\bruby\b.*v7\.5/);
+    assert.match(joined, /\brust\b.*v7\.7/);
+    assert.match(joined, /\bruby\b.*v7\.7/);
   });
 });
 
@@ -179,6 +193,8 @@ describe('CLI — scaffold flag handling', () => {
     const r = runCli(['scaffold', '--from-spec', specPath, '--stack', 'erlang'], dir);
     assert.equal(r.status, 3, `expected exit 3, got ${r.status}\nstderr: ${r.stderr}`);
     assert.match(r.stderr, /--stack "erlang" not recognized/);
+    // v7.6 — list now includes go.
+    assert.match(r.stderr, /supported: node, python, fastapi, go/);
     fs.rmSync(dir, { recursive: true });
   });
 
@@ -192,15 +208,38 @@ describe('CLI — scaffold flag handling', () => {
     fs.rmSync(dir, { recursive: true });
   });
 
-  it('Go spec → exit 3 (codex W2: no silent fallback to Node)', () => {
+  it('Go spec → exit 0 (v7.6 — promoted from unsupported to supported)', () => {
     const dir = makeTmp();
     const specPath = writeSpec(dir, GO_SPEC);
     const r = runCli(['scaffold', '--from-spec', specPath], dir);
-    assert.equal(r.status, 3, `expected exit 3, got ${r.status}\nstderr: ${r.stderr}`);
-    assert.match(r.stderr, /go detected but not supported until v7\.5/);
-    // Ensure NOTHING was generated — no package.json, no pyproject.toml.
+    assert.equal(r.status, 0, `expected exit 0, got ${r.status}\nstderr: ${r.stderr}`);
+    // Should NOT generate Node/Python artifacts.
     assert.equal(fs.existsSync(path.join(dir, 'package.json')), false);
     assert.equal(fs.existsSync(path.join(dir, 'pyproject.toml')), false);
+    // Should generate Go artifacts.
+    assert.equal(fs.existsSync(path.join(dir, 'go.mod')), true);
+    assert.equal(fs.existsSync(path.join(dir, 'main.go')), true);
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  it('v7.6 — lone go.mod spec detects as go', () => {
+    const dir = makeTmp();
+    const specPath = writeSpec(dir, `## Files\n\n* \`go.mod\` — module\n`);
+    const r = runCli(['scaffold', '--from-spec', specPath], dir);
+    assert.equal(r.status, 0, `expected exit 0, got ${r.status}\nstderr: ${r.stderr}`);
+    assert.match(r.stdout, /stack: go/);
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  it('v7.6 — go.mod + package.json polyglot → exit 3 without --stack', () => {
+    const dir = makeTmp();
+    const specPath = writeSpec(
+      dir,
+      `## Files\n\n* \`go.mod\` — go side\n* \`package.json\` — node side\n`,
+    );
+    const r = runCli(['scaffold', '--from-spec', specPath], dir);
+    assert.equal(r.status, 3, `expected exit 3, got ${r.status}\nstderr: ${r.stderr}`);
+    assert.match(r.stderr, /polyglot spec — pass --stack to disambiguate/);
     fs.rmSync(dir, { recursive: true });
   });
 
@@ -222,8 +261,8 @@ describe('CLI — scaffold flag handling', () => {
     assert.equal(fs.existsSync(path.join(dir, 'package.json')), false);
     // pyproject.toml should have been created.
     assert.equal(fs.existsSync(path.join(dir, 'pyproject.toml')), true);
-    // Diagnostic mentioned the skip.
-    assert.match(r.stdout, /ignoring Node files/);
+    // Diagnostic mentioned the skip (v7.6 wording: "ignoring non-Python files").
+    assert.match(r.stdout, /ignoring non-Python files/);
     fs.rmSync(dir, { recursive: true });
   });
 });

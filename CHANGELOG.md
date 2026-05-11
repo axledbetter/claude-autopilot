@@ -2,6 +2,52 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.6.0 (2026-05-10)
+
+**v7.6.0 — Go scaffold support.** Minor release. Promotes Go from
+"detected-but-unsupported" (exit 3 in v7.4/v7.5) to a first-class
+scaffold target, matching the Node + Python + FastAPI shape.
+
+**New:** `claude-autopilot scaffold --from-spec <spec.md> --stack go`
+(or auto-detected when the spec's `## Files` section lists `go.mod`
+or `main.go`).
+
+Generates for a basic spec:
+
+- `go.mod` — `module <basename(cwd)>` + `go 1.22`, with an inline
+  comment documenting that the module path is the local-scaffold
+  default and should be replaced with the full hosted path
+  (e.g. `github.com/<user>/<name>`) before publishing.
+- `main.go` — `package main` + Hello world (skipped when the spec
+  uses a `cmd/<name>/main.go` layout).
+- `main_test.go` — `TestSmoke` stub for table-driven tests.
+- `.gitignore` — idempotent augmentation: appends `vendor/`,
+  `*.exe`, `*.test` if not already present.
+
+**Name normalization.** `basename(cwd)` lowercased, whitespace
+collapsed to `-`. Dots + hyphens preserved (valid Go module path
+chars). Path-invalid characters (`/`, `\`, control bytes) reject
+with a clear error.
+
+**Never overwrites.** `go.mod`, `main.go`, `main_test.go`, and
+existing `.gitignore` entries are preserved — matches the Python
+scaffolder pattern.
+
+**Polyglot detection (codex CRITICAL pass-1).** `detectStack()` now
+scans `## Files` for ALL supported stack signals (Node, Python, Go)
+and exits 3 with `polyglot spec — pass --stack to disambiguate` when
+more than one supported stack is present. Previously the check was
+Node-vs-Python only; v7.6 closes the gap so e.g. `package.json` +
+`go.mod` together correctly fail-loud instead of silently picking one.
+
+**`--list-stacks`** now shows Go under Supported and drops it from
+Recognized-but-unsupported. Rust + Ruby remain detection-only; the
+Rust scaffolder is deferred to **v7.7.0** (out of scope here).
+
+**Rust deferred.** `Cargo.toml` still exits 3 ("rust detected but
+not supported until v7.7"). Targeted for v7.7.0 alongside the same
+shape (Cargo.toml + `src/main.rs` + a smoke test).
+
 ## 7.5.0 (2026-05-10)
 
 **v7.5.0 — route-sensitivity-tiered membership revocation.** Minor
