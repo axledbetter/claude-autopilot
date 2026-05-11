@@ -110,12 +110,48 @@ export function resolveTsx(opts: ResolveOpts): TsxResolution {
 }
 
 function tryProjectLocal(projectRoot: string): TsxResolution | null {
+  // Only classify as "project-local" if the CONSUMER explicitly declared
+  // `tsx` in their package.json. npm hoists @delegance/claude-autopilot's
+  // own tsx dep to the consumer root `node_modules/tsx`, so a bare
+  // `require.resolve('tsx/package.json')` from the consumer root would
+  // succeed even when the consumer never declared tsx themselves. Without
+  // this gate we mislabel the hoisted bundled tsx as project-local,
+  // suppressing the deprecation warning that's supposed to drive the
+  // v8.0.0 migration.
+  if (!consumerDeclaresTsx(projectRoot)) return null;
   try {
     const projectRequire = createRequire(path.join(projectRoot, 'package.json'));
     const pkgPath = projectRequire.resolve('tsx/package.json');
     return buildResolutionFromPkgJson(pkgPath, 'project-local');
   } catch {
     return null;
+  }
+}
+
+/**
+ * Reads the consumer's `package.json` and returns true iff `tsx` appears in
+ * `dependencies`, `devDependencies`, or `peerDependencies`. Missing or
+ * malformed package.json → false (conservative: better to fall through to
+ * PATH/bundled than to silently mislabel hoisted deps as project-local).
+ */
+function consumerDeclaresTsx(projectRoot: string): boolean {
+  try {
+    const pkgPath = path.join(projectRoot, 'package.json');
+    const raw = readFileSync(pkgPath, 'utf8');
+    const pkg = JSON.parse(raw) as {
+      dependencies?: Record<string, unknown>;
+      devDependencies?: Record<string, unknown>;
+      peerDependencies?: Record<string, unknown>;
+    };
+    return (
+      !!pkg.dependencies && 'tsx' in pkg.dependencies
+        ? true
+        : !!pkg.devDependencies && 'tsx' in pkg.devDependencies
+          ? true
+          : !!pkg.peerDependencies && 'tsx' in pkg.peerDependencies
+    );
+  } catch {
+    return false;
   }
 }
 

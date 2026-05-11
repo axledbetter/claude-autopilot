@@ -63,9 +63,42 @@ function bundledTsxPath() {
 }
 function projectLocalTsxPath() {
   // Consumer project — when installed as a dep, npm hoists peer bins to
-  // <consumer>/node_modules/.bin/tsx.
+  // <consumer>/node_modules/.bin/tsx. ONLY classify as project-local if
+  // the consumer EXPLICITLY declared tsx in their package.json. Without
+  // this gate, npm's hoisting of our own bundled tsx would be mislabeled
+  // as project-local, suppressing the deprecation warning that drives
+  // the v8.0.0 migration.
+  //
+  // Layout when installed as a dep:
+  //   <consumer>/package.json
+  //   <consumer>/node_modules/@delegance/claude-autopilot/bin/_launcher.js   <-- __dirname/..
+  //   <consumer>/node_modules/.bin/tsx
+  // So the consumer package root is four dirs up from bin/.
+  const consumerPkgRoot = path.resolve(__dirname, '..', '..', '..', '..');
+  if (!consumerDeclaresTsx(consumerPkgRoot)) return null;
   const p = path.resolve(__dirname, '..', '..', '..', '.bin', 'tsx');
   return fs.existsSync(p) ? p : null;
+}
+
+/**
+ * True iff the consumer's `package.json` declares `tsx` in dependencies,
+ * devDependencies, or peerDependencies. Mirrors the TS resolver's
+ * `consumerDeclaresTsx` — see src/cli/tsx-resolver.ts. Missing or
+ * malformed package.json → false (conservative: better to fall through
+ * to PATH/bundled than to mislabel hoisted deps as project-local).
+ */
+function consumerDeclaresTsx(consumerPkgRoot) {
+  try {
+    const pkgPath = path.join(consumerPkgRoot, 'package.json');
+    const raw = fs.readFileSync(pkgPath, 'utf8');
+    const pkg = JSON.parse(raw);
+    const dd = (pkg && pkg.dependencies) || {};
+    const ddv = (pkg && pkg.devDependencies) || {};
+    const pd = (pkg && pkg.peerDependencies) || {};
+    return 'tsx' in dd || 'tsx' in ddv || 'tsx' in pd;
+  } catch {
+    return false;
+  }
 }
 function pathTsxPath() {
   const PATH = process.env.PATH || process.env.Path || '';

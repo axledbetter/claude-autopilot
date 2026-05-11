@@ -19,7 +19,7 @@ import { resolveTsx, stateDir, __TSX_DEPRECATION_MESSAGE } from '../../src/cli/t
 
 const FIXTURE_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'tsx-resolver-test-'));
 
-function makeProjectWithTsx(opts: { binShape: 'string' | 'object' }): string {
+function makeProjectWithTsx(opts: { binShape: 'string' | 'object'; declared?: boolean }): string {
   const projectRoot = fs.mkdtempSync(path.join(FIXTURE_ROOT, 'proj-'));
   // Create a faux installed tsx under node_modules/tsx
   const tsxDir = path.join(projectRoot, 'node_modules', 'tsx');
@@ -32,10 +32,17 @@ function makeProjectWithTsx(opts: { binShape: 'string' | 'object' }): string {
     JSON.stringify({ name: 'tsx', version: '0.0.0-test', bin }),
     'utf8',
   );
-  // Project package.json (createRequire anchors here)
+  // Project package.json (createRequire anchors here). `declared` defaults
+  // to true so existing tests keep working — they were written against the
+  // pre-A8 behavior that classified any resolvable tsx as project-local.
+  const declared = opts.declared !== false;
+  const projectPkg: Record<string, unknown> = { name: 'fake-project', version: '0.0.0' };
+  if (declared) {
+    projectPkg.devDependencies = { tsx: '*' };
+  }
   fs.writeFileSync(
     path.join(projectRoot, 'package.json'),
-    JSON.stringify({ name: 'fake-project', version: '0.0.0' }),
+    JSON.stringify(projectPkg),
     'utf8',
   );
   return projectRoot;
@@ -396,6 +403,74 @@ describe('tsx-resolver: A3 self-pointer check', () => {
       stderr.includes('[deprecation]'),
       'deprecation warning should fire when PATH symlinks back to our bundled tsx',
     );
+  });
+});
+
+describe('tsx-resolver: A8 — project-local gating by package.json declaration', () => {
+  it('TR14: tsx installed AND declared in devDependencies → project-local hit', () => {
+    const projectRoot = makeProjectWithTsx({ binShape: 'object', declared: true });
+    const { result } = captureStderr(() =>
+      resolveTsx({
+        projectRoot,
+        env: { CLAUDE_AUTOPILOT_STATE_DIR: freshStateDir() },
+        platform: 'linux',
+      }),
+    );
+    assert.equal(result.source, 'project-local');
+  });
+
+  it('TR15: tsx hoisted into node_modules but NOT declared → falls through to bundled (warning fires)', () => {
+    // The npm-hoisting trap: @delegance/claude-autopilot's bundled tsx
+    // gets hoisted to the consumer root's node_modules/tsx. Without the
+    // A8 gate, `createRequire(consumerPkgJson).resolve('tsx/...')` would
+    // succeed and we'd mislabel the bundled tsx as project-local —
+    // silently suppressing the deprecation warning that drives the
+    // v8.0.0 migration. The fix: require the consumer to explicitly
+    // declare `tsx` in their package.json.
+    const projectRoot = makeProjectWithTsx({ binShape: 'object', declared: false });
+    const { result, stderr } = captureStderr(() =>
+      resolveTsx({
+        projectRoot,
+        env: {
+          PATH: '/nonexistent',
+          CLAUDE_AUTOPILOT_STATE_DIR: freshStateDir(),
+        },
+        platform: 'linux',
+      }),
+    );
+    assert.equal(
+      result.source,
+      'bundled',
+      'hoisted-but-undeclared tsx should NOT be classified as project-local',
+    );
+    assert.ok(
+      stderr.includes('[deprecation]'),
+      'deprecation warning must fire when consumer never declared tsx',
+    );
+  });
+
+  it('TR16: tsx declared but not installed → no project-local hit (fall through)', () => {
+    // Edge: consumer ships a package.json with `tsx` in devDependencies
+    // but skipped `npm install`. We shouldn't crash — fall through to
+    // PATH/bundled.
+    const projectRoot = makeProjectWithoutTsx();
+    // Patch package.json to declare tsx without installing it.
+    const pkgPath = path.join(projectRoot, 'package.json');
+    fs.writeFileSync(
+      pkgPath,
+      JSON.stringify({ name: 'no-tsx', devDependencies: { tsx: '*' } }),
+    );
+    const { result } = captureStderr(() =>
+      resolveTsx({
+        projectRoot,
+        env: {
+          PATH: '/nonexistent',
+          CLAUDE_AUTOPILOT_STATE_DIR: freshStateDir(),
+        },
+        platform: 'linux',
+      }),
+    );
+    assert.equal(result.source, 'bundled', 'declared-but-uninstalled should fall through to bundled');
   });
 });
 
