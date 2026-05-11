@@ -2,6 +2,58 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.8.0 — 2026-05-11
+
+### Changed
+- `tsx` resolution now prefers project-local installation, then `tsx` on
+  `$PATH`, then the bundled copy. The bundled `tsx` is scheduled for removal
+  in v8.0.0 — a once-per-day deprecation warning surfaces when falling back
+  to the bundled copy. Silence with `CLAUDE_AUTOPILOT_NO_TSX_DEPRECATION=1`.
+  Override resolution source with `CLAUDE_AUTOPILOT_TSX=bundled|project|path`
+  or the new `--tsx-source` CLI flag.
+- `@supabase/supabase-js` is now lazy-loaded only when invoking
+  `claude-autopilot dashboard upload`. Moved from `dependencies` to
+  `optionalDependencies` — default install footprint is unchanged in npm 10
+  (which installs optional deps), but `npm install --omit=optional` now
+  works for local-only usage. A new `omit-optional-smoke.yml` CI workflow
+  exercises this install path on every PR. **The `--omit=optional` guarantee
+  is verified for npm only**; pnpm/yarn behavior is best-effort and not
+  gated in CI for v7.8.0 (per spec amendment A8).
+
+### Removed (from published tarball)
+- `tests/snapshots/`, `scripts/snapshots/`, `scripts/autoregress.ts` —
+  dev-only. The `autoregress` CLI verb continues to work from the repo
+  itself, but the snapshot fixtures are no longer shipped to npm consumers.
+
+Published tarball file count drops by ~15 files (the snapshot fixtures and
+the autoregress harness); runtime behavior is unchanged for default local-only
+usage except for the bundled `tsx` deprecation warning.
+
+### Added
+- `--tsx-source <bundled|project|path>` CLI flag and `CLAUDE_AUTOPILOT_TSX`
+  env var for explicit resolution overrides (escape-hatch for users whose
+  project-local tsx is broken / incompatible).
+- `CLAUDE_AUTOPILOT_NO_TSX_DEPRECATION=1` env opt-out for the deprecation
+  warning (CI / log-hygiene).
+- `XDG_STATE_HOME` + `CLAUDE_AUTOPILOT_STATE_DIR` support for the warning
+  dedup state file (defaults to `~/.claude-autopilot/`).
+- `scripts/audit-supabase-imports.ts` — AST-based audit (TypeScript compiler
+  API) that fails CI if a static value-import of `@supabase/supabase-js`
+  appears outside `src/cli/dashboard/**`. Runs via `npm run audit:supabase`.
+- `.github/workflows/omit-optional-smoke.yml` — install-and-probe smoke
+  test for the `npm install --omit=optional` install path.
+- `src/cli/tsx-resolver.ts` + `src/cli/dashboard/missing-package.ts` (new
+  modules, fully unit-tested — see `tests/cli/tsx-resolver.test.ts`,
+  `tests/cli/dashboard/missing-package.test.ts`, and
+  `tests/cli/tsx-source-flag.test.ts`).
+
+### Spec
+- `docs/specs/v7.8.0-decouple-runtime-deps.md` — full spec with two folded
+  codex reviews (pass-1 portability + escape hatch; pass-2 amendments
+  A1-A8 covering ESM/CJS safety, CLI parser scope, PATH self-pointer,
+  AST audit, type-only imports, hand-rolled PATH lookup dropping the
+  `which` dep, XDG state dir, npm-only --omit=optional documentation).
+
 ## 7.7.0 (2026-05-11)
 
 **v7.7.0 — Rust scaffold support.** Minor release. Promotes Rust from

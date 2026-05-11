@@ -2,11 +2,20 @@
 //
 // Locates run dir at <homeDir>/runs/<runId>, calls uploadRun() directly,
 // and prints the result. Intended for resuming interrupted auto-uploads.
+//
+// v7.8.0: probes `@supabase/supabase-js` availability before any upload work.
+// Supabase is now an optionalDependency (so `npm install --omit=optional`
+// works for local-only users); if a user invokes a dashboard verb without
+// it installed, we surface an actionable install hint instead of a raw
+// `ERR_MODULE_NOT_FOUND`. Wired through `loadSupabaseOrInstallHint` so the
+// transitive-dep miss case is correctly distinguished (see
+// missing-package.ts).
 
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { readConfig, getConfigDir } from '../../dashboard/config.ts';
 import { uploadRun, type UploadOptions, type UploadResult } from '../../dashboard/upload/uploader.ts';
+import { loadSupabaseOrInstallHint } from './missing-package.ts';
 
 export interface ManualUploadOptions {
   runId: string;
@@ -24,6 +33,13 @@ export interface ManualUploadResult extends UploadResult {
 }
 
 export async function runDashboardUpload(opts: ManualUploadOptions): Promise<ManualUploadResult> {
+  // v7.8.0 — supabase is an optionalDependency. Probe availability before
+  // doing any upload work; if missing, surface the actionable install hint
+  // (Error message defined in missing-package.ts). Local-only users who
+  // installed with `npm install --omit=optional` will hit this on first
+  // attempted upload and know exactly how to fix it.
+  await loadSupabaseOrInstallHint();
+
   const cfg = await readConfig();
   if (!cfg) {
     if (!opts.silent) {

@@ -80,6 +80,37 @@ process.on('uncaughtException', err => {
 
 const args = process.argv.slice(2);
 
+// v7.8.0 — `--tsx-source <bundled|project|path>` resolution-override flag.
+// The launcher (bin/_launcher.js) already consumed this to pick the tsx
+// binary; here we validate the value, surface a clear error on bad input,
+// and strip the tokens from argv before subcommand dispatch so downstream
+// parsers don't choke on an unknown flag. See
+// docs/specs/v7.8.0-decouple-runtime-deps.md (amendment A2).
+const TSX_SOURCE_VALID = ['bundled', 'project', 'path'] as const;
+{
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i];
+    if (a === undefined) continue;
+    if (a === '--tsx-source' || a.startsWith('--tsx-source=')) {
+      const value = a.startsWith('--tsx-source=') ? a.slice('--tsx-source='.length) : args[i + 1];
+      if (!value || !(TSX_SOURCE_VALID as readonly string[]).includes(value)) {
+        process.stderr.write(
+          `\x1b[31m[claude-autopilot] Invalid --tsx-source value '${value ?? ''}'. ` +
+            `Expected ${TSX_SOURCE_VALID.join(', ')}.\x1b[0m\n`,
+        );
+        process.exit(1);
+      }
+      // Strip the consumed tokens from argv so subcommands don't see them.
+      if (a.startsWith('--tsx-source=')) {
+        args.splice(i, 1);
+      } else {
+        args.splice(i, 2);
+      }
+      i -= 1;
+    }
+  }
+}
+
 // Version flag — read package.json via the shared package-root helper. Works
 // under both source (src/cli/index.ts) and compiled (dist/src/cli/index.js)
 // layouts since findPackageRoot walks up to the canonical package root.

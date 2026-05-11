@@ -1,6 +1,6 @@
 {
   "name": "@delegance/claude-autopilot",
-  "version": "7.7.0",
+  "version": "7.8.0",
   "type": "module",
   "publishConfig": {
     "tag": "next"
@@ -51,10 +51,7 @@
     "presets/",
     "skills/",
     "scripts/test-runner.mjs",
-    "scripts/autoregress.ts",
     "scripts/post-build-rewrite-imports.mjs",
-    "scripts/snapshots/",
-    "tests/snapshots/",
     "CHANGELOG.md",
     "README.md"
   ],
@@ -66,12 +63,12 @@
     "build": "tsc -p tsconfig.build.json && node scripts/post-build-rewrite-imports.mjs",
     "prepublishOnly": "npm run build && npm test",
     "autoregress": "tsx scripts/autoregress.ts",
+    "audit:supabase": "tsx scripts/audit-supabase-imports.ts",
     "db:start": "bash scripts/db/start-supabase.sh",
     "db:stop": "bash scripts/db/stop-supabase.sh",
     "db:reset": "bash scripts/db/reset-supabase.sh"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.97.0",
     "ajv": "^8",
     "ajv-formats": "^3.0.1",
     "canonicalize": "^3.0.0",
@@ -87,6 +84,7 @@
     "@anthropic-ai/sdk": "^0.91.1",
     "@google/generative-ai": "^0.24.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@supabase/supabase-js": "^2.97.0",
     "openai": ">=4"
   },
   "devDependencies": {

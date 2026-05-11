@@ -368,7 +368,17 @@ export const GLOBAL_FLAGS_BLOCK = `Global flags:
   --engine               [v7.0 deprecated no-op] engine is always on; flag emits a warning
                          v7.0 removed the engine-off opt-out flag and code path entirely.
                          CLAUDE_AUTOPILOT_ENGINE=off is now ignored (warns once per process)
-                         instead of disabling the engine. See docs/v7/breaking-changes.md.`;
+                         instead of disabling the engine. See docs/v7/breaking-changes.md.
+
+Resolution overrides (v7.8.0):
+  --tsx-source <bundled|project|path>
+                         Override how the dev launcher picks the tsx binary used
+                         to run .ts files. Default precedence is project-local
+                         → PATH → bundled (with deprecation warning on the
+                         bundled fallthrough). Env equivalent: CLAUDE_AUTOPILOT_TSX.
+                         Silence the bundled-fallthrough warning with
+                         CLAUDE_AUTOPILOT_NO_TSX_DEPRECATION=1. \`tsx\` will be
+                         removed from runtime deps in v8.0.0.`;
 
 /** Build the full two-level help text. Returned as a string so tests can assert against it without spawning. */
 export function buildHelpText(): string {

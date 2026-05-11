@@ -23,12 +23,145 @@ function resolveEntry() {
   return null;
 }
 
+// v7.8.0 — three-tier tsx resolution (project-local → PATH → bundled) with
+// a once-per-day deprecation warning on the bundled fallthrough. This is a
+// JS port of src/cli/tsx-resolver.ts (which remains the testable source of
+// truth used by autoregress, --tsx-source flag handling, and other call
+// sites). The launcher can't import the TS resolver directly because it
+// runs BEFORE tsx is available, so the two implementations are kept in
+// sync by hand. See docs/specs/v7.8.0-decouple-runtime-deps.md.
+//
+// Escape hatches:
+//   --tsx-source=<bundled|project|path>     (parsed from argv, then stripped)
+//   CLAUDE_AUTOPILOT_TSX=<bundled|project|path>
+//   CLAUDE_AUTOPILOT_NO_TSX_DEPRECATION=1   (silences bundled-fallthrough warning)
+const TSX_VALID_SOURCES = ['bundled', 'project', 'path'];
+
+function readTsxFlagOverride(argv) {
+  // Find --tsx-source=foo or --tsx-source foo without disturbing other argv
+  // (we surface "invalid value" diagnostics from the CLI's own arg parser
+  // when it sees the still-present flag — only strip and use it here).
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (!a) continue;
+    if (a.startsWith('--tsx-source=')) {
+      const v = a.slice('--tsx-source='.length);
+      return TSX_VALID_SOURCES.includes(v) ? v : null;
+    }
+    if (a === '--tsx-source' && i + 1 < argv.length) {
+      const v = argv[i + 1];
+      return TSX_VALID_SOURCES.includes(v) ? v : null;
+    }
+  }
+  return null;
+}
+
+function bundledTsxPath() {
+  // Our own bundled tsx — relative to the package root (two levels up from bin/).
+  const p = path.resolve(__dirname, '..', 'node_modules', '.bin', 'tsx');
+  return fs.existsSync(p) ? p : null;
+}
+function projectLocalTsxPath() {
+  // Consumer project — when installed as a dep, npm hoists peer bins to
+  // <consumer>/node_modules/.bin/tsx.
+  const p = path.resolve(__dirname, '..', '..', '..', '.bin', 'tsx');
+  return fs.existsSync(p) ? p : null;
+}
+function pathTsxPath() {
+  const PATH = process.env.PATH || process.env.Path || '';
+  if (!PATH) return null;
+  const isWin = process.platform === 'win32';
+  const sep = isWin ? ';' : ':';
+  const exts = isWin ? (process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM').split(';') : [''];
+  const bundled = bundledTsxPath();
+  const bundledDir = bundled ? path.dirname(bundled) : null;
+  for (const dir of PATH.split(sep)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const cand = path.join(dir, `tsx${ext}`);
+      if (fs.existsSync(cand)) {
+        // A3 self-pointer: if PATH-resolved bin lives inside our bundled
+        // node_modules, treat it as bundled so the deprecation warning
+        // still fires.
+        if (bundledDir && path.resolve(cand).startsWith(path.resolve(bundledDir))) {
+          return null;
+        }
+        return cand;
+      }
+    }
+  }
+  return null;
+}
+
+function stateDir() {
+  if (process.env.CLAUDE_AUTOPILOT_STATE_DIR) return process.env.CLAUDE_AUTOPILOT_STATE_DIR;
+  if (process.platform !== 'win32' && process.env.XDG_STATE_HOME) {
+    return path.join(process.env.XDG_STATE_HOME, 'claude-autopilot');
+  }
+  return path.join(os.homedir(), '.claude-autopilot');
+}
+
+const TSX_DEPRECATION_MESSAGE =
+  '\n' +
+  '[deprecation] @delegance/claude-autopilot is using its bundled `tsx` to run\n' +
+  '              your TypeScript scripts. In v8.0.0, `tsx` will be removed from\n' +
+  '              runtime deps and you will need to install it yourself:\n' +
+  '\n' +
+  '                  npm install -D tsx\n' +
+  '\n' +
+  '              To silence this warning now and prepare for v8.0.0:\n' +
+  '                1. Add `tsx` to your project devDependencies, OR\n' +
+  '                2. Set `CLAUDE_AUTOPILOT_NO_TSX_DEPRECATION=1` in your env.\n' +
+  '\n' +
+  '              Override resolution: `CLAUDE_AUTOPILOT_TSX=bundled|project|path`\n' +
+  '              See docs/specs/v7.8.0-decouple-runtime-deps.md for details.\n';
+
+function emitTsxDeprecationWarningSafe() {
+  if (process.env.CLAUDE_AUTOPILOT_NO_TSX_DEPRECATION === '1') return;
+  const today = new Date().toISOString().slice(0, 10);
+  const dedupPath = path.join(stateDir(), '.tsx-deprecation-shown');
+  try {
+    if (fs.existsSync(dedupPath)) {
+      const lastShown = fs.readFileSync(dedupPath, 'utf8').trim();
+      if (lastShown === today) return;
+    }
+  } catch { /* unreadable — fall through and print */ }
+  try {
+    fs.mkdirSync(path.dirname(dedupPath), { recursive: true });
+    fs.writeFileSync(dedupPath, today);
+  } catch { /* non-fatal */ }
+  process.stderr.write(TSX_DEPRECATION_MESSAGE);
+}
+
+/**
+ * Resolve a tsx executable using the v7.8.0 precedence ladder. Returns an
+ * absolute path. Honors --tsx-source / CLAUDE_AUTOPILOT_TSX overrides, with
+ * --tsx-source taking priority. On bundled fallthrough (no override), emits
+ * the once-per-day deprecation warning unless silenced.
+ */
 function findTsx() {
-  const own = path.resolve(__dirname, '..', 'node_modules', '.bin', 'tsx');
-  if (fs.existsSync(own)) return own;
-  const consumer = path.resolve(__dirname, '..', '..', '..', '.bin', 'tsx');
-  if (fs.existsSync(consumer)) return consumer;
-  return 'tsx';
+  const flagOverride = readTsxFlagOverride(process.argv.slice(2));
+  const envOverride = process.env.CLAUDE_AUTOPILOT_TSX;
+  const override = flagOverride
+    || (TSX_VALID_SOURCES.includes(envOverride) ? envOverride : null);
+
+  if (override === 'project') {
+    return projectLocalTsxPath() || 'tsx';
+  }
+  if (override === 'path') {
+    return pathTsxPath() || 'tsx';
+  }
+  if (override === 'bundled') {
+    return bundledTsxPath() || 'tsx';
+  }
+
+  // Default precedence: project → PATH → bundled (with deprecation warning).
+  const project = projectLocalTsxPath();
+  if (project) return project;
+  const fromPath = pathTsxPath();
+  if (fromPath) return fromPath;
+  emitTsxDeprecationWarningSafe();
+  return bundledTsxPath() || 'tsx';
 }
 
 // v7.1.7 — Per-calendar-day deprecation dedup, keyed in the user's home dir.
