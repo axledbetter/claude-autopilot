@@ -2,6 +2,51 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.2.1 (2026-05-10)
+
+**v7.2.1 — v8 spec codex pass-2 amendment.** Docs-only PR. Folds
+the codex pass on the merged v8 spec (PR #152) into a new
+"Codex pass 2 amendment" section. 3 CRITICAL + 6 WARNING + 1 NOTE
+all surfaced real productization gaps; all locked into the spec
+rather than left as open questions.
+
+**Key trust-model decisions now locked in the spec** (were
+open-questions before):
+
+* **C1 — Policy pinning.** `.autopilot/policy.yaml` loaded only from
+  default branch at run-start SHA; frozen for the run; daemon's own
+  PRs cannot mutate active permissions. `.autopilot/**`,
+  `.github/workflows/**`, lockfiles in default `protected_paths`.
+* **C2 — Auth scope.** Default to fine-grained PAT (issues +
+  PRs + branch-prefixed contents-write only); `gh` CLI labeled
+  "unsafe/dev mode"; hosted uses per-org GitHub App.
+* **C3 — Sandboxed phase execution.** Per-phase Docker/Podman
+  container locally; per-run isolated worker hosted; credential
+  mounts blocked; egress allowlist (GitHub + Anthropic + OpenAI +
+  package registries).
+* **W3 — Auto-merge.** Requires distinct `automerge.*` policy
+  block with `required_checks`, `require_codeowner_approval`,
+  `max_risk_level`, `allowed_paths`, `rollback_plan_required`.
+* **W4 — Phase-level idempotency.** Operation IDs + side-effect
+  markers; restart reconciles GitHub state before resuming.
+* **N1 — OS keychain** for local secrets (macOS Keychain / Linux
+  Secret Service / Windows Credential Manager via `keytar`);
+  fallback to `~/.claude-autopilot/keys.json` 0600 with warning.
+
+**Updated stabilization criteria** add:
+* Sandbox-escape attempt suite (planted-payload tests verify
+  malicious `npm test` cannot read `~/.ssh/`, `~/.aws/`, host
+  `gh` token).
+* Phase-level idempotency suite (kill daemon mid-phase × 100;
+  restart produces zero duplicate side-effects).
+
+3 smaller open questions remain for v8.0-beta lock (container
+runtime fallback, hosted worker latency, sandbox network
+allowlist customization).
+
+No code change; bumping to 7.2.1 to keep CHANGELOG/version in
+lockstep with master HEAD.
+
 ## 7.2.0 (2026-05-10)
 
 **v7.2.0 — `claude-autopilot scaffold --from-spec <path>`.** Closes
