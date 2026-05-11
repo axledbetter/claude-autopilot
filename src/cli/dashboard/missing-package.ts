@@ -12,8 +12,20 @@
 // so local-only `npm install --omit=optional` users can skip it.
 
 export interface MissingPackageOpts {
-  /** Set to true to allow CommonJS-style "Cannot find module" matches in
-   *  addition to ESM-style "Cannot find package". Default false (ESM only). */
+  /**
+   * Whether to also match CommonJS-style `Cannot find module '<pkg>'`
+   * messages in addition to the ESM-style `Cannot find package '<pkg>'`.
+   *
+   * Default **true**. Node's error format depends on the loader path
+   * (ESM vs CJS) — `import()` of a missing package can surface either
+   * depending on the consumer's module type and how the dep is loaded
+   * by the runtime. Accepting both is the safer default for our
+   * install-hint surface: a false negative here means the user sees a
+   * raw `ERR_MODULE_NOT_FOUND` instead of the actionable hint.
+   *
+   * Set to `false` to require ESM form specifically (used by the
+   * standalone `extractMissingSpecifier` helper in some tests).
+   */
   acceptCjsForm?: boolean;
 }
 
