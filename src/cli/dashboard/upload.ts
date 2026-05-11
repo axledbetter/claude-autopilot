@@ -14,7 +14,15 @@
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { readConfig, getConfigDir } from '../../dashboard/config.ts';
-import { uploadRun, type UploadOptions, type UploadResult } from '../../dashboard/upload/uploader.ts';
+// IMPORTANT: `uploader.ts` is imported DYNAMICALLY inside
+// `runDashboardUpload`, AFTER the supabase probe. A static value-import
+// here would trigger module evaluation BEFORE the probe runs — and if
+// `uploader.ts` (or anything it transitively imports) ever statically
+// imports `@supabase/supabase-js`, ERR_MODULE_NOT_FOUND would bypass the
+// install-hint and surface a raw Node error. Type-only imports are erased
+// at compile-time, so importing `UploadOptions` / `UploadResult` as types
+// is safe.
+import type { UploadOptions, UploadResult } from '../../dashboard/upload/uploader.ts';
 import { loadSupabaseOrInstallHint } from './missing-package.ts';
 
 export interface ManualUploadOptions {
@@ -65,6 +73,11 @@ export async function runDashboardUpload(opts: ManualUploadOptions): Promise<Man
     ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}),
     ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
   };
+  // Dynamic import — evaluated AFTER the supabase probe at the top of
+  // this function. Keeps the install-hint path correct even if any
+  // future change inside `uploader.ts` (or its transitive imports)
+  // adds a static value-import of `@supabase/supabase-js`.
+  const { uploadRun } = await import('../../dashboard/upload/uploader.ts');
   const res = await uploadRun(opts.runId, runDir, uploadOpts);
 
   if (!opts.silent) {
