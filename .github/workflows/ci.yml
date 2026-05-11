@@ -45,6 +45,14 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      # v7.8.0 — AST audit blocks any static value-import of
+      # `@supabase/supabase-js` outside the dashboard allowlist. supabase
+      # is an optionalDependency; a regression here would break local-only
+      # users who install with `npm install --omit=optional`. Run BEFORE
+      # tests so a clear failure shows up first.
+      - name: Audit supabase imports
+        run: npm run audit:supabase
+
       - name: Test
         run: node scripts/test-runner.mjs
 
