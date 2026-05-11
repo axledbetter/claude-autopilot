@@ -2,6 +2,28 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.1.9 (2026-05-10)
+
+**v7.1.9 — build fix + Generic-stack next-steps hint.** Two
+micro-fixes from the v7.1.8 benchmark re-run.
+
+* **`canonicalize` declared at root** (`package.json`). The CLI's
+  `src/dashboard/upload/canonical.ts` (RFC 8785 / JCS parity copy
+  of `apps/web/lib/upload/canonical.ts`) imports `canonicalize`
+  but the module was only declared in `apps/web/package.json`.
+  Root build hit `TS2307: Cannot find module 'canonicalize'` even
+  though the package was actually installed via npm hoisting. Now
+  declared at root — `npm run build` from a fresh clone is clean.
+* **Generic+low-confidence next-steps hint** (`src/cli/setup.ts`).
+  The v7.1.8 benchmark re-run on a truly blank repo reported
+  "Detected: Generic (low confidence)" with no actionable next
+  step. Setup now surfaces a one-liner:
+  `npm init -y` → `npx claude-autopilot setup --force`. Skipped
+  silently on high-confidence detections (the common case).
+
+2 new tests (`tests/setup.test.ts`); 1546 → 1548 CLI tests; tsc
+clean; build clean. Version 7.1.8 → 7.1.9.
+
 ## 7.1.8 (2026-05-10)
 
 **v7.1.8 — blank-repo benchmark re-run on v7.1.7.** Docs-only PR.

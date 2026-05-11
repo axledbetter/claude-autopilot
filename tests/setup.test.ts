@@ -116,4 +116,48 @@ describe('runSetup', () => {
     assert.equal(claudeMd, '# my own claude doc, do not touch\n', 'existing CLAUDE.md preserved');
     fs.rmSync(dir, { recursive: true });
   });
+
+  // v7.1.9 — Generic+low-confidence detection prompt (benchmark-driven)
+  it('emits "scaffold a stack file first" hint on Generic+low-confidence detection', async () => {
+    const dir = makeTmp();
+    // No package.json, go.mod, etc. → detector returns generic preset.
+    const presetDir = path.join(dir, 'node_modules', '@delegance', 'claude-autopilot', 'presets', 'generic');
+    fs.mkdirSync(presetDir, { recursive: true });
+    fs.writeFileSync(path.join(presetDir, 'guardrail.config.yaml'), 'configVersion: 1\n');
+
+    // Capture stdout to verify the new hint appears.
+    const lines: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => { lines.push(args.join(' ')); };
+    try {
+      await runSetup({ cwd: dir, skipHook: true });
+    } finally {
+      console.log = origLog;
+    }
+    const output = lines.join('\n');
+    assert.match(output, /Stack detection: Generic \(low confidence\)/i, 'surfaces detection state');
+    assert.match(output, /npm init -y/, 'mentions npm init shortcut');
+    assert.match(output, /setup --force/, 'mentions re-running setup');
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  it('does NOT emit Generic-stack hint when detection is high-confidence', async () => {
+    const dir = makeTmp();
+    fs.writeFileSync(path.join(dir, 'go.mod'), 'module ex.com/x\ngo 1.22\n');
+    const presetDir = path.join(dir, 'node_modules', '@delegance', 'claude-autopilot', 'presets', 'go');
+    fs.mkdirSync(presetDir, { recursive: true });
+    fs.writeFileSync(path.join(presetDir, 'guardrail.config.yaml'), 'configVersion: 1\n');
+    const lines: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => { lines.push(args.join(' ')); };
+    try {
+      await runSetup({ cwd: dir, skipHook: true });
+    } finally {
+      console.log = origLog;
+    }
+    const output = lines.join('\n');
+    assert.equal(output.includes('Stack detection: Generic (low confidence)'), false,
+      'hint does NOT appear for high-confidence Go detection');
+    fs.rmSync(dir, { recursive: true });
+  });
 });
