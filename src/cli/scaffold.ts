@@ -35,6 +35,7 @@ import * as path from 'node:path';
 
 import { scaffoldNode, buildStarterPackageJson } from './scaffold/node.ts';
 import { scaffoldPython } from './scaffold/python.ts';
+import { scaffoldGo } from './scaffold/go.ts';
 import type {
   ParsedFiles,
   ScaffoldOptions,
@@ -52,12 +53,11 @@ const DIM  = (t: string) => `\x1b[2m${t}\x1b[0m`;
 export { buildStarterPackageJson };
 export type { ScaffoldOptions, ScaffoldResult, ParsedFiles, Stack };
 
-/** Valid `--stack` argument values. v7.5+ adds 'go', 'rust', 'ruby'. */
-export const SUPPORTED_STACKS: readonly Stack[] = ['node', 'python', 'fastapi'];
+/** Valid `--stack` argument values. v7.6 adds 'go'; v7.7+ will add 'rust'. */
+export const SUPPORTED_STACKS: readonly Stack[] = ['node', 'python', 'fastapi', 'go'];
 
 /** Stacks we DETECT-but-don't-support yet. Mapped to spec exit-3 messages. */
 export const UNSUPPORTED_STACK_FILES: Record<UnsupportedStack, string> = {
-  go: 'go.mod',
   rust: 'Cargo.toml',
   ruby: 'Gemfile',
 };
@@ -239,9 +239,23 @@ export function detectStack(parsed: ParsedFiles, explicit?: Stack): StackDetecti
 
   const hasPythonMarker = has('pyproject.toml') || has('requirements.txt');
   const hasNodeMarker = has('package.json');
+  // v7.6 — Go signal: `go.mod` OR a top-level / cmd-shaped `main.go`.
+  const hasGoMod = has('go.mod');
+  const hasMainGo = paths.some(p =>
+    p === 'main.go' || /^cmd\/[^/]+\/main\.go$/.test(p),
+  );
+  const hasGoMarker = hasGoMod || hasMainGo;
 
-  // Polyglot guard (codex W3) — Node + Python without --stack.
-  if (hasNodeMarker && hasPythonMarker) {
+  // v7.6 — Polyglot detection scans ALL supported stack signals at once.
+  // We collect each present stack and exit 3 if more than one supported
+  // stack is detected (e.g. Node + Go, Python + Go, Node + Python + Go).
+  // FastAPI is collapsed into Python for the polyglot count (they share
+  // pyproject.toml — not a real conflict).
+  const supportedSignals: string[] = [];
+  if (hasNodeMarker) supportedSignals.push('node');
+  if (hasPythonMarker) supportedSignals.push('python');
+  if (hasGoMarker) supportedSignals.push('go');
+  if (supportedSignals.length > 1) {
     return {
       kind: 'polyglot',
       message: 'polyglot spec — pass --stack to disambiguate',
@@ -262,21 +276,24 @@ export function detectStack(parsed: ParsedFiles, explicit?: Stack): StackDetecti
   // Step 3: Python.
   if (hasPythonMarker) return { kind: 'resolved', stack: 'python' };
 
-  // Step 4: Node.
+  // Step 4: Go (v7.6).
+  if (hasGoMarker) return { kind: 'resolved', stack: 'go' };
+
+  // Step 5: Node.
   if (hasNodeMarker) return { kind: 'resolved', stack: 'node' };
 
-  // Step 5: detected-but-unsupported (codex W2).
+  // Step 6: detected-but-unsupported (codex W2). Rust + Ruby still here.
   for (const [stack, file] of Object.entries(UNSUPPORTED_STACK_FILES) as [UnsupportedStack, string][]) {
     if (has(file)) {
       return {
         kind: 'unsupported',
         stack,
-        message: `${stack} detected but not supported until v7.5`,
+        message: `${stack} detected but not supported until v7.7`,
       };
     }
   }
 
-  // Step 6: fallback — Node ESM (preserves v7.2.0 default for ambiguous
+  // Step 7: fallback — Node ESM (preserves v7.2.0 default for ambiguous
   // specs that listed only paths with no root-marker file).
   return { kind: 'resolved', stack: 'node' };
 }
@@ -291,16 +308,17 @@ export function printStackList(): void {
   console.log('  node     Node 22 ESM (package.json + tsconfig.json)');
   console.log('  python   Python 3.11+ (pyproject.toml + hatchling + pytest)');
   console.log('  fastapi  Python + FastAPI (auto-includes fastapi + uvicorn[standard])');
+  console.log('  go       Go 1.22 (go.mod + main.go + main_test.go)');
   console.log('');
   console.log(BOLD('Auto-detected from `## Files`:'));
   console.log('  node     when `package.json` is listed');
   console.log('  python   when `pyproject.toml` or `requirements.txt` is listed');
   console.log('  fastapi  when `main.py` is listed AND a bullet mentions `fastapi`');
+  console.log('  go       when `go.mod` or `main.go` is listed');
   console.log('');
   console.log(BOLD('Recognized-but-unsupported (exit 3):'));
-  console.log('  go       v7.5  (would detect via go.mod)');
-  console.log('  rust     v7.5  (would detect via Cargo.toml)');
-  console.log('  ruby     v7.5+ (would detect via Gemfile)');
+  console.log('  rust     v7.7  (would detect via Cargo.toml)');
+  console.log('  ruby     v7.7+ (would detect via Gemfile)');
   console.log('');
 }
 
@@ -342,37 +360,51 @@ export async function runScaffold(opts: ScaffoldOptions): Promise<ScaffoldResult
 
   console.log(`\n${BOLD('[scaffold]')} ${DIM(specAbs)} ${DIM(`(stack: ${stack})`)}\n`);
 
-  // codex W5 — when --stack <python|fastapi> is explicit and the spec
-  // ALSO lists Node files, warn + filter them out so the Python
-  // scaffolder doesn't try to touch them.
+  // codex W5 — when an explicit --stack is passed against a polyglot spec,
+  // strip the OTHER stack's marker files so the chosen scaffolder doesn't
+  // touch them as empty placeholders. v7.6 extends this to Go.
   let ignoredOtherStackFiles: string[] | undefined;
   let parsedForStack = parsed;
+  const NODE_FILES = new Set(['package.json', 'tsconfig.json']);
+  const PYTHON_FILES = new Set(['pyproject.toml', 'requirements.txt']);
+  const GO_FILES = new Set(['go.mod']);
   if (opts.stack && (stack === 'python' || stack === 'fastapi')) {
-    const NODE_FILES = new Set(['package.json', 'tsconfig.json']);
-    const ignored = parsed.paths.filter(p => NODE_FILES.has(p));
+    const toIgnore = new Set([...NODE_FILES, ...GO_FILES]);
+    const ignored = parsed.paths.filter(p => toIgnore.has(p));
     if (ignored.length > 0) {
       ignoredOtherStackFiles = ignored;
       console.log(
-        `  ${DIM(`! ignoring Node files (--stack ${stack}): ${ignored.join(', ')}`)}`,
+        `  ${DIM(`! ignoring non-Python files (--stack ${stack}): ${ignored.join(', ')}`)}`,
       );
       parsedForStack = {
         ...parsed,
-        paths: parsed.paths.filter(p => !NODE_FILES.has(p)),
+        paths: parsed.paths.filter(p => !toIgnore.has(p)),
       };
     }
   } else if (opts.stack === 'node') {
-    // Symmetric: when --stack node is forced and the spec also lists
-    // Python markers, drop them so we don't touch them as placeholders.
-    const PYTHON_FILES = new Set(['pyproject.toml', 'requirements.txt']);
-    const ignored = parsed.paths.filter(p => PYTHON_FILES.has(p));
+    const toIgnore = new Set([...PYTHON_FILES, ...GO_FILES]);
+    const ignored = parsed.paths.filter(p => toIgnore.has(p));
     if (ignored.length > 0) {
       ignoredOtherStackFiles = ignored;
       console.log(
-        `  ${DIM(`! ignoring Python files (--stack node): ${ignored.join(', ')}`)}`,
+        `  ${DIM(`! ignoring non-Node files (--stack node): ${ignored.join(', ')}`)}`,
       );
       parsedForStack = {
         ...parsed,
-        paths: parsed.paths.filter(p => !PYTHON_FILES.has(p)),
+        paths: parsed.paths.filter(p => !toIgnore.has(p)),
+      };
+    }
+  } else if (opts.stack === 'go') {
+    const toIgnore = new Set([...NODE_FILES, ...PYTHON_FILES]);
+    const ignored = parsed.paths.filter(p => toIgnore.has(p));
+    if (ignored.length > 0) {
+      ignoredOtherStackFiles = ignored;
+      console.log(
+        `  ${DIM(`! ignoring non-Go files (--stack go): ${ignored.join(', ')}`)}`,
+      );
+      parsedForStack = {
+        ...parsed,
+        paths: parsed.paths.filter(p => !toIgnore.has(p)),
       };
     }
   }
@@ -383,6 +415,8 @@ export async function runScaffold(opts: ScaffoldOptions): Promise<ScaffoldResult
     result = await scaffoldPython(ctx, { isFastapi: false });
   } else if (stack === 'fastapi') {
     result = await scaffoldPython(ctx, { isFastapi: true });
+  } else if (stack === 'go') {
+    result = await scaffoldGo(ctx);
   } else {
     result = await scaffoldNode(ctx);
   }

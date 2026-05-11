@@ -3,15 +3,15 @@
 // from it without creating a circular dependency back to the public entry
 // module.
 
-/** Supported `--stack` values. v7.5+ will add 'go', 'rust', 'ruby'. */
-export type Stack = 'node' | 'python' | 'fastapi';
+/** Supported `--stack` values. v7.6 adds 'go'; v7.7+ will add 'rust'. */
+export type Stack = 'node' | 'python' | 'fastapi' | 'go';
 
 /**
  * Stacks we can DETECT but cannot scaffold yet. Detection still warns +
- * exits 3 so the operator gets a clear "v7.5" diagnostic instead of a
+ * exits 3 so the operator gets a clear "v7.7" diagnostic instead of a
  * silent fallback to Node, which would generate a wrong-language skeleton.
  */
-export type UnsupportedStack = 'go' | 'rust' | 'ruby';
+export type UnsupportedStack = 'rust' | 'ruby';
 
 export interface ParsedFiles {
   /** Raw paths extracted from the `## Files` section bullets. */
