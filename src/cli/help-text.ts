@@ -32,7 +32,7 @@ export const HELP_GROUPS: HelpGroup[] = [
     verbs: [
       { verb: 'init', summary: 'Scaffold guardrail.config.yaml + auto-detect migrate stack (writes .autopilot/stack.md)' },
       { verb: 'setup', summary: 'Auto-detect stack, write config, install pre-push hook' },
-      { verb: 'scaffold', summary: 'Scaffold project skeleton from a spec markdown (--from-spec <path> [--stack node|python|fastapi|go])' },
+      { verb: 'scaffold', summary: 'Scaffold project skeleton from a spec markdown (--from-spec <path> [--stack node|python|fastapi|go|rust])' },
       { verb: 'autopilot', summary: 'Multi-phase orchestrator — run scan → spec → plan → implement under one runId (v6.2.0)' },
       { verb: 'brainstorm', summary: 'Pipeline entry point (Claude Code skill — see /brainstorm)' },
       { verb: 'spec', summary: 'Spec-writing pointer (Claude Code skill — see /brainstorm)' },

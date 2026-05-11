@@ -2,6 +2,55 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.7.0 (2026-05-11)
+
+**v7.7.0 — Rust scaffold support.** Minor release. Promotes Rust from
+"detected-but-unsupported" (exit 3 in v7.4–v7.6) to a first-class
+scaffold target, matching the Node + Python + FastAPI + Go shape.
+
+**New:** `claude-autopilot scaffold --from-spec <spec.md> --stack rust`
+(or auto-detected when the spec's `## Files` section lists `Cargo.toml`,
+`src/main.rs`, or `src/lib.rs`).
+
+**Lib-vs-bin fork.** Rust adds a fork the Go scaffolder doesn't need:
+
+- spec lists ONLY `src/lib.rs` (no main.rs) → **library crate**
+  (`src/lib.rs` with a public `hello()` + inline `#[cfg(test)] mod tests`,
+  Cargo.lock added to `.gitignore`)
+- spec lists `src/main.rs` (with or without lib.rs) → **binary crate**
+  (`src/main.rs` with `println!` + `tests/integration_test.rs` smoke
+  test, Cargo.lock NOT in `.gitignore`)
+- spec lists BOTH → **mixed mode** (both targets generated; Cargo.lock
+  excluded since the binary target wins per Cargo's documented convention)
+- spec hints neither → defaults to binary (matches `cargo init` default)
+
+**Cargo.lock heuristic.** Library-only crates omit `Cargo.lock` from the
+commit per Cargo docs; binary + mixed crates commit it. The Rust
+scaffolder's `.gitignore` augmentation reflects this — `target/` is
+always added; `Cargo.lock` is added only when the spec resolves to
+library-only.
+
+**Crate name normalization.** Cargo identifiers are `[a-z0-9_]` only and
+must not start with a digit. The scaffolder lowercases `basename(cwd)`,
+replaces any non-allowed char with `_`, collapses underscore runs, and
+prefixes `_` when the result starts with a digit. Examples: `my-pkg-2`
+→ `my_pkg_2`, `2cool` → `_2cool`, `My App` → `my_app`, `foo.bar` →
+`foo_bar`.
+
+**Never overwrites.** `Cargo.toml`, `src/main.rs`, `src/lib.rs`, and
+`tests/integration_test.rs` are preserved if they already exist — matches
+the Go + Python scaffolder pattern.
+
+**Polyglot detection.** `detectStack()` now includes Rust signals
+(`Cargo.toml` / `src/main.rs` / `src/lib.rs`) in the polyglot count. So
+e.g. `package.json` + `Cargo.toml` together correctly fail-loud with
+`polyglot spec — pass --stack to disambiguate` instead of silently
+picking one.
+
+**`--list-stacks`** now shows Rust under Supported and drops it from
+Recognized-but-unsupported. Ruby remains the lone detection-only stack
+(would detect via `Gemfile`).
+
 ## 7.6.0 (2026-05-10)
 
 **v7.6.0 — Go scaffold support.** Minor release. Promotes Go from

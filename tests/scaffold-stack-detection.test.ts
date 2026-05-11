@@ -100,16 +100,35 @@ describe('detectStack — precedence ladder', () => {
     if (result.kind === 'resolved') assert.equal(result.stack, 'node');
   });
 
-  it('still flags Rust (Cargo.toml) and Ruby (Gemfile) as detected-but-unsupported (Go was promoted in v7.6)', () => {
+  it('classifies a Rust spec (Cargo.toml) as rust (v7.7 — was unsupported in v7.4-v7.6)', () => {
     const rustParsed = parseSpecFiles(RUST_SPEC)!;
     const rustResult = detectStack(rustParsed);
-    assert.equal(rustResult.kind, 'unsupported');
-    if (rustResult.kind === 'unsupported') assert.equal(rustResult.stack, 'rust');
+    assert.equal(rustResult.kind, 'resolved');
+    if (rustResult.kind === 'resolved') assert.equal(rustResult.stack, 'rust');
+  });
 
+  it('still flags Ruby (Gemfile) as detected-but-unsupported (Rust + Go promoted in v7.6/v7.7)', () => {
     const rubyParsed = parseSpecFiles(RUBY_SPEC)!;
     const rubyResult = detectStack(rubyParsed);
     assert.equal(rubyResult.kind, 'unsupported');
     if (rubyResult.kind === 'unsupported') assert.equal(rubyResult.stack, 'ruby');
+  });
+
+  it('v7.7 — lone Cargo.toml detects as rust (polyglot-aware: single supported signal)', () => {
+    const parsed = parseSpecFiles(`## Files\n\n* \`Cargo.toml\` — crate def\n`)!;
+    const result = detectStack(parsed);
+    assert.equal(result.kind, 'resolved');
+    if (result.kind === 'resolved') assert.equal(result.stack, 'rust');
+  });
+
+  it('v7.7 — Cargo.toml + package.json without --stack → polyglot exit 3', () => {
+    const md = `## Files\n\n* \`Cargo.toml\` — rust side\n* \`package.json\` — node side\n`;
+    const parsed = parseSpecFiles(md)!;
+    const result = detectStack(parsed);
+    assert.equal(result.kind, 'polyglot');
+    if (result.kind === 'polyglot') {
+      assert.match(result.message, /polyglot spec — pass --stack to disambiguate/);
+    }
   });
 });
 
@@ -121,8 +140,8 @@ describe('--stack override', () => {
     if (result.kind === 'resolved') assert.equal(result.stack, 'python');
   });
 
-  it('SUPPORTED_STACKS lists node + python + fastapi + go (v7.6)', () => {
-    assert.deepEqual([...SUPPORTED_STACKS].sort(), ['fastapi', 'go', 'node', 'python']);
+  it('SUPPORTED_STACKS lists node + python + fastapi + go + rust (v7.7)', () => {
+    assert.deepEqual([...SUPPORTED_STACKS].sort(), ['fastapi', 'go', 'node', 'python', 'rust']);
   });
 });
 
@@ -159,12 +178,13 @@ describe('--list-stacks output', () => {
     assert.match(joined, /\bpython\b.*Python 3\.11/);
     assert.match(joined, /\bfastapi\b.*FastAPI/);
     assert.match(joined, /\bgo\b.*Go 1\.22/);
+    assert.match(joined, /\brust\b.*Rust 2021/);
     // Auto-detected section.
     assert.match(joined, /Auto-detected from `## Files`/);
     // Recognized-but-unsupported section.
     assert.match(joined, /Recognized-but-unsupported \(exit 3\)/);
-    assert.match(joined, /\brust\b.*v7\.7/);
-    assert.match(joined, /\bruby\b.*v7\.7/);
+    // v7.7 — only Ruby remains unsupported.
+    assert.match(joined, /\bruby\b.*v7\.8/);
   });
 });
 
@@ -193,8 +213,8 @@ describe('CLI — scaffold flag handling', () => {
     const r = runCli(['scaffold', '--from-spec', specPath, '--stack', 'erlang'], dir);
     assert.equal(r.status, 3, `expected exit 3, got ${r.status}\nstderr: ${r.stderr}`);
     assert.match(r.stderr, /--stack "erlang" not recognized/);
-    // v7.6 — list now includes go.
-    assert.match(r.stderr, /supported: node, python, fastapi, go/);
+    // v7.7 — list now includes go + rust.
+    assert.match(r.stderr, /supported: node, python, fastapi, go, rust/);
     fs.rmSync(dir, { recursive: true });
   });
 
