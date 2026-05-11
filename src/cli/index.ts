@@ -203,7 +203,7 @@ These are aliases for the flat subcommands; they still work without the 'advance
 // `run resume` form is handled BEFORE the default `run` -> review dispatch
 // kicks in (see disambiguation block just below).
 const SUBCOMMANDS = ['init', 'run', 'runs', 'scan', 'report', 'explain', 'ignore', 'ci', 'pr', 'fix', 'costs', 'watch', 'hook', 'autoregress', 'baseline', 'triage', 'lsp', 'worker', 'mcp', 'test-gen', 'pr-desc', 'doctor', 'preflight', 'setup', 'council', 'migrate-v4', 'migrate', 'migrate-doctor', 'deploy', 'brainstorm', 'spec', 'plan', 'implement', 'review', 'validate', 'autopilot', 'internal', 'help', '--help', '-h'] as const;
-const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity', 'prompt', 'context-file', 'path', 'adapter', 'ref', 'sha', 'spec', 'context', 'mode', 'phases', 'budget'];
+const VALUE_FLAGS = ['base', 'config', 'files', 'format', 'output', 'debounce', 'ask', 'focus', 'fail-on', 'note', 'reason', 'expires', 'profile', 'severity', 'prompt', 'context-file', 'path', 'adapter', 'ref', 'sha', 'spec', 'context', 'mode', 'phases', 'budget', 'stack'];
 
 // Bare invocation — no subcommand, no flags → show welcome guide
 if (args.length === 0) {
@@ -1043,14 +1043,33 @@ switch (subcommand) {
 
   case 'scaffold': {
     // v7.2.0 — `claude-autopilot scaffold --from-spec <path>`
+    // v7.4.0 — `--stack <node|python|fastapi>` + `--list-stacks`.
+    if (boolFlag('list-stacks')) {
+      const { printStackList } = await import('./scaffold.ts');
+      printStackList();
+      process.exit(0);
+    }
     const fromSpec = flag('from-spec');
     const dryRun = boolFlag('dry-run');
+    const stackArg = flag('stack');
+    if (stackArg && !['node', 'python', 'fastapi'].includes(stackArg)) {
+      console.error(
+        `\x1b[31m[claude-autopilot] --stack "${stackArg}" not recognized — supported: node, python, fastapi\x1b[0m`,
+      );
+      console.error(`  See: claude-autopilot scaffold --list-stacks`);
+      process.exit(3);
+    }
     if (!fromSpec) {
       console.error(`\x1b[31m[claude-autopilot] scaffold requires --from-spec <path>\x1b[0m`);
       console.error(`  Example: claude-autopilot scaffold --from-spec docs/specs/foo.md`);
+      console.error(`  Stacks:  claude-autopilot scaffold --list-stacks`);
       process.exit(1);
     }
-    await runScaffold({ specPath: fromSpec, dryRun });
+    await runScaffold({
+      specPath: fromSpec,
+      dryRun,
+      ...(stackArg ? { stack: stackArg as 'node' | 'python' | 'fastapi' } : {}),
+    });
     process.exit(0);
     break;
   }
