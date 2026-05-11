@@ -2,6 +2,49 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.2.0 (2026-05-10)
+
+**v7.2.0 — `claude-autopilot scaffold --from-spec <path>`.** Closes
+the biggest remaining day-1 friction the v7.1.6 blank-repo benchmark
+identified. Even with auto-scaffolded `CLAUDE.md` + `.gitignore`
+(v7.1.7), a fresh repo still needs a hand-written `package.json`,
+`tsconfig.json`, and directory skeleton before any feature work
+happens. The new verb collapses that step.
+
+**New verb** reads a spec markdown file's `## Files` section and:
+
+* Creates listed directories (`mkdir -p`).
+* Creates empty placeholder files for each path in the section.
+* Generates a starter `package.json` (Node 22 ESM defaults +
+  hint-merged `bin` / `dependencies` / `scripts` parsed loosely
+  from the spec prose).
+* Generates a starter `tsconfig.json` — JS-flavor (`allowJs +
+  checkJs + noEmit`) when the spec lists predominantly `.js` files,
+  TS-flavor (compiled to `dist/`) for `.ts` files.
+
+**Never overwrites existing files** — operator opted into autopilot,
+not into us nuking their package.json. Reports `· exists` for each
+preserved file. Idempotent: re-running on a partially-scaffolded
+repo only fills the gaps.
+
+`--dry-run` flag logs what would happen without writing.
+
+**End-to-end smoke**: scaffold from the actual v7.1.6 benchmark
+spec produces a 100%-correct skeleton in ~50ms (3 dirs + 5
+placeholder files + matching package.json bin/deps/scripts).
+
+**Out of scope (deferred to v8):**
+
+* Per-stack scaffolding (Python `pyproject.toml`, Go `go.mod`,
+  Rust `Cargo.toml`). v7.2.0 ships Node ESM only — covers the
+  v7.1.6 benchmark stack and the most common starter case.
+* Running `npm install`. Operator picks the package manager.
+
+11 new tests (4 parser + 2 builder + 5 end-to-end). 1548 → 1559
+CLI tests; tsc clean; build clean. New verb registered in
+`src/cli/index.ts` + listed in `Pipeline:` help group. Version
+7.1.9 → 7.2.0 (minor bump for new verb surface).
+
 ## 7.1.9 (2026-05-10)
 
 **v7.1.9 — build fix + Generic-stack next-steps hint.** Two

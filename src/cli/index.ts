@@ -13,6 +13,7 @@
 import { runCommand } from './run.ts';
 import { runWatch } from './watch.ts';
 import { runSetup } from './setup.ts';
+import { runScaffold } from './scaffold.ts';
 import { runDoctor } from './preflight.ts';
 import { runCi } from './ci.ts';
 import { runFix } from './fix.ts';
@@ -1037,6 +1038,20 @@ switch (subcommand) {
     const config = flag('config');
     const code = await runWorker(sub, { cwd: process.cwd(), configPath: config });
     process.exit(code);
+    break;
+  }
+
+  case 'scaffold': {
+    // v7.2.0 — `claude-autopilot scaffold --from-spec <path>`
+    const fromSpec = flag('from-spec');
+    const dryRun = boolFlag('dry-run');
+    if (!fromSpec) {
+      console.error(`\x1b[31m[claude-autopilot] scaffold requires --from-spec <path>\x1b[0m`);
+      console.error(`  Example: claude-autopilot scaffold --from-spec docs/specs/foo.md`);
+      process.exit(1);
+    }
+    await runScaffold({ specPath: fromSpec, dryRun });
+    process.exit(0);
     break;
   }
 
