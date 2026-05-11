@@ -26,8 +26,10 @@ import {
   dependencyNameKey,
   normalizeDistributionName,
   packageNameFromDistribution,
+  packageNameFromSpec,
 } from '../src/cli/scaffold/python.ts';
 import { runScaffold } from '../src/cli/scaffold.ts';
+import type { ParsedFiles } from '../src/cli/scaffold/types.ts';
 
 function makeTmp(name?: string): string {
   // Allow caller to pin the basename so the distribution-name normalization
@@ -76,6 +78,57 @@ describe('name normalization (codex W1)', () => {
   it('empty / dash-only basename → falls back to "app"', () => {
     assert.equal(normalizeDistributionName('---'), 'app');
     assert.equal(normalizeDistributionName(''), 'app');
+  });
+});
+
+describe('packageNameFromSpec (v7.4.3 hotfix)', () => {
+  function mk(paths: string[]): ParsedFiles {
+    return {
+      paths,
+      packageHints: { dependencies: [] },
+      stackHints: { mentions: [] },
+    } as unknown as ParsedFiles;
+  }
+
+  it('extracts package name from src/<pkg>/main.py', () => {
+    assert.equal(packageNameFromSpec(mk(['src/myapp/main.py'])), 'myapp');
+  });
+
+  it('extracts from src/<pkg>/<other>.py if main.py absent', () => {
+    assert.equal(packageNameFromSpec(mk(['src/myapp/handler.py'])), 'myapp');
+  });
+
+  it('returns null when spec lists no src/<pkg>/<*>.py', () => {
+    assert.equal(packageNameFromSpec(mk(['pyproject.toml', 'README.md'])), null);
+  });
+
+  it('returns null for path not under src/', () => {
+    assert.equal(packageNameFromSpec(mk(['lib/myapp/main.py'])), null);
+  });
+
+  it('handles multiple src/<pkg>/ entries — first match wins', () => {
+    assert.equal(
+      packageNameFromSpec(mk(['src/first/main.py', 'src/second/handler.py'])),
+      'first',
+    );
+  });
+
+  it('rejects invalid Python identifier characters', () => {
+    // src/has-dash/ would be a valid path but not a valid Python identifier.
+    // The regex requires identifier chars only.
+    assert.equal(packageNameFromSpec(mk(['src/has-dash/main.py'])), null);
+  });
+
+  it('regression: real-package test bug — spec src/fastapi_test/ should win over cwd basename', () => {
+    // This exact paths shape is what the v7.4.2 real-package test hit.
+    // Before v7.4.3, the scaffolder created src/<basename(cwd)>/ AND
+    // a competing empty src/fastapi_test/main.py from the spec.
+    const parsed = mk([
+      'pyproject.toml',
+      'src/fastapi_test/main.py',
+      'tests/test_main.py',
+    ]);
+    assert.equal(packageNameFromSpec(parsed), 'fastapi_test');
   });
 });
 
@@ -257,6 +310,52 @@ describe('runScaffold (Python end-to-end)', () => {
       fs.readFileSync(path.join(dir, 'README.md'), 'utf8'),
       '# preexisting readme\n',
     );
+    fs.rmSync(path.dirname(dir), { recursive: true });
+  });
+
+  // v7.4.3 hotfix regression — Python scaffold should use spec-derived
+  // package name when present, NOT cwd basename.
+  it('FastAPI: spec src/<pkg>/main.py wins over cwd basename for package name', async () => {
+    // cwd = "v742-real" → would normally derive package "v742_real"
+    // spec lists src/intentional_pkg/main.py → must use "intentional_pkg"
+    const dir = makeTmp('v742-real');
+    const specPath = writeSpec(
+      dir,
+      `## Files\n\n* \`pyproject.toml\` — \`dependencies: [fastapi]\`\n* \`src/intentional_pkg/main.py\` — fastapi app\n* \`tests/test_main.py\` — pytest\n`,
+    );
+    const result = await runScaffold({ cwd: dir, specPath });
+    assert.equal(result.stack, 'fastapi');
+    // Bug regression: there should be EXACTLY ONE src/<pkg>/ directory.
+    const srcEntries = fs.readdirSync(path.join(dir, 'src'));
+    assert.deepEqual(srcEntries.sort(), ['intentional_pkg'],
+      `expected single src/intentional_pkg/ — got: ${srcEntries.join(', ')}`);
+    // The generated main.py is the FastAPI app, not an empty placeholder.
+    const mainContent = fs.readFileSync(
+      path.join(dir, 'src', 'intentional_pkg', 'main.py'), 'utf8',
+    );
+    assert.match(mainContent, /from fastapi import FastAPI/);
+    assert.match(mainContent, /def run\(\)/);
+    // pyproject.toml uses the spec-derived package name everywhere.
+    const pyproject = fs.readFileSync(path.join(dir, 'pyproject.toml'), 'utf8');
+    assert.match(pyproject, /packages = \["src\/intentional_pkg"\]/);
+    assert.match(pyproject, /v742-real-server = "intentional_pkg\.main:run"/);
+    // tests/test_main.py imports from the spec-derived package.
+    const testContent = fs.readFileSync(path.join(dir, 'tests', 'test_main.py'), 'utf8');
+    assert.match(testContent, /from intentional_pkg\.main import app/);
+    fs.rmSync(path.dirname(dir), { recursive: true });
+  });
+
+  it('falls back to cwd-derived package name when spec has no src/<pkg>/', async () => {
+    const dir = makeTmp('myapp');
+    const specPath = writeSpec(
+      dir,
+      `## Files\n\n* \`pyproject.toml\` — pep 621\n* \`README.md\` — usage\n`,
+    );
+    const result = await runScaffold({ cwd: dir, specPath });
+    assert.equal(result.stack, 'python');
+    // No spec-derived name → uses cwd basename ("myapp").
+    const srcEntries = fs.readdirSync(path.join(dir, 'src'));
+    assert.deepEqual(srcEntries.sort(), ['myapp']);
     fs.rmSync(path.dirname(dir), { recursive: true });
   });
 });
