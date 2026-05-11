@@ -1,6 +1,6 @@
 {
   "name": "@delegance/claude-autopilot",
-  "version": "7.1.8",
+  "version": "7.1.9",
   "type": "module",
   "publishConfig": {
     "tag": "next"
@@ -18,7 +18,10 @@
     "pipeline"
   ],
   "license": "MIT",
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/axledbetter/claude-autopilot.git"
@@ -70,6 +73,7 @@
     "@supabase/supabase-js": "^2.97.0",
     "ajv": "^8",
     "ajv-formats": "^3.0.1",
+    "canonicalize": "^3.0.0",
     "dotenv": ">=16",
     "js-yaml": "^4",
     "minimatch": ">=9",

@@ -198,6 +198,21 @@ export async function runSetup(options: SetupOptions = {}): Promise<void> {
   await runDoctor();
 
   console.log(`\n${BOLD('Next steps:')}\n`);
+
+  // v7.1.9 — Generic+low-confidence detection prompt. The v7.1.8 benchmark
+  // re-run on a truly blank repo (no package.json / go.mod / language signal)
+  // surfaced this: setup runs fine but downstream agents get a CLAUDE.md
+  // saying "Detected: Generic (low confidence)" with no concrete next step
+  // to improve detection. Surfacing the actionable "scaffold a stack file
+  // first" hint converts a paper-cut into a one-liner.
+  if (detection.preset === 'generic' && detection.confidence === 'low') {
+    console.log(`  ${WARN}  ${CYAN('Stack detection: Generic (low confidence).')}`);
+    console.log(`       For higher-quality reviews + stack-specific presets, scaffold a`);
+    console.log(`       package manifest first, then re-run setup:`);
+    console.log(`         npm init -y                              ${DIM('# or: pnpm init, go mod init, cargo init')}`);
+    console.log(`         npx claude-autopilot setup --force       ${DIM('# re-detect with the new manifest')}\n`);
+  }
+
   if (!hasKey) {
     console.log(`  1. ${CYAN('Set an LLM API key')} — guardrail needs one to review code:`);
     console.log(`       export ANTHROPIC_API_KEY=sk-ant-...     # https://console.anthropic.com/`);
