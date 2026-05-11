@@ -26,6 +26,10 @@ import { createServiceRoleClient } from '@/lib/supabase/service';
 import { assertSameOrigin } from '@/lib/dashboard/same-origin';
 import { mapPostgresError, resolveSessionUserId, isValidUuid } from '@/lib/dashboard/membership-guard';
 import { getWorkOS } from '@/lib/workos/client';
+import {
+  assertActiveMembershipForOrg,
+  respondToMembershipError,
+} from '@/lib/dashboard/assert-active-membership-for-org';
 
 interface RouteParams { params: Promise<{ orgId: string }> | { orgId: string } }
 
@@ -42,6 +46,17 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
 
   const callerUserId = await resolveSessionUserId();
   if (!callerUserId) return NextResponse.json({ error: 'unauthenticated' }, { status: 401 });
+
+  // v7.5.0 CRITICAL #3 — defense-in-depth membership gate. Runs BEFORE
+  // the existing route-level admin check so a disabled admin can't
+  // even reach the WorkOS API.
+  try {
+    await assertActiveMembershipForOrg({ orgId: p.orgId, userId: callerUserId });
+  } catch (err) {
+    const r = respondToMembershipError(err);
+    if (r) return r;
+    throw err;
+  }
 
   const supabase = createServiceRoleClient();
 

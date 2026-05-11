@@ -208,6 +208,37 @@ To tighten the window further, you'd need to either:
 2. Add server-side cache-invalidation on `change_member_role` /
    `disable_member` RPCs (deferred to v7.1).
 
+### v7.5.0 — route-sensitivity tier
+
+v7.5.0 splits the policy by route sensitivity. The 60s cookie cache
+stays in place for LOW-risk dashboard navigation; HIGH-risk routes
+skip the cache and pay the per-request RPC cost so admin actions
+take effect ≤1 request from the corresponding mutation.
+
+| Tier | Routes | Revocation window | Behavior |
+|---|---|---|---|
+| **LOW** (default) | `/dashboard/*` page renders, GET `/api/dashboard/runs/*`, GET `/api/dashboard/me`, GET `/api/dashboard/active-org` | ≤60s | v7.0 cookie cache. Fresh signed cookie → no DB call. |
+| **HIGH** (mutations + sensitive reads) | Any non-GET on `/api/dashboard/*`; GET `/api/dashboard/orgs/:id/{audit,cost,cost.csv,sso/**,members/**,billing/**}`; all `/api/dashboard/api-keys/*` | ≤1 request | Skip cookie cache. Always call `check_membership_status` RPC. Cookie is NOT minted on success. |
+
+The HIGH list lives in `apps/web/lib/middleware/route-sensitivity.ts`
+(`HIGH_SENSITIVITY_PATTERNS`). It's locked in code, NOT operator-
+configurable — misconfiguring a sensitive route as LOW is a
+security hole that's hard to detect. Adding a new HIGH route = add
+a regex + ship a PR.
+
+Defense-in-depth: high-sensitivity route handlers also call
+`assertActiveMembershipForOrg()` at the top of the handler. The
+middleware regex match is the OUTER optimization; the handler call
+is the INNER correctness gate. A new sensitive handler that's not
+yet in the regex list still gets blocked.
+
+CRITICAL #2 (v7.5.0 codex pass-2): high-sensitivity org-scoped
+routes ALSO parse the `:orgId` segment from the request path and
+require it to match the cookie-resolved `cao_active_org`. A user
+active in Org A who tries an Org B-scoped URL gets a 403/302
+immediately — defense against a downstream handler that's sloppy
+about cross-org boundaries.
+
 ## Operational steps the agent does NOT do
 
 These are listed here so the human operator has a single checklist;

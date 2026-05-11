@@ -3,6 +3,13 @@
 // Proves the spec's "disabled-state enforcement audit" table is correct:
 // every org-scoped path already excludes status='disabled' via Phase 1's
 // SECURITY DEFINER membership helpers or Phase 5.x RPC-level checks.
+//
+// v7.5.0 — assertions updated to reflect the new defense-in-depth helper
+// (`assertActiveMembershipForOrg`). Disabled users now short-circuit
+// with HTTP 403 + body `{error:'member_disabled'}` BEFORE the route's
+// existing RPC-level check fires. Status code parity preserved (still
+// 403); the error code is now uniform across handlers instead of
+// per-route (`not_admin` / `not_owner` / `not_found`).
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'crypto';
@@ -46,7 +53,7 @@ describe('Disabled member with still-valid JWT cannot access org-scoped routes',
     return { orgId, disabledUser };
   }
 
-  it('GET audit → 404 not_found (route intentionally maps not_admin → 404 to not leak org existence)', async () => {
+  it('GET audit → 403 member_disabled (v7.5.0 helper short-circuits before RPC)', async () => {
     const { orgId, disabledUser } = setup();
     currentUser = { id: disabledUser };
     const r = await getAudit(
@@ -55,11 +62,11 @@ describe('Disabled member with still-valid JWT cannot access org-scoped routes',
       }),
       { params: { orgId } },
     );
-    expect(r.status).toBe(404);
-    expect((await r.json()).error).toBe('not_found');
+    expect(r.status).toBe(403);
+    expect((await r.json()).error).toBe('member_disabled');
   });
 
-  it('PATCH org name → 403 not_owner', async () => {
+  it('PATCH org name → 403 member_disabled', async () => {
     const { orgId, disabledUser } = setup();
     currentUser = { id: disabledUser };
     const r = await patchOrg(
@@ -71,10 +78,10 @@ describe('Disabled member with still-valid JWT cannot access org-scoped routes',
       { params: { orgId } },
     );
     expect(r.status).toBe(403);
-    expect((await r.json()).error).toBe('not_owner');
+    expect((await r.json()).error).toBe('member_disabled');
   });
 
-  it('POST sso/setup → 403 not_admin', async () => {
+  it('POST sso/setup → 403 member_disabled', async () => {
     const { orgId, disabledUser } = setup();
     currentUser = { id: disabledUser };
     const r = await ssoSetup(
@@ -84,10 +91,10 @@ describe('Disabled member with still-valid JWT cannot access org-scoped routes',
       { params: { orgId } },
     );
     expect(r.status).toBe(403);
-    expect((await r.json()).error).toBe('not_admin');
+    expect((await r.json()).error).toBe('member_disabled');
   });
 
-  it('POST member invite → 403 not_admin', async () => {
+  it('POST member invite → 403 member_disabled', async () => {
     const { orgId, disabledUser } = setup();
     currentUser = { id: disabledUser };
     const r = await invite(
@@ -99,6 +106,6 @@ describe('Disabled member with still-valid JWT cannot access org-scoped routes',
       { params: { orgId } },
     );
     expect(r.status).toBe(403);
-    expect((await r.json()).error).toBe('not_admin');
+    expect((await r.json()).error).toBe('member_disabled');
   });
 });

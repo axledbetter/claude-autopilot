@@ -4,6 +4,10 @@ import { createServiceRoleClient } from '@/lib/supabase/service';
 import { mapPostgresError, resolveSessionUserId, isValidUuid } from '@/lib/dashboard/membership-guard';
 import { parsePeriod } from '@/lib/dashboard/period';
 import { encodeCostCsv, buildCsvFilename, type CostRow } from '@/lib/dashboard/cost-csv';
+import {
+  assertActiveMembershipForOrg,
+  respondToMembershipError,
+} from '@/lib/dashboard/assert-active-membership-for-org';
 
 interface RouteParams { params: Promise<{ orgId: string }> | { orgId: string } }
 const NO_STORE = { 'cache-control': 'private, no-store' } as const;
@@ -21,6 +25,15 @@ export async function GET(req: Request, { params }: RouteParams): Promise<Respon
 
   const callerUserId = await resolveSessionUserId();
   if (!callerUserId) return Response.json({ error: 'unauthenticated' }, { status: 401, headers: NO_STORE });
+
+  // v7.5.0 CRITICAL #3 — defense-in-depth membership gate.
+  try {
+    await assertActiveMembershipForOrg({ orgId: p.orgId, userId: callerUserId });
+  } catch (err) {
+    const r = respondToMembershipError(err);
+    if (r) return r;
+    throw err;
+  }
 
   const { data, error } = await createServiceRoleClient().rpc('org_cost_report', {
     p_caller_user_id: callerUserId,

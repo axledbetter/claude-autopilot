@@ -59,14 +59,18 @@ describe('PATCH /api/dashboard/orgs/:orgId', () => {
     expect((await r.json()).error).toBe('not_owner');
   });
 
-  it('test 26b: non-member → 403 not_owner (NULL-role guard)', async () => {
+  it('test 26b: non-member → 403 no_membership (v7.5.0 helper short-circuits before RPC)', async () => {
+    // Pre-v7.5.0 a non-member fell through to the RPC's NULL-role guard
+    // and got `not_owner`. The new defense-in-depth helper short-circuits
+    // with `no_membership`. Status code (403) is unchanged; body code
+    // is now uniform across handlers.
     const orgId = randomUUID();
     const ghost = randomUUID();
     stub.seed('organizations', [{ id: orgId, name: 'X' }]);
     currentUser = { id: ghost };
     const r = await PATCH(req(orgId, { name: 'Y' }), { params: { orgId } });
     expect(r.status).toBe(403);
-    expect((await r.json()).error).toBe('not_owner');
+    expect((await r.json()).error).toBe('no_membership');
   });
 
   it('test 27: whitespace name → 422 bad_name', async () => {

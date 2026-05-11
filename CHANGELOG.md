@@ -2,6 +2,106 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.5.0 (2026-05-10)
+
+**v7.5.0 — route-sensitivity-tiered membership revocation.** Minor
+release. Closes W4 from the v7.4.1 codex strategic review without
+adding infrastructure (Redis / Realtime / KV all rejected — see
+`docs/specs/v7.5.0-route-sensitivity.md` for the trade-off analysis).
+
+**Problem.** v7.0 Phase 6 caches `check_membership_status` for 60s
+in an HMAC-signed cookie. Worst-case revocation window = 60s for
+EVERY dashboard request, including admin-class mutations and
+sensitive reads where ≤1-request revocation is the bar.
+
+**Solution.** Split the policy by route sensitivity instead of
+tightening globally:
+
+| Tier | Revocation window | Behavior |
+|---|---|---|
+| LOW (default) | ≤60s | v7.0 cookie cache (no change) |
+| HIGH (mutations + sensitive reads) | ≤1 request | Skip cookie, always RPC |
+
+HIGH list (locked in code, codex-reviewed): mutations on any
+`/api/dashboard/*` route + GETs under
+`/api/dashboard/orgs/:id/{audit,cost,cost.csv,sso/**,members/**,billing/**}`
++ all `/api/dashboard/api-keys/*` (including GET — codex pass-2 W4
+flagged the listing as sensitive).
+
+**Defense in depth (codex pass-2 CRITICAL #3).** Middleware regex
+matching is brittle — a new sensitive handler that's not yet in
+`HIGH_SENSITIVITY_PATTERNS` would default to LOW. Mitigation: every
+high-sensitivity route handler now calls
+`assertActiveMembershipForOrg()` at the top as the inner correctness
+gate. Middleware is the outer optimization (skips the cookie cache);
+the handler call is the inner gate (doesn't depend on the regex
+list staying in sync).
+
+**Path-vs-active-org assertion (codex pass-2 CRITICAL #2).** For
+high-sensitivity org-scoped routes the middleware also extracts
+`:orgId` from the request path and asserts it matches the
+`cao_active_org` cookie. A user active in Org A reaching an Org B
+URL gets a 403/302 immediately — defense against a sloppy
+downstream handler.
+
+**New files:**
+
+- `apps/web/lib/middleware/route-sensitivity.ts` (~85 LOC) —
+  `HIGH_SENSITIVITY_PATTERNS` + `isHighSensitivityRoute()`.
+- `apps/web/lib/dashboard/assert-active-membership-for-org.ts`
+  (~165 LOC) — defense-in-depth helper + `respondToMembershipError()`
+  response builder.
+- `apps/web/__tests__/middleware/route-sensitivity.test.ts` (24
+  cases — spec list of 7 + non-GET coverage + boundary regex tests
+  for codex pass-2 W4/W5).
+- `apps/web/__tests__/middleware/revocation-integration.test.ts`
+  (8 cases — disabled-with-fresh-cookie + low-tier cache-still-wins
+  + helper error-mapping integration).
+- `apps/web/__tests__/lib/dashboard/assert-active-membership-for-org.test.ts`
+  (16 cases — 4 error codes + happy path + UUID validation +
+  respondToMembershipError variants).
+
+**Modified files:**
+
+- `apps/web/middleware.ts` — sensitivity branch BEFORE cookie verify;
+  parseOrgIdFromPath check on high-sensitivity routes; skip cookie
+  mint on high-sensitivity success.
+- 10 route handlers wired with `assertActiveMembershipForOrg()` as
+  the first authorization step (members CRUD + invite + enable +
+  disable; org PATCH; audit; cost JSON + CSV; SSO disconnect +
+  required + setup + domains + verify).
+
+**Test regressions promoted to v7.5.0 expectations:** 8 existing
+tests that asserted the OLD pre-helper behavior (non-member → 404
+via RPC's `not_admin`, disabled-user → `not_owner`/`not_admin`) now
+assert the NEW uniform helper behavior (non-member → 403
+`no_membership`; disabled-user → 403 `member_disabled`). Status
+codes unchanged for the disabled-user cases; status code for
+non-member shifted from 404 → 403 with a non-enumerating body code.
+Comments inline in each updated test point at this v7.5.0 trade-off.
+
+**Test count:** 621 → 669 (+48 web). CLI suite unchanged at 1606
+(no CLI changes).
+
+**Codex traceability:**
+
+| Finding | Resolution |
+|---|---|
+| Pass-1 C1 (W4 not closed) | Reframed: route-tier closes the security/compliance subset of W4. |
+| Pass-1 C2 (Vercel/ECS confusion) | False positive — explicit deployment-context section in spec. |
+| Pass-1 W1 (Redis ROI) | False positive — autopilot.dev has no Redis. |
+| Pass-1 W3 (route-sensitivity split) | **Adopted as the central design.** |
+| Pass-2 CRITICAL #2 (path-vs-activeOrg) | `parseOrgIdFromPath` + middleware assertion. |
+| Pass-2 CRITICAL #3 (regex bypass risk) | `assertActiveMembershipForOrg()` defense-in-depth helper called at top of every HIGH handler. |
+| Pass-2 W4 (api-keys GET sensitivity) | `/api/dashboard/api-keys/*` (including GET) added to HIGH list. |
+| Pass-2 W5 (boundary pattern correctness) | Anchored regex with explicit `/`/`$` terminator; tests cover `/costume`, `/auditor`, trailing-slash, nested-path. |
+
+**Out of scope.** Vercel KV / Realtime websocket (deferred), JWT-
+side revocation (v7.1 already collapses ingest to ≤1 request),
+configurable sensitivity classification (locked in code on purpose),
+wrapper `withActiveMembershipRequired()` decorator (deferred to
+v7.6+ refactor; the explicit call is sufficient for v7.5.0).
+
 ## 7.4.3 (2026-05-11)
 
 **v7.4.3 — FastAPI scaffold respects spec-derived package name.**

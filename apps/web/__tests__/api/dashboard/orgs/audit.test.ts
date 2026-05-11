@@ -72,12 +72,16 @@ describe('GET /api/dashboard/orgs/:orgId/audit', () => {
     expect(r.status).toBe(404);
   });
 
-  it('test 3: non-member → 404', async () => {
+  it('test 3: non-member → 403 no_membership (v7.5.0 helper short-circuits)', async () => {
+    // Pre-v7.5.0 the route returned 404 (not_admin → not_found mapping).
+    // The new defense-in-depth helper returns 403 no_membership; both
+    // are non-enumerating responses.
     const orgId = randomUUID();
     seedAdmin(orgId);
     currentUser = { id: randomUUID() };
     const r = await GET(req(orgId), { params: { orgId } });
-    expect(r.status).toBe(404);
+    expect(r.status).toBe(403);
+    expect((await r.json()).error).toBe('no_membership');
   });
 
   it('test 4: paginates via cursor', async () => {
