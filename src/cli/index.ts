@@ -1045,6 +1045,7 @@ switch (subcommand) {
     // v7.2.0 — `claude-autopilot scaffold --from-spec <path>`
     // v7.4.0 — `--stack <node|python|fastapi>` + `--list-stacks`.
     // v7.6.0 — `--stack go`.
+    // v7.7.0 — `--stack rust`.
     if (boolFlag('list-stacks')) {
       const { printStackList } = await import('./scaffold.ts');
       printStackList();
@@ -1053,9 +1054,9 @@ switch (subcommand) {
     const fromSpec = flag('from-spec');
     const dryRun = boolFlag('dry-run');
     const stackArg = flag('stack');
-    if (stackArg && !['node', 'python', 'fastapi', 'go'].includes(stackArg)) {
+    if (stackArg && !['node', 'python', 'fastapi', 'go', 'rust'].includes(stackArg)) {
       console.error(
-        `\x1b[31m[claude-autopilot] --stack "${stackArg}" not recognized — supported: node, python, fastapi, go\x1b[0m`,
+        `\x1b[31m[claude-autopilot] --stack "${stackArg}" not recognized — supported: node, python, fastapi, go, rust\x1b[0m`,
       );
       console.error(`  See: claude-autopilot scaffold --list-stacks`);
       process.exit(3);
@@ -1069,7 +1070,7 @@ switch (subcommand) {
     await runScaffold({
       specPath: fromSpec,
       dryRun,
-      ...(stackArg ? { stack: stackArg as 'node' | 'python' | 'fastapi' | 'go' } : {}),
+      ...(stackArg ? { stack: stackArg as 'node' | 'python' | 'fastapi' | 'go' | 'rust' } : {}),
     });
     process.exit(0);
     break;
