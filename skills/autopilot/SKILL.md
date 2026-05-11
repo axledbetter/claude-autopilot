@@ -25,6 +25,58 @@ The ONLY time you stop is if a step **fails and cannot be recovered**. Otherwise
 
 Brief status lines like `[autopilot] Step 3: Executing plan...` are fine. Full summaries, questions, or check-ins are not.
 
+## Codex pass policy (risk-tiered)
+
+> Adopted from the v7.4.1 strategic review (see
+> `docs/strategy/2026-05-11-codex-pivot.md`, codex finding N2).
+>
+> The v8 spec pass-2 finding 3 CRITICALs the original spec missed
+> (especially sandbox / credential exfiltration) was concrete evidence
+> that 1 codex pass is insufficient for security-sensitive architecture.
+> But running 3 passes on every CLI polish spec adds latency without
+> proportional value.
+
+**Tier the spec by risk; pass count follows.**
+
+| Spec risk | Triggers | # of codex passes |
+|---|---|---|
+| **Low** | CLI UX changes, doc-only PRs, scaffolding extensions, config polish, CI workflow tweaks | **1 pass** (this skill's existing pattern — codex on the committed spec) |
+| **Medium** | New execution modes, auth changes, billing flows, data-access patterns, new env vars, API contracts | **2 passes** (1 on the draft spec, 1 on the merged spec after edits) |
+| **High** | Sandboxing, multi-tenancy, auto-merge, anything that mutates user repos, new secrets-handling, RPC/SECURITY DEFINER changes | **3 passes** + external review (1 draft, 1 post-edit, 1 on the impl PR diff) |
+
+**How to apply.** Spec docs declare risk in their frontmatter:
+
+```markdown
+---
+title: <topic>
+risk: low | medium | high
+---
+```
+
+If the spec's `risk:` is omitted, default to **medium** (safer than
+defaulting to low; matches the v8 spec pattern where pass-1 was
+clearly insufficient).
+
+The brainstorming skill's per-step codex pass (approach selection,
+architecture, components, error handling, implementation prep) is
+ALWAYS run — it's how we get a draft spec good enough to merge.
+This tier policy applies to the **post-brainstorm** passes and to
+the codex PR review at Step 7 below.
+
+**Examples from v7.x:**
+
+* v7.1.7 (setup polish — CLAUDE.md scaffold + .gitignore + dedup): low.
+  1 pass on the committed spec. Caught zero CRITICALs in practice.
+* v7.4.0 (Python/FastAPI scaffold extension): low. 1 pass. Found
+  2 CRITICALs (FastAPI precedence, dangling entrypoint) — both
+  fixed pre-impl, no PR-pass surprises.
+* v7.0 Phase 6 (engine-off removal + middleware revocation): high.
+  3 passes (spec, post-edit, PR diff). Each pass surfaced new
+  trust-boundary issues; without all three the launch would have
+  shipped with the credential-exfiltration vector C3.
+* v8.0 spec (standalone daemon): high. 2 passes so far + needs a
+  3rd before any v8 alpha implementation.
+
 ## Pipeline
 
 Execute these steps in order. Do NOT pause between steps unless a step fails.
