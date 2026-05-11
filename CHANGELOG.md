@@ -2,6 +2,47 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.3.0 (2026-05-10)
+
+**v7.3.0 — library export surface for v8 daemon.** Minor bump
+(new public API surface). The v8 daemon spec needs to call into
+the autopilot pipeline without spawning the CLI as a subprocess
+— subprocess boundaries lose error context, double up dependency
+resolution, and make sandbox enforcement harder. This PR exposes
+a curated set of `run*` functions as a stable library API.
+
+**New exports** at `@delegance/claude-autopilot`:
+
+* Pipeline read-only / discovery: `runScan`, `runScaffold`,
+  `runValidate`, `runFix`, `runCosts`, `runReport`, `runDoctor`,
+  `runSetup`.
+* Pipeline side-effecting: `runDeploy`, `runDeployStatus`,
+  `runDeployRollback` (daemon callers must wrap in policy gates
+  per v8 spec C3).
+* Helpers: `detectProject`.
+* Types: `DetectionResult`, `ScaffoldOptions`, `ScaffoldResult`,
+  `SetupOptions`, `ProfileName`.
+
+**Stability contract** documented in `docs/library-api.md`. Anything
+in that doc is SemVer-stable; deep imports
+(`@delegance/claude-autopilot/dist/...`) are unsupported.
+
+**`package.json` `exports` map** gains a `default` entry pointing
+at `./dist/src/index.js` so consumers can
+`import { runScaffold } from '@delegance/claude-autopilot'`
+instead of deep-importing.
+
+**Deliberate non-exports** (still callable via deep imports, no
+guarantee): JSON-envelope wrappers, internal `_*` helpers, the
+`runs` engine-introspection group (separate v8 prerequisite).
+
+4 new tests verify (a) all declared exports resolve at runtime,
+(b) `detectProject` returns the documented shape on the autopilot
+repo itself, (c) `package.json` `exports` map shape is locked.
+1559 → 1563 CLI tests; tsc clean; build clean.
+
+Version 7.2.1 → 7.3.0 (minor bump for new library surface).
+
 ## 7.2.1 (2026-05-10)
 
 **v7.2.1 — v8 spec codex pass-2 amendment.** Docs-only PR. Folds
