@@ -2,6 +2,50 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.1.8 (2026-05-10)
+
+**v7.1.8 — blank-repo benchmark re-run on v7.1.7.** Docs-only PR.
+Friction-reduction delta measurement after the v7.1.7 polish PR.
+
+**All three v7.1.7 fixes verified end-to-end** on a fresh `git init`
+repo:
+
+* `.gitignore` auto-created with `.guardrail-cache/` + `node_modules/`.
+* `CLAUDE.md` auto-scaffolded with detected stack, test command,
+  Conventional Commits convention, error class shape, branch
+  naming, TODO slots.
+* Deprecation banner deduped per UTC day via
+  `~/.claude-autopilot/.deprecation-shown` stamp.
+
+**Friction score: 3 of 6 v7.1.6 friction points closed; 1 partially
+closed; 2 deferred.** Matches v7.1.6 prediction ("would close ~5 of
+6") with minor over-promise.
+
+**New friction surfaced:**
+
+* Stale `dist/` after merge requires `npm run build` for local
+  contributors (invisible to `npm install -g` users).
+* Build hits one stale TS error (`canonicalize` not declared at
+  root level) — 4 v7.1.7 helpers compiled, setup ran end-to-end,
+  filing as separate followup.
+* `Detected: Generic (low confidence)` on truly blank repos —
+  honest but suggests next-step "scaffold a `package.json` first
+  for higher-confidence detection."
+
+**New recommendations:** suggest stack-scaffold step in `setup`
+next-steps when detection is `Generic` (~20min ship);
+`scaffold --from-spec` verb (deferred from v7.1.6, ~1-day);
+per-stack starter `tsconfig.json` / `pyproject.toml` (~2-4hr per
+stack).
+
+**Methodology caveat:** Phase B (impl agent) NOT re-run — wall-clock
+impact is downstream and would need another full agent dispatch to
+measure precisely. The friction-point table tells most of the story.
+
+Full report at `docs/benchmarks/2026-05-10-blank-repo-v7.1.7.md`.
+No code change; bumping to 7.1.8 to keep CHANGELOG/version line in
+lockstep with master HEAD.
+
 ## 7.1.7 (2026-05-10)
 
 **v7.1.7 — `setup` verb day-1 polish.** Three fixes from the v7.1.6
