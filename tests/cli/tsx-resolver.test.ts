@@ -346,6 +346,57 @@ describe('tsx-resolver: A3 self-pointer check', () => {
       'and the deprecation warning should still fire',
     );
   });
+
+  it('TR13: PATH=.bin (symlink to bundled tsx) → treated as bundled, warning emitted', () => {
+    // Realistic npm layout: PATH entry is `node_modules/.bin/`, and
+    // `.bin/tsx` is a symlink to `../tsx/dist/cli.mjs`. The previous A3
+    // implementation compared bin DIRS (the parent of args[0], which is
+    // `node_modules/tsx/dist/`) against the candidate's resolved dir.
+    // The candidate is `node_modules/.bin/tsx`, whose parent is
+    // `node_modules/.bin/` — startsWith() never matched, so PATH hits
+    // that symlinked back to our own bundled tsx were classified as
+    // user-supplied PATH, and the deprecation warning failed to fire.
+    //
+    // Fix compares PACKAGE ROOTS after realpathSync resolves the symlink.
+    if (process.platform === 'win32') return; // creating symlinks needs admin on Win32
+
+    const projectRoot = makeProjectWithoutTsx();
+    const realBundled = resolveTsx({
+      projectRoot,
+      envOverride: 'bundled',
+      env: {},
+      platform: 'linux',
+      suppressWarning: true,
+    });
+    const realBin = realBundled.args[0] ?? '';
+    assert.ok(realBin, 'expected bundled args[0] to point at the real tsx bin');
+
+    const fakeRoot = fs.mkdtempSync(path.join(FIXTURE_ROOT, 'binlink-'));
+    const dotBin = path.join(fakeRoot, 'node_modules', '.bin');
+    fs.mkdirSync(dotBin, { recursive: true });
+    const linkPath = path.join(dotBin, 'tsx');
+    fs.symlinkSync(realBin, linkPath);
+
+    const { result, stderr } = captureStderr(() =>
+      resolveTsx({
+        projectRoot,
+        env: {
+          PATH: dotBin,
+          CLAUDE_AUTOPILOT_STATE_DIR: freshStateDir(),
+        },
+        platform: 'linux',
+      }),
+    );
+    assert.equal(
+      result.source,
+      'bundled',
+      'symlink-to-bundled on PATH should fall through to "bundled" (compare package roots, not bin dirs)',
+    );
+    assert.ok(
+      stderr.includes('[deprecation]'),
+      'deprecation warning should fire when PATH symlinks back to our bundled tsx',
+    );
+  });
 });
 
 describe('tsx-resolver: Windows .cmd shim handling', () => {

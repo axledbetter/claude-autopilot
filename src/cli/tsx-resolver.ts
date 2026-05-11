@@ -30,7 +30,7 @@
 //   A7 — XDG_STATE_HOME / CLAUDE_AUTOPILOT_STATE_DIR for warning dedup
 
 import { createRequire } from 'node:module';
-import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
@@ -138,17 +138,28 @@ function tryPath(opts: PathLookupOpts): TsxResolution | null {
     : [''];
   const sep = isWin ? ';' : ':';
 
-  // A3 prep: figure out our bundled directory so we can detect a
-  // PATH entry that actually points back at our own node_modules.
-  let bundledDir: string | null = null;
+  // A3 prep: figure out our bundled tsx package ROOT so we can detect a
+  // PATH entry that actually points back at our own node_modules. The
+  // previous implementation compared bin-dir prefixes (e.g.
+  // `node_modules/tsx/dist/`), but PATH hits are typically
+  // `node_modules/.bin/tsx` — a symlink (Unix) or `.cmd` shim (Windows)
+  // that lives in a SIBLING directory. `startsWith()` never matched.
+  // Compare package roots after `realpathSync` resolves the symlink/shim
+  // back to the underlying tsx package.
+  let bundledPkgRoot: string | null = null;
   try {
     const bundled = resolveBundled();
-    bundledDir = path.dirname(bundled.args[0] ?? '');
+    // `bundled.args[0]` is the absolute path to tsx/dist/cli.mjs (or
+    // similar bin entry). Its parent's parent is the tsx package root.
+    const binAbs = bundled.args[0] ?? '';
+    if (binAbs) {
+      bundledPkgRoot = path.resolve(path.dirname(path.dirname(binAbs)));
+    }
   } catch {
     // If we can't even resolve the bundled tsx (shouldn't happen — it's a
     // dep), continue without the self-pointer guard. The worst case is we
     // miss the warning on a corner-case install.
-    bundledDir = null;
+    bundledPkgRoot = null;
   }
 
   for (const rawDir of PATH.split(sep)) {
@@ -160,8 +171,11 @@ function tryPath(opts: PathLookupOpts): TsxResolution | null {
 
       // A3 — PATH hit that is actually inside our bundled node_modules
       // is not really "user-supplied tsx on PATH"; fall through to bundled
-      // so the deprecation warning still fires.
-      if (bundledDir && path.resolve(candidate).startsWith(path.resolve(bundledDir))) {
+      // so the deprecation warning still fires. Resolve symlinks first
+      // because `node_modules/.bin/tsx` is typically a symlink to
+      // `../tsx/dist/cli.mjs` on Unix (and a .cmd shim on Windows that
+      // textually references the package directory).
+      if (bundledPkgRoot && isInBundledPackageRoot(candidate, bundledPkgRoot)) {
         return null;
       }
 
@@ -188,6 +202,29 @@ function tryPath(opts: PathLookupOpts): TsxResolution | null {
 function resolveBundled(): TsxResolution {
   const pkgPath = require.resolve('tsx/package.json');
   return buildResolutionFromPkgJson(pkgPath, 'bundled');
+}
+
+/**
+ * True iff `candidatePath`, after realpath, lives inside `bundledPkgRoot`.
+ * Used by the A3 self-pointer guard. PATH hits typically resolve to
+ * `node_modules/.bin/tsx`, which is a SYMLINK (Unix) or `.cmd` shim
+ * (Windows) pointing into the tsx package. realpathSync resolves the
+ * symlink to the real entry under `node_modules/tsx/...`, so the
+ * package-root prefix check succeeds. Without realpath, `.bin/tsx` and
+ * `tsx/dist/cli.mjs` are in different directories and the previous
+ * `startsWith()` comparison silently failed.
+ */
+function isInBundledPackageRoot(candidatePath: string, bundledPkgRoot: string): boolean {
+  try {
+    const realCandidate = path.resolve(realpathSync(candidatePath));
+    const realRoot = path.resolve(bundledPkgRoot);
+    return realCandidate === realRoot || realCandidate.startsWith(realRoot + path.sep);
+  } catch {
+    // realpath failed (broken symlink? race?). Fall back to a textual
+    // prefix check — this still catches the rare "PATH points directly
+    // at the package dir" case.
+    return path.resolve(candidatePath).startsWith(path.resolve(bundledPkgRoot) + path.sep);
+  }
 }
 
 /**
