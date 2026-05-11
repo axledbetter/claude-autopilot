@@ -100,31 +100,87 @@ function inspectFile(file: string, violations: Violation[]): void {
 
   function visit(node: ts.Node): void {
     // import ... from '@supabase/supabase-js'
+    //
+    // Forms we must flag (value imports, all bypass `import type`):
+    //   import '@supabase/supabase-js';                       // side-effect (NO importClause)
+    //   import x from '@supabase/supabase-js';                // default value import
+    //   import * as ns from '@supabase/supabase-js';          // namespace value import
+    //   import { x } from '@supabase/supabase-js';            // named value import
+    //   import x, { y } from '@supabase/supabase-js';         // default + named
+    //   import x, { type Y } from '@supabase/supabase-js';    // default value, named type-only
+    //
+    // Forms we must NOT flag (type-only, erased at compile time):
+    //   import type { ... } from '@supabase/supabase-js';     // whole clause type-only
+    //   import { type X, type Y } from '@supabase/supabase-js'; // ALL named type-only AND no default/namespace
     if (ts.isImportDeclaration(node)) {
       const spec = moduleSpecifierText(node.moduleSpecifier);
-      if (spec === PKG) {
-        // Type-only imports are erased: `import type { ... } from '...'`
-        // or `import { type X } from '...'` (named, all type-only).
-        const isWholeTypeOnly = node.importClause?.isTypeOnly === true;
-        const namedBindings = node.importClause?.namedBindings;
-        const hasValueNamedImport =
-          namedBindings && ts.isNamedImports(namedBindings)
-            ? namedBindings.elements.some((el) => !el.isTypeOnly)
-            : namedBindings && ts.isNamespaceImport(namedBindings)
-              ? !isWholeTypeOnly
-              : !!node.importClause?.name && !isWholeTypeOnly;
+      if (spec === PKG && !allowed) {
+        const importClause = node.importClause;
 
-        if (!isWholeTypeOnly && hasValueNamedImport && !allowed) {
-          record(node, 'static value-import of @supabase/supabase-js outside dashboard allowlist');
+        if (!importClause) {
+          // Side-effect-only import: `import '@supabase/supabase-js';`
+          // No importClause at all — clearly a value-side effect.
+          record(node, 'side-effect import of @supabase/supabase-js outside dashboard allowlist');
+        } else if (importClause.isTypeOnly) {
+          // `import type { ... } from '...'` — fully erased.
+        } else {
+          // Default import (`importClause.name`) is a value import whenever
+          // the clause isn't whole-type-only. Older audit gated this on
+          // namedBindings being truthy, which silently missed
+          // `import x from '...'` (no named bindings).
+          const hasDefaultValueImport = !!importClause.name;
+          const namedBindings = importClause.namedBindings;
+          const hasNamespaceValueImport =
+            !!namedBindings && ts.isNamespaceImport(namedBindings);
+          const hasNamedValueImport =
+            !!namedBindings &&
+            ts.isNamedImports(namedBindings) &&
+            namedBindings.elements.some((el) => !el.isTypeOnly);
+
+          if (hasDefaultValueImport || hasNamespaceValueImport || hasNamedValueImport) {
+            record(node, 'static value-import of @supabase/supabase-js outside dashboard allowlist');
+          }
         }
       }
     }
 
     // export ... from '@supabase/supabase-js'
+    //   export { x } from '@supabase/supabase-js';     // re-export — value
+    //   export * from '@supabase/supabase-js';         // namespace re-export — value
+    //   export type { X } from '@supabase/supabase-js'; // type-only — erased
+    //   export { type X } from '@supabase/supabase-js'; // all-type-only named re-export — erased
     if (ts.isExportDeclaration(node)) {
       const spec = moduleSpecifierText(node.moduleSpecifier);
       if (spec === PKG && !node.isTypeOnly && !allowed) {
-        record(node, 're-export from @supabase/supabase-js outside dashboard allowlist');
+        // If the export clause is `export { type X }` and EVERY specifier
+        // is type-only, treat as erased. `export *` has no clause and is
+        // always a value re-export.
+        const clause = node.exportClause;
+        let isAllTypeOnly = false;
+        if (clause && ts.isNamedExports(clause)) {
+          isAllTypeOnly =
+            clause.elements.length > 0 &&
+            clause.elements.every((el) => el.isTypeOnly);
+        }
+        if (!isAllTypeOnly) {
+          record(node, 're-export from @supabase/supabase-js outside dashboard allowlist');
+        }
+      }
+    }
+
+    // TypeScript `import x = require('@supabase/supabase-js')` —
+    // CommonJS-flavored import that creates a value binding.
+    if (ts.isImportEqualsDeclaration(node) && !node.isTypeOnly && !allowed) {
+      const ref = node.moduleReference;
+      if (ts.isExternalModuleReference(ref)) {
+        const expr = ref.expression;
+        if (
+          expr &&
+          (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) &&
+          expr.text === PKG
+        ) {
+          record(node, "import = require('@supabase/supabase-js') outside dashboard allowlist");
+        }
       }
     }
 
@@ -188,4 +244,102 @@ function main(): number {
   return 1;
 }
 
-process.exit(main());
+/**
+ * Test seam: audit a single source string. The path determines whether the
+ * dashboard allowlist applies (callers can pass `src/cli/dashboard/foo.ts`
+ * to verify allowlist behavior, or `src/whatever.ts` to verify failure).
+ * Returns the list of violations.
+ */
+export function auditSourceForTest(filePath: string, source: string): Violation[] {
+  const violations: Violation[] = [];
+  const sf = ts.createSourceFile(filePath, source, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS);
+  const allowed = isAllowed(filePath);
+  const record = (node: ts.Node, reason: string): void => {
+    const { line, col } = lineColFromOffset(source, node.getStart(sf));
+    const snippetEnd = source.indexOf('\n', node.getStart(sf));
+    const snippet = source.slice(node.getStart(sf), snippetEnd === -1 ? node.getEnd() : snippetEnd).trim();
+    violations.push({ file: filePath, line, col, reason, snippet });
+  };
+  // Inline-equivalent of inspectFile's visitor — we duplicate the small
+  // amount of traversal logic here so the public test seam doesn't need
+  // to reach into module-private helpers.
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node)) {
+      const spec = (() => {
+        const s = node.moduleSpecifier;
+        return ts.isStringLiteral(s) || ts.isNoSubstitutionTemplateLiteral(s) ? s.text : null;
+      })();
+      if (spec === PKG && !allowed) {
+        const importClause = node.importClause;
+        if (!importClause) {
+          record(node, 'side-effect import of @supabase/supabase-js outside dashboard allowlist');
+        } else if (!importClause.isTypeOnly) {
+          const hasDefault = !!importClause.name;
+          const nb = importClause.namedBindings;
+          const hasNs = !!nb && ts.isNamespaceImport(nb);
+          const hasNamedValue = !!nb && ts.isNamedImports(nb) && nb.elements.some((el) => !el.isTypeOnly);
+          if (hasDefault || hasNs || hasNamedValue) {
+            record(node, 'static value-import of @supabase/supabase-js outside dashboard allowlist');
+          }
+        }
+      }
+    }
+    if (ts.isExportDeclaration(node)) {
+      const ms = node.moduleSpecifier;
+      const spec = ms && (ts.isStringLiteral(ms) || ts.isNoSubstitutionTemplateLiteral(ms)) ? ms.text : null;
+      if (spec === PKG && !node.isTypeOnly && !allowed) {
+        const clause = node.exportClause;
+        let isAllTypeOnly = false;
+        if (clause && ts.isNamedExports(clause)) {
+          isAllTypeOnly = clause.elements.length > 0 && clause.elements.every((el) => el.isTypeOnly);
+        }
+        if (!isAllTypeOnly) {
+          record(node, 're-export from @supabase/supabase-js outside dashboard allowlist');
+        }
+      }
+    }
+    if (ts.isImportEqualsDeclaration(node) && !node.isTypeOnly && !allowed) {
+      const ref = node.moduleReference;
+      if (ts.isExternalModuleReference(ref)) {
+        const expr = ref.expression;
+        if (expr && (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) && expr.text === PKG) {
+          record(node, "import = require('@supabase/supabase-js') outside dashboard allowlist");
+        }
+      }
+    }
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      const isRequire = ts.isIdentifier(callee) && callee.text === 'require' && node.arguments.length === 1;
+      const isImportCall = callee.kind === ts.SyntaxKind.ImportKeyword && node.arguments.length >= 1;
+      if (isRequire || isImportCall) {
+        const arg = node.arguments[0];
+        if (arg && (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) && arg.text === PKG && !allowed) {
+          record(
+            node,
+            isRequire
+              ? "require('@supabase/supabase-js') outside dashboard allowlist"
+              : "dynamic import('@supabase/supabase-js') outside dashboard allowlist",
+          );
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return violations;
+}
+
+// Only auto-run as a script when invoked directly (e.g. `tsx
+// scripts/audit-supabase-imports.ts`). Importing it from a test must NOT
+// trigger process.exit().
+const invokedAsScript = (() => {
+  try {
+    return path.resolve(url.fileURLToPath(import.meta.url)) === path.resolve(process.argv[1] ?? '');
+  } catch {
+    return false;
+  }
+})();
+
+if (invokedAsScript) {
+  process.exit(main());
+}
