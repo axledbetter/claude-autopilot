@@ -109,25 +109,52 @@ function pathTsxPath() {
   const bundled = bundledTsxPath();
   for (const dir of PATH.split(sep)) {
     if (!dir) continue;
-    for (const ext of exts) {
-      const cand = path.join(dir, `tsx${ext}`);
-      if (fs.existsSync(cand)) {
-        // A3 self-pointer: if PATH-resolved bin's package root is OUR own
-        // bundled tsx package root, treat it as bundled so the deprecation
-        // warning still fires. Compare package roots (not bin dirs) and
-        // resolve symlinks — `.bin/tsx` is a symlink to `../tsx/dist/...`
-        // on Unix and a `.cmd` shim on Windows.
-        if (isInBundledPackage(cand, bundled)) {
-          return null;
-        }
-        // On Windows, `.cmd`/`.bat` shims can't be executed directly by
-        // spawn() — callers must pass `shell: true`. Mark the resolution
-        // with the metadata they need.
-        if (isWin && /\.(cmd|bat)$/i.test(cand)) {
-          return { path: cand, shell: true };
-        }
-        return cand;
-      }
+    // Windows NTFS is case-insensitive — `tsx.cmd`, `TSX.CMD`, `Tsx.Cmd` all
+    // resolve to the same file. Use a case-insensitive readdir match instead
+    // of existsSync(tsx + ext), which mismatches when on-disk filename casing
+    // differs from PATHEXT casing.
+    const cand = isWin
+      ? findTsxCaseInsensitive(dir, exts)
+      : (() => {
+          const c = path.join(dir, 'tsx');
+          return fs.existsSync(c) ? c : null;
+        })();
+    if (!cand) continue;
+    // A3 self-pointer: if PATH-resolved bin's package root is OUR own
+    // bundled tsx package root, treat it as bundled so the deprecation
+    // warning still fires. Compare package roots (not bin dirs) and
+    // resolve symlinks — `.bin/tsx` is a symlink to `../tsx/dist/...`
+    // on Unix and a `.cmd` shim on Windows.
+    if (isInBundledPackage(cand, bundled)) {
+      return null;
+    }
+    // On Windows, `.cmd`/`.bat` shims can't be executed directly by
+    // spawn() — callers must pass `shell: true`. Mark the resolution
+    // with the metadata they need.
+    if (isWin && /\.(cmd|bat)$/i.test(cand)) {
+      return { path: cand, shell: true };
+    }
+    return cand;
+  }
+  return null;
+}
+
+/**
+ * Case-insensitive lookup for `tsx` + each PATHEXT entry inside `dir`.
+ * Mirrors src/cli/tsx-resolver.ts findTsxCaseInsensitive(). Returns the
+ * actual on-disk filename joined onto `dir`, or null if no match.
+ */
+function findTsxCaseInsensitive(dir, exts) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return null;
+  }
+  const wanted = new Set(exts.map((ext) => `tsx${ext}`.toLowerCase()));
+  for (const entry of entries) {
+    if (wanted.has(entry.toLowerCase())) {
+      return path.join(dir, entry);
     }
   }
   return null;
@@ -159,6 +186,10 @@ function isInBundledPackage(candidatePath, bundled) {
 /**
  * Walk upward from a file path looking for `node_modules/tsx`. Returns the
  * absolute path to the tsx package root, or null if not found within 5 levels.
+ *
+ * PARITY: keep in sync with src/cli/tsx-resolver.ts packageRootContaining().
+ * The TS version is parameterized over `pkgName`; this launcher copy is
+ * specialized to `tsx` since the launcher only resolves tsx.
  */
 function packageRootContaining(filePath) {
   let dir = path.dirname(filePath);

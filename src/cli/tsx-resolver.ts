@@ -30,7 +30,7 @@
 //   A7 — XDG_STATE_HOME / CLAUDE_AUTOPILOT_STATE_DIR for warning dedup
 
 import { createRequire } from 'node:module';
-import { existsSync, readFileSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, writeFileSync, realpathSync, readdirSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
@@ -161,8 +161,59 @@ interface PathLookupOpts {
 }
 
 /**
+ * Walk upward from `filePath` looking for `<dir>/node_modules/<pkgName>`.
+ * Returns the absolute path to the package root, or null if not found.
+ *
+ * Used by the A3 self-pointer guard. Replaces the previous hardcoded
+ * `path.dirname(path.dirname(binAbs))` walk which assumed tsx's bin lived
+ * exactly 2 directories deep inside its package — fragile when tsx ships
+ * its bin at `dist/cli.mjs` (3 deep) or future layouts.
+ *
+ * PARITY: keep in sync with bin/_launcher.js packageRootContaining().
+ */
+function packageRootContaining(filePath: string, pkgName: string): string | null {
+  let dir = path.dirname(path.resolve(filePath));
+  while (dir !== path.dirname(dir)) {
+    if (path.basename(dir) === pkgName && path.basename(path.dirname(dir)) === 'node_modules') {
+      return dir;
+    }
+    dir = path.dirname(dir);
+  }
+  return null;
+}
+
+/**
+ * Case-insensitive lookup for `tsx` + each PATHEXT entry inside `dir`.
+ * Real Windows NTFS is case-insensitive, so `tsx.cmd`, `TSX.CMD`, and
+ * `Tsx.Cmd` all resolve to the same file. Linux ext4 (and most CI
+ * containers) is case-sensitive, so the previous `existsSync(tsx + ext)`
+ * lookup mismatched when test fixtures wrote `tsx.cmd` (lowercase) and
+ * PATHEXT was iterated in uppercase form (`.CMD`).
+ *
+ * Returns the actual filename found in `dir` (with on-disk casing) joined
+ * onto `dir`, or null if no match.
+ */
+function findTsxCaseInsensitive(dir: string, exts: ReadonlyArray<string>): string | null {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return null;
+  }
+  // Build set of acceptable lowercase filenames: `tsx`, `tsx.exe`, `tsx.cmd`, ...
+  const wanted = new Set(exts.map((ext) => `tsx${ext}`.toLowerCase()));
+  for (const entry of entries) {
+    if (wanted.has(entry.toLowerCase())) {
+      return path.join(dir, entry);
+    }
+  }
+  return null;
+}
+
+/**
  * Hand-rolled PATH lookup (A6 — drops the `which` dep). On Windows, walk
- * PATHEXT for each entry; on POSIX, look for the bare `tsx` filename.
+ * PATHEXT for each entry with a case-insensitive filename match; on POSIX,
+ * look for the bare `tsx` filename (case-sensitive).
  */
 function tryPath(opts: PathLookupOpts): TsxResolution | null {
   const PATH = opts.env.PATH ?? opts.env.Path ?? '';
@@ -185,11 +236,14 @@ function tryPath(opts: PathLookupOpts): TsxResolution | null {
   let bundledPkgRoot: string | null = null;
   try {
     const bundled = resolveBundled();
-    // `bundled.args[0]` is the absolute path to tsx/dist/cli.mjs (or
-    // similar bin entry). Its parent's parent is the tsx package root.
+    // `bundled.args[0]` is the absolute path to tsx's bin (e.g.
+    // `node_modules/tsx/dist/cli.mjs`). Walk upward to find the tsx
+    // package root rather than assuming a fixed depth — the previous
+    // `path.dirname(path.dirname(binAbs))` baked in 2 levels and broke
+    // on layouts where the bin lives 3+ directories deep inside the pkg.
     const binAbs = bundled.args[0] ?? '';
     if (binAbs) {
-      bundledPkgRoot = path.resolve(path.dirname(path.dirname(binAbs)));
+      bundledPkgRoot = packageRootContaining(binAbs, 'tsx');
     }
   } catch {
     // If we can't even resolve the bundled tsx (shouldn't happen — it's a
@@ -201,36 +255,42 @@ function tryPath(opts: PathLookupOpts): TsxResolution | null {
   for (const rawDir of PATH.split(sep)) {
     const dir = rawDir.trim();
     if (!dir) continue;
-    for (const ext of PATHEXT) {
-      const candidate = path.join(dir, `tsx${ext}`);
-      if (!existsSync(candidate)) continue;
+    // On Windows, NTFS is case-insensitive — match filename case-insensitively
+    // against PATHEXT. On POSIX, ext4/btrfs are case-sensitive and PATHEXT is
+    // a single empty string, so the case-sensitive existsSync path is fine.
+    const candidate = isWin
+      ? findTsxCaseInsensitive(dir, PATHEXT)
+      : (() => {
+          const c = path.join(dir, 'tsx');
+          return existsSync(c) ? c : null;
+        })();
+    if (!candidate) continue;
 
-      // A3 — PATH hit that is actually inside our bundled node_modules
-      // is not really "user-supplied tsx on PATH"; fall through to bundled
-      // so the deprecation warning still fires. Resolve symlinks first
-      // because `node_modules/.bin/tsx` is typically a symlink to
-      // `../tsx/dist/cli.mjs` on Unix (and a .cmd shim on Windows that
-      // textually references the package directory).
-      if (bundledPkgRoot && isInBundledPackageRoot(candidate, bundledPkgRoot)) {
-        return null;
-      }
-
-      // For a PATH-resolved bin, spawn it directly. On Windows the .cmd
-      // shim handles dispatching to node; on Unix the shebang does.
-      //
-      // Critical: Node's `spawn()` on Windows cannot launch `.cmd`/`.bat`
-      // files directly — the OS exec syscalls require `cmd.exe`. Mark
-      // those hits so callers pass `shell: true` to `spawn()`. POSIX
-      // shebang hits don't need a shell.
-      const needsShell =
-        isWin && /\.(cmd|bat)$/i.test(candidate);
-      return {
-        command: candidate,
-        args: [],
-        source: 'path',
-        ...(needsShell ? { shell: true } : {}),
-      };
+    // A3 — PATH hit that is actually inside our bundled node_modules
+    // is not really "user-supplied tsx on PATH"; fall through to bundled
+    // so the deprecation warning still fires. Resolve symlinks first
+    // because `node_modules/.bin/tsx` is typically a symlink to
+    // `../tsx/dist/cli.mjs` on Unix (and a .cmd shim on Windows that
+    // textually references the package directory).
+    if (bundledPkgRoot && isInBundledPackageRoot(candidate, bundledPkgRoot)) {
+      return null;
     }
+
+    // For a PATH-resolved bin, spawn it directly. On Windows the .cmd
+    // shim handles dispatching to node; on Unix the shebang does.
+    //
+    // Critical: Node's `spawn()` on Windows cannot launch `.cmd`/`.bat`
+    // files directly — the OS exec syscalls require `cmd.exe`. Mark
+    // those hits so callers pass `shell: true` to `spawn()`. POSIX
+    // shebang hits don't need a shell.
+    const needsShell =
+      isWin && /\.(cmd|bat)$/i.test(candidate);
+    return {
+      command: candidate,
+      args: [],
+      source: 'path',
+      ...(needsShell ? { shell: true } : {}),
+    };
   }
   return null;
 }
