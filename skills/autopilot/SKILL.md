@@ -1,127 +1,201 @@
 ---
 name: autopilot
-description: After spec approval, automatically execute the full pipeline — plan → implement → migrate → validate → PR → Codex review. No manual intervention required.
+description: End-to-end pipeline — brainstorm → spec → plan → implement → migrate → validate → PR → Codex review → bugbot. Risk-tiered. No manual intervention after spec approval.
 ---
 
-# Autopilot — Spec to PR Pipeline
+# Autopilot — Idea to Merged PR Pipeline
 
-After the user approves a spec during brainstorming, this skill runs the full pipeline automatically.
+Drives the full flow from raw user idea (or an existing spec) through merged PR. The ONLY pause is explicit user approval of the spec after Step 0; everything after that runs unattended unless blocked by an unrecoverable failure, missing credentials, or an unresolved CRITICAL Codex finding.
 
-## Prerequisites
+## Entry decision tree
 
-- Approved spec file at `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`
-- Superpowers plugin installed (`writing-plans`, `using-git-worktrees`, `subagent-driven-development`)
-- Scripts installed and dependencies present (run step 0 preflight to verify)
+Pick the entry point ONCE at the start:
 
-## CRITICAL: Do Not Pause
+- **Approved spec path provided** (e.g. `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`) → skip Step 0, jump to Step 1.
+- **Only an idea provided** (no spec) → run Step 0 to brainstorm + spec it.
+- **Neither** → ask the user once for either the spec path or the idea. This is the only allowed pre-pipeline pause.
 
-**Run the entire pipeline without stopping.** Do NOT:
+## Prerequisites (hard-gate)
+
+The pipeline ABORTS with a clear actionable error if any of these are missing:
+
+- **Required skills:** `superpowers:brainstorming`, `superpowers:writing-plans`, `superpowers:subagent-driven-development`, `superpowers:using-git-worktrees` (for Step 2)
+- **Required project scripts:** `scripts/codex-review.ts`, `scripts/codex-pr-review.ts`, `scripts/bugbot.ts`, `scripts/validate.ts` — OR equivalent CLI verbs from `@delegance/claude-autopilot` if running the package version
+- **Required env:** `OPENAI_API_KEY` (for Codex passes), `GITHUB_TOKEN` or `gh auth status` (for PR creation), `ANTHROPIC_API_KEY` (for impl agents)
+
+If any superpowers skill is missing, print:
+```
+Autopilot requires superpowers plugin. Install with: claude plugin install superpowers
+```
+and exit. Do NOT half-run with a missing dependency.
+
+## Operational preflight (run before Step 0/1)
+
+Each numbered check below is a HARD GATE. ALL must pass before any LLM call. There are no "OR" conditions — every condition listed inside a check must hold.
+
+1. **Branch is NOT `main`/`master`** — independent hard gate. Run `git rev-parse --abbrev-ref HEAD`; if the result is `main` or `master`, ABORT immediately. The skill never commits or mutates `main`/`master` directly. Resolution: create a feature branch or worktree first.
+2. **Working tree is clean (tracked AND untracked)** — `git diff --quiet` AND `git diff --cached --quiet` must both succeed. Run `git status --porcelain`; abort if any untracked files are present unless the user explicitly opted in via `--allow-untracked`.
+3. **GitHub auth resolved** — accept ANY of:
+   - `gh auth status` succeeds (interactive CLI login), OR
+   - `GITHUB_TOKEN`/`GH_TOKEN` is set AND `gh api user` (using that token) returns 200.
+
+   Then verify push permission for the target repo: `gh repo view <owner>/<repo>` succeeds AND either (a) `gh api repos/<owner>/<repo>/collaborators/<user>/permission` returns `admin`/`maintain`/`write`, or (b) a no-op `git push --dry-run origin HEAD:refs/heads/<probe-branch>` succeeds. Abort if no push permission.
+4. **Codex CLI resolution** — Resolve the codex-review command ONCE here and cache the resolved invocation for the rest of the pipeline. Try in order:
+   - `npx tsx scripts/codex-review.ts --help` (project-local script), OR
+   - `npx @delegance/claude-autopilot codex-review --help` (package CLI, also exposes `codex-pr-review`, `bugbot`, `validate`).
+
+   Use whichever resolves first; cache the resolved command. Abort if neither does. The accepted package CLI verbs are: `codex-review`, `codex-pr-review`, `bugbot`, `validate` — pinned to the major version of `@delegance/claude-autopilot` declared in the host project's `package.json`.
+5. **Test runner reachable** — Detect from `package.json`: if `scripts.test` is defined, run `npm run test -- --help` or framework-specific probe (`vitest --version`, `jest --help`, `playwright --version`). Do NOT assume `--dry-run` is supported. If no `test` script exists, accept presence of `scripts/validate.ts` or `scripts.validate` instead. Abort only if neither test nor validation entrypoint is reachable.
+6. **Implementation-agent credentials present** — `ANTHROPIC_API_KEY` is required because the skill drives Claude Code subagents for implementation; this is independent of which provider the host project uses for application LLM calls. If your impl-agent backend is intentionally non-Anthropic, document the override in `.claude/autopilot.config.json` and the preflight will accept the configured alternative.
+7. **Migration tool reachable** (if `data/deltas/` exists) — `/migrate` skill or `supabase` CLI
+
+If any preflight check fails, abort with the specific check and remediation hint. Do NOT proceed and discover the failure mid-pipeline.
+
+**Risk-tier confirmation is preflight, not mid-pipeline.** If the entry path is an approved spec and the spec's frontmatter is missing `risk:`, run the keyword auto-escalation rule (see below) and surface the inferred tier as a single preflight prompt BEFORE Step 1 begins. This is the same pre-pipeline pause class as "ask for the spec path"; it is not a mid-pipeline check-in.
+
+## CRITICAL invariant — Do Not Pause (after spec approval)
+
+There are exactly TWO allowed pre-pipeline pause classes, both occurring BEFORE Step 1:
+
+1. **Step 0 brainstorming user input** — the user picks an approach in substep 1 and explicitly approves the final spec at the end. These are intrinsic to brainstorming, not mid-pipeline check-ins.
+2. **Preflight prompts** — missing entry inputs (spec path or idea), and risk-tier confirmation when frontmatter is missing `risk:`. These resolve before Step 1 starts.
+
+After Step 1 begins, do NOT:
+
 - Ask "want me to continue?" between steps
 - Show intermediate results or ask for confirmation
 - Pause to report progress mid-pipeline
 - Wait for user input between any steps
 
-The ONLY time you stop is if a step **fails and cannot be recovered**. Otherwise, execute all steps sequentially and report ONCE at the end (Step 9).
+The pipeline halts ONLY for:
+- Unrecoverable step failure (retries exhausted)
+- Missing credentials surfaced mid-run (despite preflight)
+- An **unresolved CRITICAL Codex finding** (see acceptance rules below)
+- An external system hard-block (TCC permission revoked, network outage, etc.)
 
-Brief status lines like `[autopilot] Step 3: Executing plan...` are fine. Full summaries, questions, or check-ins are not.
+Brief status lines like `[autopilot] Step 3: Executing plan...` are fine. Full summaries, questions, or check-ins are not. Report ONCE at the end (Step 9).
 
 ## Codex pass policy (risk-tiered)
 
-> Adopted from the v7.4.1 strategic review (see
-> `docs/strategy/2026-05-11-codex-pivot.md`, codex finding N2).
->
-> The v8 spec pass-2 finding 3 CRITICALs the original spec missed
-> (especially sandbox / credential exfiltration) was concrete evidence
-> that 1 codex pass is insufficient for security-sensitive architecture.
-> But running 3 passes on every CLI polish spec adds latency without
-> proportional value.
+> Adopted from the v7.4.1 strategic review. The v8 spec pass-2
+> finding 3 CRITICALs the original spec missed (sandbox / credential
+> exfiltration) was concrete evidence that 1 codex pass is
+> insufficient for security-sensitive architecture. But running 3
+> passes on every CLI polish spec adds latency without value.
 
-**Tier the spec by risk; pass count follows.**
-
-| Spec risk | Triggers | # of codex passes |
-|---|---|---|
-| **Low** | CLI UX changes, doc-only PRs, scaffolding extensions, config polish, CI workflow tweaks | **1 pass** (this skill's existing pattern — codex on the committed spec) |
-| **Medium** | New execution modes, auth changes, billing flows, data-access patterns, new env vars, API contracts | **2 passes** (1 on the draft spec, 1 on the merged spec after edits) |
-| **High** | Sandboxing, multi-tenancy, auto-merge, anything that mutates user repos, new secrets-handling, RPC/SECURITY DEFINER changes | **3 passes** + external review (1 draft, 1 post-edit, 1 on the impl PR diff) |
-
-**How to apply.** Spec docs declare risk in their frontmatter:
-
-```markdown
+**Specs must declare risk in YAML frontmatter:**
+```yaml
 ---
-title: <topic>
+title: <spec title>
 risk: low | medium | high
 ---
 ```
 
-If the spec's `risk:` is omitted, default to **medium** (safer than
-defaulting to low; matches the v8 spec pattern where pass-1 was
-clearly insufficient).
+**Pass-count rules:**
 
-The brainstorming skill's per-step codex pass (approach selection,
-architecture, components, error handling, implementation prep) is
-ALWAYS run — it's how we get a draft spec good enough to merge.
-This tier policy applies to the **post-brainstorm** passes and to
-the codex PR review at Step 7 below.
+| Spec risk | Triggers | Codex passes (idea-entry) | Codex passes (approved-spec-entry) |
+|---|---|---|---|
+| **Low** | CLI UX, doc-only PRs, scaffolding extensions, config polish, CI workflow tweaks | **1 pass** on the committed spec | **1 pass** on the committed spec (Step 1) |
+| **Medium** | New execution modes, auth changes, billing flows, data-access patterns, new env vars, API contracts | **2 passes** (1 draft in Step 0, 1 on merged spec in Step 1) + Step 7 PR review | **2 passes** on the committed spec in Step 1 (back-to-back, with remediation between) + Step 7 PR review |
+| **High** | Sandboxing, multi-tenancy, auto-merge, repo mutation, new secrets handling, RPC/SECURITY DEFINER changes | **3 passes** (1 draft, 1 post-edit in Step 1, 1 pre-impl) + Step 7 PR review | **3 passes** on the committed spec in Step 1 (each followed by remediation) + Step 7 PR review |
 
-**Examples from v7.x:**
+**Entry-path semantics:** When entering with an approved spec (no Step 0 draft pass available), run the full required pass count starting in Step 1, applying remediation and re-running until CRITICALs are clean. Optionally, the spec may declare prior Codex passes in frontmatter (`codex_passes_completed: <n>`) to credit toward the requirement.
 
-* v7.1.7 (setup polish — CLAUDE.md scaffold + .gitignore + dedup): low.
-  1 pass on the committed spec. Caught zero CRITICALs in practice.
-* v7.4.0 (Python/FastAPI scaffold extension): low. 1 pass. Found
-  2 CRITICALs (FastAPI precedence, dangling entrypoint) — both
-  fixed pre-impl, no PR-pass surprises.
-* v7.0 Phase 6 (engine-off removal + middleware revocation): high.
-  3 passes (spec, post-edit, PR diff). Each pass surfaced new
-  trust-boundary issues; without all three the launch would have
-  shipped with the credential-exfiltration vector C3.
-* v8.0 spec (standalone daemon): high. 2 passes so far + needs a
-  3rd before any v8 alpha implementation.
+**Backward-compatibility for missing `risk:`:**
+
+If the spec frontmatter is missing `risk:`, default to `medium` AND emit a warning. Auto-escalate to `high` only when the spec content crosses a trust boundary — match on these specific phrases (not the bare word `auth`, which is too broad and conflicts with the medium-risk "auth changes" classification in the table above):
+
+- `multi-tenant`, `tenancy`, `RLS bypass`, `SECURITY DEFINER`
+- `secret handling`, `credential handling`, `vault`, `token storage`, `session token`
+- `auto-merge`, `automerge`, `sandbox`, `sandboxed`
+- `SSO provisioning`, `SAML assertion`, `OAuth provider integration`, `privilege escalation`
+- `repo mutation`, `force-push`
+
+The risk-tier confirmation happens during preflight (see "Risk-tier confirmation is preflight, not mid-pipeline" above), not as a separate mid-pipeline pause.
+
+**Step 0 substep passes are ALWAYS 1 initial pass each, regardless of spec risk.** Brainstorming is draft-stage feedback, not load-bearing security review. The risk-tiered policy applies starting at Step 1 (where the spec is committed). Note that CRITICAL findings in a Step 0 substep still trigger remediation + re-pass per the acceptance rules below — "1 initial pass" means "1 pass to surface findings," not "1 pass total even with unresolved CRITICALs."
+
+## Acceptance rules for Codex findings (CRITICAL — remediation semantics)
+
+This is the load-bearing rule. Misreading it can ship vulnerable code.
+
+- **CRITICAL findings: must be REMEDIATED, not just acknowledged.** Apply the fix to the spec/plan/code, then re-run the Codex pass. The pipeline MAY NOT proceed while any CRITICAL finding remains unresolved. "Auto-accept" never means "continue past."
+- **WARNING findings:** remediate by default. Skip ONLY if the finding directly contradicts a locked user requirement; in that case, document the skip in the PR description with the reason.
+- **NOTE findings:** discretionary. Roll into a "post-launch follow-ups" appendix if relevant; otherwise ignore.
+
+After each Codex pass, present a single-line summary table to the user (severity + title + remediation status). Do NOT pause for "should I incorporate these?" — apply the rules above and continue.
+
+## Tempfile naming (avoid concurrent-session collisions + secure-by-default)
+
+Codex passes write to temporary input files. Use a per-run isolated directory with restrictive permissions, NOT a shared `/tmp` path:
+
+```
+<dir> = mkdtemp("${TMPDIR:-/tmp}/claude-autopilot-XXXXXX")   # mode 0700
+<file> = $dir/codex-input-<topic-slug>-<step>.md             # mode 0600, exclusive create (O_EXCL)
+```
+
+The timestamp+pid pattern from earlier drafts is INSUFFICIENT — it is predictable, world-readable in shared `/tmp`, and vulnerable to symlink races. Always use `mkdtemp` (or platform-equivalent) to get a randomized, exclusively-created directory before writing the file.
+
+Example resolved path: `/tmp/claude-autopilot-aB3xQ9/codex-input-v8-daemon-step-arch.md`
+
+Rules:
+- Use `mkdtemp` (Node: `fs.mkdtempSync(path.join(os.tmpdir(), 'claude-autopilot-'))`) — never a hand-built path
+- Set file mode `0600` on creation; set dir mode `0700`
+- Clean up the entire temp directory in a `finally` block (success OR failure)
+- Specs may contain sensitive architecture details (tenant/RLS behavior, auth flows, schema names, internal endpoints). The "no secrets" rule extends to "no production-sensitive design content in tempfiles you'd be uncomfortable surfacing"; paraphrase such content before writing
+- Never write secrets, API keys, or production credentials to tempfiles regardless of location
+
+## Step 0: Brainstorming with per-step Codex validation
+
+**Skip this step entirely if a spec already exists.** Otherwise:
+
+Drive `superpowers:brainstorming` from the user's idea. **At each substep below, automatically run `/codex-review` and incorporate findings before moving on.** One pass per substep. Do not wait to be prompted.
+
+Codex-validate after each of these brainstorming substeps:
+
+1. **Approach selection** — after presenting 2–3 approaches and the user picks one, write the chosen approach + rejected alternatives to a tempfile (per pattern above) and run the resolved codex-review command (from preflight, typically `npx tsx scripts/codex-review.ts <tempfile>` for project installs, or the package CLI fallback). Apply CRITICAL findings before proceeding (remediate, then re-pass if needed).
+2. **Architecture section** — after presenting the top-level architecture (boxes/arrows + key principles), Codex-validate; remediate CRITICALs.
+3. **Components + data flow section** — after detailing components, schemas, and data flow, Codex-validate; remediate CRITICALs.
+4. **Error handling + testing section** — after specifying failure modes and test strategy, Codex-validate; remediate CRITICALs.
+5. **Prepare final spec draft** — once the spec doc is written and self-reviewed, capture WARNINGs/NOTEs into a "post-launch follow-ups" appendix. (The load-bearing final spec validation happens in Step 1, NOT here — Step 0 produces a draft ready for the risk-tiered pass.)
+
+Each substep uses ONE initial Codex pass for fast design feedback. Additional revalidation passes are required ONLY when CRITICAL findings are remediated (per the acceptance rules above) — "one initial pass" is not a cap on re-passes after remediation.
+
+**Exit Step 0 with:**
+- Committed spec at `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`
+- Spec includes `risk: low|medium|high` in frontmatter (or accept the default-medium per the backward-compat rule)
+- User has explicitly approved the spec (this is the ONLY allowed pause in the entire pipeline)
 
 ## Pipeline
 
-Execute these steps in order. Do NOT pause between steps unless a step fails.
+Execute these steps in order. Do NOT pause between steps unless a step fails per the acceptance rules.
 
-### Step 0: Preflight
+### Step 1: Risk-tiered final spec validation + write implementation plan
 
-```bash
-npx tsx scripts/preflight.ts
-```
+**First — risk-tiered pass on the committed spec** per the policy table above:
+- Low risk: 1 pass on the spec
+- Medium risk: 2 passes (this one + Step 7 codex PR review serves as pass 2)
+- High risk: 3 passes (this + Step 7 + an explicit pre-implementation pass)
 
-If any check **fails** (red ✗): stop and tell the user what to fix before continuing.
-If checks only **warn** (yellow !): proceed — degraded steps will be noted in the final report.
-If all pass: continue immediately, no user interaction needed.
+Remediate CRITICALs in-place on the spec before moving on.
 
-### Step 1: Write Implementation Plan
-
+**Then write the plan:**
 ```
 Invoke: superpowers:writing-plans
-Input: The approved spec file
+Input: The approved + validated spec
 Output: Plan at docs/superpowers/plans/YYYY-MM-DD-<topic>.md
 ```
 
-Commit the plan. Do NOT ask the user for execution choice — always use subagent-driven development.
+After the plan is written but BEFORE committing it, run `npx tsx scripts/codex-review.ts <plan-path>`. Apply CRITICAL findings (sequencing errors, missing test coverage on a load-bearing path, schema/migration ordering bugs) to the plan inline. Then commit. Always use subagent-driven development for execution — do not ask the user.
 
-### Step 2: Set Up Worktree
+### Step 2: Set up worktree
 
 ```
 Invoke: superpowers:using-git-worktrees
 Branch: feature/<topic-slug>
 ```
 
-After the worktree is created, symlink the local env file into it so scripts
-(validate, Codex review, migrate) can read secrets:
-
-```bash
-# Detect which env file the project uses
-ENV_FILE=$(ls .env.local .env.dev .env.development .env 2>/dev/null | head -1)
-if [ -n "$ENV_FILE" ]; then
-  ln -sf "$(pwd)/$ENV_FILE" ".claude/worktrees/<branch>/$ENV_FILE"
-fi
-```
-
-If no env file is found, note it in the preflight output (step 0 will have caught this).
-
-### Step 3: Execute Plan
+### Step 3: Execute plan
 
 ```
 Invoke: superpowers:subagent-driven-development
@@ -135,74 +209,58 @@ For each task:
 - Skip formal spec/quality review to maintain speed (the validate step catches issues)
 - If subagent fails to write to worktree: implement directly
 
-### Step 4: Migrate
+### Step 4: Auto-migrate
 
-After implementation creates schema changes, the autopilot pipeline runs the migrate phase via the canonical dispatcher contract. The dispatcher:
+For any `.sql` files created in `data/deltas/` during implementation:
 
-1. Reads `.autopilot/stack.md` → looks up `migrate.skill` (default: `migrate@1`)
-2. Resolves the skill via the alias map (path-escape protected)
-3. Performs version handshake (skill manifest must declare a runtime range that includes the current `claude-autopilot` version, and an API version major matching the envelope contract)
-4. Builds an invocation envelope (`{ contractVersion, invocationId, nonce, env, repoRoot, changedFiles, gitBase, gitHead, ci, ... }`) passed to the skill via env vars + stdin
-5. Enforces policy (4-flag CI prod gate + clean-git + manual-approval + dry-run-first)
-6. Executes the configured command via `spawn(shell:false)` — structured argv only, no shell injection
-7. Parses the result artifact (file-first, nonce-bound stdout fallback only if skill manifest opts in)
-8. Writes a hash-chained audit log entry to `.autopilot/audit.log`
-9. Branches on `nextActions[]` from the result (e.g. `regenerate-types` triggers `npm run typecheck`)
+```bash
+/migrate
+```
 
-For the autopilot pipeline, this is invoked once per migration affected by the implementation changes.
-
-#### CI prod safety floor
-
-Running `--env prod` from CI requires **all four** of these (skills cannot relax):
-1. `--yes` flag explicit
-2. `AUTOPILOT_CI_POLICY=allow-prod` env var
-3. `AUTOPILOT_TARGET_ENV=prod` env var (must match `--env`)
-4. `migrate.policy.allow_prod_in_ci: true` in stack.md
-
-Plus a recognized CI provider env (GitHub Actions / GitLab CI / CircleCI / Buildkite / Jenkins) — or an explicit `AUTOPILOT_CI_PROVIDER=<name>` override for self-hosted CI.
-
-#### Configuration source of truth
-
-All migrate behavior is configured in `.autopilot/stack.md`. The autopilot skill never invokes a specific runner directly; it always dispatches through `claude-autopilot dispatch`. See:
-- `docs/superpowers/specs/2026-04-29-migrate-skill-generalization-design.md` — full spec
-- `docs/skills/rich-migrate-contract.md` — envelope + result artifact contract for skill authors
-- `docs/skills/version-compatibility.md` — runtime/skill version compatibility matrix
-- `presets/schemas/migrate.schema.json` — JSON Schema for the stack.md migrate block
+Run against dev → QA → prod with auto-promote. If migration fails, fix the SQL and retry.
 
 ### Step 5: Validate
 
+Run both checks in order:
+
 ```bash
+# 1. Static rules + LLM review on changed files
+npx autopilot run --base main
+
+# 2. Full project validation (autofix, tests, codex, gate)
 npx tsx scripts/validate.ts --commit-autofix --allow-dirty
 ```
 
-If FAIL:
-- Read the validation report at `.claude/validation-report.json`
+The `validate.ts` Phase 1 includes a **tsc regression check**: it runs `npx tsc --noEmit` against both the PR and the merge-base (cached at `.claude/.tsc-baseline-cache.json`) and surfaces only files where the PR introduces *new* TypeScript errors versus the baseline. Forward-pressure check — type errors are warnings, not blockers.
+
+If either FAIL:
+- Read findings / validation report at `.claude/validation-report.json`
 - Fix the blocking issues
-- Re-run validate
+- Re-run the failing check
 - Max 3 retry iterations
 
-If PASS: proceed to PR.
+If both PASS: proceed to PR.
 
-### Step 6: Push + Create PR
+### Step 6: Push + create PR
 
 ```bash
 git push -u origin <branch>
 gh pr create --title "<concise title>" --body "<generated PR body with spec link, test plan>"
 ```
 
-### Step 7: Codex PR Review
+### Step 7: Codex PR review
 
 ```bash
 npx tsx scripts/codex-pr-review.ts <pr-number>
 ```
 
-Posts Codex review as a GitHub PR comment. If critical findings:
-- Fix them on the branch
+Posts Codex review as a GitHub PR comment. **This serves as the second risk-tiered pass for medium-risk specs and the third pass for high-risk specs.** Remediate CRITICAL findings:
+- Fix on the branch
 - Push
 - Re-run Codex review
 - Max 2 iterations
 
-### Step 8: Bugbot Triage + Fix
+### Step 8: Bugbot triage + fix
 
 Wait 60 seconds for Cursor bugbot to post comments, then:
 
@@ -222,21 +280,24 @@ Tell the user:
 - PR URL
 - Test count
 - Validation verdict
-- Codex review summary
+- Codex review summary (passes run, CRITICALs remediated, WARNINGs skipped + reason)
 - Bugbot triage summary (fixed / dismissed / needs-human)
-- Any human-required items that couldn't be auto-fixed
+- Any human-required items that couldn't be auto-resolved
 
 ## Error Recovery
 
-- **Subagent failure:** Re-dispatch with more context or implement directly
-- **Migration failure:** Fix the migration source (per the configured `migrate.skill` in stack.md), re-dispatch via `claude-autopilot dispatch migrate`
-- **Validate failure:** Fix issues, re-run (max 3 retries)
-- **Codex critical findings:** Fix, push, re-review (max 2 retries)
-- **Bugbot findings:** /bugbot handles triage + fix automatically (max 3 rounds)
-- **Unrecoverable error:** Stop, report what was completed, show remaining work
+- **Preflight failure:** Surface the specific check, exit. Do not partially run.
+- **Missing skill/credential:** Exit with install/auth hint.
+- **Subagent failure:** Re-dispatch with more context or implement directly.
+- **Migration failure:** Fix SQL, re-run `/migrate`.
+- **Validate failure:** Fix issues, re-run (max 3 retries).
+- **Codex CRITICAL findings:** REMEDIATE (apply fix), push, re-review (max 2 retries). Do NOT continue past unremediated CRITICALs.
+- **Bugbot findings:** `/bugbot` handles triage + fix automatically (max 3 rounds).
+- **External hard-block** (TCC, network, etc.): Stop, report what was completed, surface the blocker.
 
-## When NOT to Use
+## When NOT to use
 
-- During brainstorming (this runs AFTER spec approval)
+- During brainstorming if you haven't approved the spec yet (this skill runs AFTER spec approval)
 - For hotfixes (too heavy — just commit and push)
-- When the user wants manual control over each step
+- When the user wants manual control over each step (use individual phase skills instead)
+- When required credentials/dependencies are missing and you don't want to be told (preflight will catch them)
