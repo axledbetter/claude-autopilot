@@ -68,7 +68,7 @@ describe('uploader 402 handling (Phase 3)', () => {
           limit: 'runs_per_month',
           current: 1042,
           max: 1000,
-          upgrade_url: 'https://autopilot.dev/dashboard/billing',
+          upgrade_url: 'https://example.test/dashboard/billing',
         },
       },
     });
@@ -88,7 +88,7 @@ describe('uploader 402 handling (Phase 3)', () => {
     assert.strictEqual(e.payload.limit, 'runs_per_month');
     assert.strictEqual(e.payload.current, 1042);
     assert.strictEqual(e.payload.max, 1000);
-    assert.strictEqual(e.payload.upgrade_url, 'https://autopilot.dev/dashboard/billing');
+    assert.strictEqual(e.payload.upgrade_url, 'https://example.test/dashboard/billing');
     assert.match(e.message, /1042\/1000/);
     assert.match(e.message, /Upgrade at/);
   });
@@ -102,7 +102,7 @@ describe('uploader 402 handling (Phase 3)', () => {
           limit: 'storage_bytes',
           current: 6_000_000_000,
           max: 5_368_709_120,
-          upgrade_url: 'https://autopilot.dev/dashboard/billing',
+          upgrade_url: 'https://example.test/dashboard/billing',
         },
       },
     });
@@ -125,7 +125,7 @@ describe('uploader 402 handling (Phase 3)', () => {
           limit: 'runs_per_month',
           current: 101,
           max: 100,
-          upgrade_url: 'https://autopilot.dev/dashboard/billing',
+          upgrade_url: 'https://example.test/dashboard/billing',
         },
       },
     });
