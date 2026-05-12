@@ -407,6 +407,25 @@ ANTHROPIC_API_KEY=sk-ant-... claude-autopilot scan --all
 
 We do not claim 13/13 reflects every real-world repo — it's a reproducible upper bound on a fixture that exercises the categories we explicitly target.
 
+## What's Next (v8.0.0)
+
+v7.8.0 begins decoupling runtime deps so local-only users can install a
+leaner package:
+
+- **`tsx` is being removed from `dependencies` in v8.0.0.** Today it ships
+  bundled and the launcher prefers a project-local install if you have one,
+  falling back to the bundled copy with a once-per-day deprecation warning.
+  In v8.0.0 the bundled fallback goes away — install `tsx` locally
+  (`npm install -D tsx`) or set `CLAUDE_AUTOPILOT_TSX=path` to use a global
+  install.
+- **The hosted-dashboard upload is moving to a separate optional package
+  (`@delegance/claude-autopilot-cloud`)** so you can skip Supabase entirely
+  with `npm install --omit=optional` today, and skip the dep entirely with
+  v8.0.0. The smoke workflow `.github/workflows/omit-optional-smoke.yml`
+  verifies the install-with-omit path on every PR.
+
+Track the v8.0.0 plan and request comments at https://github.com/axledbetter/claude-autopilot/issues
+
 ## Contributing
 
 Issues and PRs welcome — https://github.com/axledbetter/claude-autopilot/issues. The pipeline literally builds itself; many features in this repo were implemented by autopilot running against autopilot ([DEMO.md](DEMO.md) walks through six self-eat PRs with cost trajectory $10 → ~$2.50). Read [CONTRIBUTING.md](CONTRIBUTING.md) if it exists, otherwise: clone, `npm install`, `npm test`, open a PR.

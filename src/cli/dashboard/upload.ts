@@ -2,11 +2,28 @@
 //
 // Locates run dir at <homeDir>/runs/<runId>, calls uploadRun() directly,
 // and prints the result. Intended for resuming interrupted auto-uploads.
+//
+// v7.8.0: probes `@supabase/supabase-js` availability before any upload work.
+// Supabase is now an optionalDependency (so `npm install --omit=optional`
+// works for local-only users); if a user invokes a dashboard verb without
+// it installed, we surface an actionable install hint instead of a raw
+// `ERR_MODULE_NOT_FOUND`. Wired through `loadSupabaseOrInstallHint` so the
+// transitive-dep miss case is correctly distinguished (see
+// missing-package.ts).
 
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { readConfig, getConfigDir } from '../../dashboard/config.ts';
-import { uploadRun, type UploadOptions, type UploadResult } from '../../dashboard/upload/uploader.ts';
+// IMPORTANT: `uploader.ts` is imported DYNAMICALLY inside
+// `runDashboardUpload`, AFTER the supabase probe. A static value-import
+// here would trigger module evaluation BEFORE the probe runs — and if
+// `uploader.ts` (or anything it transitively imports) ever statically
+// imports `@supabase/supabase-js`, ERR_MODULE_NOT_FOUND would bypass the
+// install-hint and surface a raw Node error. Type-only imports are erased
+// at compile-time, so importing `UploadOptions` / `UploadResult` as types
+// is safe.
+import type { UploadOptions, UploadResult } from '../../dashboard/upload/uploader.ts';
+import { loadSupabaseOrInstallHint } from './missing-package.ts';
 
 export interface ManualUploadOptions {
   runId: string;
@@ -24,6 +41,13 @@ export interface ManualUploadResult extends UploadResult {
 }
 
 export async function runDashboardUpload(opts: ManualUploadOptions): Promise<ManualUploadResult> {
+  // v7.8.0 — supabase is an optionalDependency. Probe availability before
+  // doing any upload work; if missing, surface the actionable install hint
+  // (Error message defined in missing-package.ts). Local-only users who
+  // installed with `npm install --omit=optional` will hit this on first
+  // attempted upload and know exactly how to fix it.
+  await loadSupabaseOrInstallHint();
+
   const cfg = await readConfig();
   if (!cfg) {
     if (!opts.silent) {
@@ -49,6 +73,11 @@ export async function runDashboardUpload(opts: ManualUploadOptions): Promise<Man
     ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}),
     ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
   };
+  // Dynamic import — evaluated AFTER the supabase probe at the top of
+  // this function. Keeps the install-hint path correct even if any
+  // future change inside `uploader.ts` (or its transitive imports)
+  // adds a static value-import of `@supabase/supabase-js`.
+  const { uploadRun } = await import('../../dashboard/upload/uploader.ts');
   const res = await uploadRun(opts.runId, runDir, uploadOpts);
 
   if (!opts.silent) {

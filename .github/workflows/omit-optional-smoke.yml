@@ -1,0 +1,111 @@
+name: omit-optional smoke
+
+# v7.8.0 — verifies the `npm install --omit=optional` install path. Supabase
+# moved to optionalDependencies in v7.8.0; local-only users who don't need the
+# hosted dashboard upload should be able to skip installing it. This workflow
+# packs the current branch, installs into a clean temp dir with
+# `--omit=optional`, then asserts:
+#   1. `claude-autopilot --help` exits 0 (CLI bootstrap works without supabase)
+#   2. `claude-autopilot dashboard upload <fake-runId>` exits non-zero with the
+#      documented install hint in stderr
+#
+# A8: this guarantee is verified for **npm only**. pnpm/yarn behavior is
+# best-effort and not gated here; users on those package managers may need
+# different invocations.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'src/**'
+      - 'bin/**'
+      - 'scripts/test-runner.mjs'
+      - 'scripts/post-build-rewrite-imports.mjs'
+      - 'tsconfig*.json'
+      - '.github/workflows/omit-optional-smoke.yml'
+
+jobs:
+  smoke:
+    name: install with --omit=optional and probe upload guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install root deps
+        run: npm ci
+
+      - name: Build CLI
+        run: npm run build
+
+      - name: Pack tarball
+        id: pack
+        run: |
+          TARBALL=$(npm pack --silent | tail -n1)
+          echo "tarball=$PWD/$TARBALL" >> "$GITHUB_OUTPUT"
+          echo "Packed: $PWD/$TARBALL"
+
+      - name: Install tarball into temp dir with --omit=optional
+        env:
+          TARBALL_PATH: ${{ steps.pack.outputs.tarball }}
+        run: |
+          # IMPORTANT: install against the packed tarball, not source. Type
+          # information for supabase is shipped via dist/**/*.d.ts; consumers
+          # never run tsc against our source. (A5)
+          mkdir /tmp/smoke && cd /tmp/smoke
+          npm init -y >/dev/null
+          npm install --omit=optional "$TARBALL_PATH"
+
+          # Verify supabase is NOT present in the install (proves --omit=optional
+          # actually trimmed it).
+          if [ -d node_modules/@supabase/supabase-js ]; then
+            echo "::error::@supabase/supabase-js is present even with --omit=optional"
+            exit 1
+          fi
+
+      - name: claude-autopilot --help (no supabase, must exit 0)
+        run: |
+          cd /tmp/smoke
+          ./node_modules/.bin/claude-autopilot --help >/tmp/help-stdout 2>/tmp/help-stderr
+          status=$?
+          if [ $status -ne 0 ]; then
+            echo "::error::claude-autopilot --help exited $status (expected 0)"
+            cat /tmp/help-stderr
+            exit 1
+          fi
+          # Sanity: --help output should mention the v7.8.0 resolution overrides
+          if ! grep -q 'Resolution overrides' /tmp/help-stdout; then
+            echo "::error::--help output missing 'Resolution overrides' section"
+            exit 1
+          fi
+
+      - name: dashboard upload guard (must exit non-zero with install hint)
+        run: |
+          cd /tmp/smoke
+          set +e
+          ./node_modules/.bin/claude-autopilot dashboard upload nonexistent-run-id \
+              >/tmp/upload-stdout 2>/tmp/upload-stderr
+          status=$?
+          set -e
+          if [ $status -eq 0 ]; then
+            echo "::error::dashboard upload unexpectedly exited 0 without supabase installed"
+            cat /tmp/upload-stderr
+            exit 1
+          fi
+          if ! grep -q 'Install with: npm install @supabase/supabase-js' /tmp/upload-stderr; then
+            echo "::error::dashboard upload stderr missing the install hint"
+            echo "--- stderr ---"
+            cat /tmp/upload-stderr
+            exit 1
+          fi
+          echo "OK — dashboard upload guard surfaced the install hint as expected."
