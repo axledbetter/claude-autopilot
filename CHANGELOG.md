@@ -5,7 +5,7 @@
 ## 7.9.0 — 2026-05-12
 
 ### Changed
-- `skills/autopilot/SKILL.md` rewrite: merge "idea → spec" Step 0 (Step 0 brainstorming with per-step Codex validation) with the risk-tiered codex pass policy from v7.8.0. Adds entry decision tree (idea vs spec), operational preflight (gh auth + clean worktree + Codex reachable), tightened CRITICAL-finding remediation semantics ("must remediate, not just acknowledge"), missing-`risk:` frontmatter backward-compat (default medium + keyword auto-escalation to high), and timestamped + pid tempfile naming to prevent concurrent-session collisions. Net 242→277 lines.
+- `skills/autopilot/SKILL.md` rewrite: merge "idea → spec" Step 0 (Step 0 brainstorming with per-step Codex validation) with the risk-tiered codex pass policy from v7.8.0. Adds entry decision tree (idea vs spec), operational preflight (gh auth + push-permission check, strict worktree-clean gate, Codex CLI resolution with package-fallback, portable test-runner detection), tightened CRITICAL-finding remediation semantics ("must remediate, not just acknowledge"), missing-`risk:` frontmatter backward-compat (default medium + keyword auto-escalation to high, resolved at preflight not mid-pipeline), entry-path-aware risk-tier pass counts (idea-entry vs approved-spec-entry), and `mkdtemp`-based secure tempfile handling (0700 dir + 0600 file + cleanup in finally) to replace the predictable timestamp/pid pattern. Net 242→292 lines.
 
 ### Documentation
 - Each pipeline step now states its risk-tier behavior explicitly; Step 0 brainstorming substeps use 1 codex pass each, Step 1 onward uses the risk-tiered policy.

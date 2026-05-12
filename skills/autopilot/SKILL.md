@@ -33,22 +33,29 @@ and exit. Do NOT half-run with a missing dependency.
 
 Verify before any LLM call:
 
-1. `git status -uno` — working tree clean, OR on a dedicated feature branch (not main/master)
-2. `gh auth status` — authenticated, can create PRs
-3. `npx tsx scripts/codex-review.ts --version` (or `--help`) — Codex CLI reachable
-4. `npm test --silent --dry-run` or equivalent — test runner reachable
-5. Migration tool reachable (if `data/deltas/` exists) — `/migrate` skill or `supabase` CLI
+1. **Working-tree state** — `git diff --quiet` AND `git diff --cached --quiet` must both succeed (no dirty tracked changes). Run `git status --porcelain` to enumerate untracked files; abort if any are present unless the user explicitly opted in via `--allow-untracked`. Additionally, current branch MUST NOT be `main`/`master` — create a dedicated worktree/branch first if it is.
+2. **GitHub auth + push permission** — `gh auth status` AND `gh repo view <owner>/<repo>` succeed; if the target remote is a fork, verify push permission with a no-op `git push --dry-run origin HEAD:refs/heads/<probe-branch>` (or `gh api -X GET repos/<owner>/<repo>/collaborators/<user>/permission`). Abort if the authenticated user cannot push to the target branch.
+3. **Codex CLI resolution** — Resolve the codex-review command ONCE here and cache the resolved invocation for the rest of the pipeline. Try in order: `npx tsx scripts/codex-review.ts --help` (project-local), then `npx claude-autopilot codex-review --help` (package CLI fallback). Use whichever resolves first; abort if neither does.
+4. **Test runner reachable** — Detect from `package.json`: if `scripts.test` is defined, run `npm run test -- --help` (or framework-specific equivalent: `vitest --version`, `jest --help`, `playwright --version`). Do NOT assume `--dry-run` is supported. Abort only if no test script is detected AND no project validation script exists.
+5. **Migration tool reachable** (if `data/deltas/` exists) — `/migrate` skill or `supabase` CLI
 
 If any preflight check fails, abort with the specific check and remediation hint. Do NOT proceed and discover the failure mid-pipeline.
 
+**Risk-tier confirmation is preflight, not mid-pipeline.** If the entry path is an approved spec and the spec's frontmatter is missing `risk:`, run the keyword auto-escalation rule (see below) and surface the inferred tier as a single preflight prompt BEFORE Step 1 begins. This is the same pre-pipeline pause class as "ask for the spec path"; it is not a mid-pipeline check-in.
+
 ## CRITICAL invariant — Do Not Pause (after spec approval)
 
-The user-approval gate at the end of Step 0 is the ONLY allowed pause in the entire pipeline. Specifically, do NOT:
+There are exactly TWO allowed pre-pipeline pause classes, both occurring BEFORE Step 1:
+
+1. **Step 0 brainstorming user input** — the user picks an approach in substep 1 and explicitly approves the final spec at the end. These are intrinsic to brainstorming, not mid-pipeline check-ins.
+2. **Preflight prompts** — missing entry inputs (spec path or idea), and risk-tier confirmation when frontmatter is missing `risk:`. These resolve before Step 1 starts.
+
+After Step 1 begins, do NOT:
 
 - Ask "want me to continue?" between steps
 - Show intermediate results or ask for confirmation
 - Pause to report progress mid-pipeline
-- Wait for user input between any steps after spec approval
+- Wait for user input between any steps
 
 The pipeline halts ONLY for:
 - Unrecoverable step failure (retries exhausted)
@@ -76,11 +83,13 @@ risk: low | medium | high
 
 **Pass-count rules:**
 
-| Spec risk | Triggers | Codex passes |
-|---|---|---|
-| **Low** | CLI UX, doc-only PRs, scaffolding extensions, config polish, CI workflow tweaks | **1 pass** on the committed spec |
-| **Medium** | New execution modes, auth changes, billing flows, data-access patterns, new env vars, API contracts | **2 passes** (1 on draft, 1 on merged spec after edits) |
-| **High** | Sandboxing, multi-tenancy, auto-merge, repo mutation, new secrets handling, RPC/SECURITY DEFINER changes | **3 passes** + external review (1 draft, 1 post-edit, 1 on impl PR diff) |
+| Spec risk | Triggers | Codex passes (idea-entry) | Codex passes (approved-spec-entry) |
+|---|---|---|---|
+| **Low** | CLI UX, doc-only PRs, scaffolding extensions, config polish, CI workflow tweaks | **1 pass** on the committed spec | **1 pass** on the committed spec (Step 1) |
+| **Medium** | New execution modes, auth changes, billing flows, data-access patterns, new env vars, API contracts | **2 passes** (1 draft in Step 0, 1 on merged spec in Step 1) + Step 7 PR review | **2 passes** on the committed spec in Step 1 (back-to-back, with remediation between) + Step 7 PR review |
+| **High** | Sandboxing, multi-tenancy, auto-merge, repo mutation, new secrets handling, RPC/SECURITY DEFINER changes | **3 passes** (1 draft, 1 post-edit in Step 1, 1 pre-impl) + Step 7 PR review | **3 passes** on the committed spec in Step 1 (each followed by remediation) + Step 7 PR review |
+
+**Entry-path semantics:** When entering with an approved spec (no Step 0 draft pass available), run the full required pass count starting in Step 1, applying remediation and re-running until CRITICALs are clean. Optionally, the spec may declare prior Codex passes in frontmatter (`codex_passes_completed: <n>`) to credit toward the requirement.
 
 **Backward-compatibility for missing `risk:`:**
 
@@ -91,9 +100,9 @@ If the spec frontmatter is missing `risk:`, default to `medium` AND emit a warni
 - `auth`, `OAuth`, `SAML`, `SSO`
 - `repo mutation`, `force-push`
 
-The skill should THEN ask the user to confirm or correct the inferred risk before proceeding.
+The risk-tier confirmation happens during preflight (see "Risk-tier confirmation is preflight, not mid-pipeline" above), not as a separate mid-pipeline pause.
 
-**Step 0 substep passes are ALWAYS 1 each, regardless of spec risk.** Brainstorming is draft-stage feedback, not load-bearing security review. The risk-tiered policy applies starting at Step 1 (where the spec is committed).
+**Step 0 substep passes are ALWAYS 1 initial pass each, regardless of spec risk.** Brainstorming is draft-stage feedback, not load-bearing security review. The risk-tiered policy applies starting at Step 1 (where the spec is committed). Note that CRITICAL findings in a Step 0 substep still trigger remediation + re-pass per the acceptance rules below — "1 initial pass" means "1 pass to surface findings," not "1 pass total even with unresolved CRITICALs."
 
 ## Acceptance rules for Codex findings (CRITICAL — remediation semantics)
 
@@ -105,19 +114,25 @@ This is the load-bearing rule. Misreading it can ship vulnerable code.
 
 After each Codex pass, present a single-line summary table to the user (severity + title + remediation status). Do NOT pause for "should I incorporate these?" — apply the rules above and continue.
 
-## Tempfile naming (avoid concurrent-session collisions)
+## Tempfile naming (avoid concurrent-session collisions + secure-by-default)
 
-Codex passes write to temporary input files. Use this pattern:
+Codex passes write to temporary input files. Use a per-run isolated directory with restrictive permissions, NOT a shared `/tmp` path:
+
 ```
-/tmp/codex-input-<topic-slug>-<step>-<YYYYMMDDHHmmss>-<pid>.md
+<dir> = mkdtemp("${TMPDIR:-/tmp}/claude-autopilot-XXXXXX")   # mode 0700
+<file> = $dir/codex-input-<topic-slug>-<step>.md             # mode 0600, exclusive create (O_EXCL)
 ```
 
-Example: `/tmp/codex-input-v8-daemon-step-arch-20260512143000-72341.md`
+The timestamp+pid pattern from earlier drafts is INSUFFICIENT — it is predictable, world-readable in shared `/tmp`, and vulnerable to symlink races. Always use `mkdtemp` (or platform-equivalent) to get a randomized, exclusively-created directory before writing the file.
+
+Example resolved path: `/tmp/claude-autopilot-aB3xQ9/codex-input-v8-daemon-step-arch.md`
 
 Rules:
-- Clean up tempfiles after the Codex pass completes (success OR failure)
-- Never write secrets, API keys, or production credentials to tempfiles — they live in `/tmp`, world-readable on multi-user systems
-- The `<topic-slug>` is fine as plain text (architecture names, feature names) — sensitive content gets paraphrased
+- Use `mkdtemp` (Node: `fs.mkdtempSync(path.join(os.tmpdir(), 'claude-autopilot-'))`) — never a hand-built path
+- Set file mode `0600` on creation; set dir mode `0700`
+- Clean up the entire temp directory in a `finally` block (success OR failure)
+- Specs may contain sensitive architecture details (tenant/RLS behavior, auth flows, schema names, internal endpoints). The "no secrets" rule extends to "no production-sensitive design content in tempfiles you'd be uncomfortable surfacing"; paraphrase such content before writing
+- Never write secrets, API keys, or production credentials to tempfiles regardless of location
 
 ## Step 0: Brainstorming with per-step Codex validation
 
@@ -127,13 +142,13 @@ Drive `superpowers:brainstorming` from the user's idea. **At each substep below,
 
 Codex-validate after each of these brainstorming substeps:
 
-1. **Approach selection** — after presenting 2–3 approaches and the user picks one, write the chosen approach + rejected alternatives to a tempfile (per pattern above) and run `npx tsx scripts/codex-review.ts <tempfile>`. Apply CRITICAL findings before proceeding (remediate, then re-pass if needed).
+1. **Approach selection** — after presenting 2–3 approaches and the user picks one, write the chosen approach + rejected alternatives to a tempfile (per pattern above) and run the resolved codex-review command (from preflight, typically `npx tsx scripts/codex-review.ts <tempfile>` for project installs, or the package CLI fallback). Apply CRITICAL findings before proceeding (remediate, then re-pass if needed).
 2. **Architecture section** — after presenting the top-level architecture (boxes/arrows + key principles), Codex-validate; remediate CRITICALs.
 3. **Components + data flow section** — after detailing components, schemas, and data flow, Codex-validate; remediate CRITICALs.
 4. **Error handling + testing section** — after specifying failure modes and test strategy, Codex-validate; remediate CRITICALs.
 5. **Prepare final spec draft** — once the spec doc is written and self-reviewed, capture WARNINGs/NOTEs into a "post-launch follow-ups" appendix. (The load-bearing final spec validation happens in Step 1, NOT here — Step 0 produces a draft ready for the risk-tiered pass.)
 
-Each substep uses exactly ONE Codex pass for fast design feedback.
+Each substep uses ONE initial Codex pass for fast design feedback. Additional revalidation passes are required ONLY when CRITICAL findings are remediated (per the acceptance rules above) — "one initial pass" is not a cap on re-passes after remediation.
 
 **Exit Step 0 with:**
 - Committed spec at `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`
