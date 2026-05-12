@@ -79,17 +79,33 @@ function lineColFromOffset(text: string, pos: number): { line: number; col: numb
   return { line, col };
 }
 
-function inspectFile(file: string, violations: Violation[]): void {
-  const src = fs.readFileSync(file, 'utf8');
-  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS);
-
-  const allowed = isAllowed(file);
+/**
+ * Shared visitor — walks `sourceFile` and records every value-side reference
+ * to `@supabase/supabase-js` outside the dashboard allowlist. Called by both
+ * the script's directory walker (`inspectFile`) and the test seam
+ * (`auditSourceForTest`). The two callers differ only in HOW they construct
+ * the `ts.SourceFile`:
+ *   - `inspectFile` reads the file off disk and runs createSourceFile.
+ *   - `auditSourceForTest` takes a raw string and runs createSourceFile.
+ * Both produce the same shape of SourceFile, so the visitor logic is
+ * identical — extracting it removes ~80 lines of drift-prone duplication.
+ */
+function collectSupabaseViolations(
+  sourceFile: ts.SourceFile,
+  filePath: string,
+  source: string,
+  isAllowedPath: (p: string) => boolean,
+): Violation[] {
+  const violations: Violation[] = [];
+  const allowed = isAllowedPath(filePath);
 
   function record(node: ts.Node, reason: string): void {
-    const { line, col } = lineColFromOffset(src, node.getStart(sf));
-    const snippetEnd = src.indexOf('\n', node.getStart(sf));
-    const snippet = src.slice(node.getStart(sf), snippetEnd === -1 ? node.getEnd() : snippetEnd).trim();
-    violations.push({ file, line, col, reason, snippet });
+    const { line, col } = lineColFromOffset(source, node.getStart(sourceFile));
+    const snippetEnd = source.indexOf('\n', node.getStart(sourceFile));
+    const snippet = source
+      .slice(node.getStart(sourceFile), snippetEnd === -1 ? node.getEnd() : snippetEnd)
+      .trim();
+    violations.push({ file: filePath, line, col, reason, snippet });
   }
 
   function moduleSpecifierText(spec: ts.Expression | undefined): string | null {
@@ -207,7 +223,14 @@ function inspectFile(file: string, violations: Violation[]): void {
     }
     ts.forEachChild(node, visit);
   }
-  visit(sf);
+  visit(sourceFile);
+  return violations;
+}
+
+function inspectFile(file: string, violations: Violation[]): void {
+  const src = fs.readFileSync(file, 'utf8');
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS);
+  violations.push(...collectSupabaseViolations(sf, file, src, isAllowed));
 }
 
 function main(): number {
@@ -249,84 +272,14 @@ function main(): number {
  * dashboard allowlist applies (callers can pass `src/cli/dashboard/foo.ts`
  * to verify allowlist behavior, or `src/whatever.ts` to verify failure).
  * Returns the list of violations.
+ *
+ * Delegates to `collectSupabaseViolations` so the test seam and the script's
+ * directory walker exercise the SAME AST traversal logic — previously the
+ * two implementations duplicated ~80 lines of visitor code and could drift.
  */
 export function auditSourceForTest(filePath: string, source: string): Violation[] {
-  const violations: Violation[] = [];
   const sf = ts.createSourceFile(filePath, source, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS);
-  const allowed = isAllowed(filePath);
-  const record = (node: ts.Node, reason: string): void => {
-    const { line, col } = lineColFromOffset(source, node.getStart(sf));
-    const snippetEnd = source.indexOf('\n', node.getStart(sf));
-    const snippet = source.slice(node.getStart(sf), snippetEnd === -1 ? node.getEnd() : snippetEnd).trim();
-    violations.push({ file: filePath, line, col, reason, snippet });
-  };
-  // Inline-equivalent of inspectFile's visitor — we duplicate the small
-  // amount of traversal logic here so the public test seam doesn't need
-  // to reach into module-private helpers.
-  const visit = (node: ts.Node): void => {
-    if (ts.isImportDeclaration(node)) {
-      const spec = (() => {
-        const s = node.moduleSpecifier;
-        return ts.isStringLiteral(s) || ts.isNoSubstitutionTemplateLiteral(s) ? s.text : null;
-      })();
-      if (spec === PKG && !allowed) {
-        const importClause = node.importClause;
-        if (!importClause) {
-          record(node, 'side-effect import of @supabase/supabase-js outside dashboard allowlist');
-        } else if (!importClause.isTypeOnly) {
-          const hasDefault = !!importClause.name;
-          const nb = importClause.namedBindings;
-          const hasNs = !!nb && ts.isNamespaceImport(nb);
-          const hasNamedValue = !!nb && ts.isNamedImports(nb) && nb.elements.some((el) => !el.isTypeOnly);
-          if (hasDefault || hasNs || hasNamedValue) {
-            record(node, 'static value-import of @supabase/supabase-js outside dashboard allowlist');
-          }
-        }
-      }
-    }
-    if (ts.isExportDeclaration(node)) {
-      const ms = node.moduleSpecifier;
-      const spec = ms && (ts.isStringLiteral(ms) || ts.isNoSubstitutionTemplateLiteral(ms)) ? ms.text : null;
-      if (spec === PKG && !node.isTypeOnly && !allowed) {
-        const clause = node.exportClause;
-        let isAllTypeOnly = false;
-        if (clause && ts.isNamedExports(clause)) {
-          isAllTypeOnly = clause.elements.length > 0 && clause.elements.every((el) => el.isTypeOnly);
-        }
-        if (!isAllTypeOnly) {
-          record(node, 're-export from @supabase/supabase-js outside dashboard allowlist');
-        }
-      }
-    }
-    if (ts.isImportEqualsDeclaration(node) && !node.isTypeOnly && !allowed) {
-      const ref = node.moduleReference;
-      if (ts.isExternalModuleReference(ref)) {
-        const expr = ref.expression;
-        if (expr && (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) && expr.text === PKG) {
-          record(node, "import = require('@supabase/supabase-js') outside dashboard allowlist");
-        }
-      }
-    }
-    if (ts.isCallExpression(node)) {
-      const callee = node.expression;
-      const isRequire = ts.isIdentifier(callee) && callee.text === 'require' && node.arguments.length === 1;
-      const isImportCall = callee.kind === ts.SyntaxKind.ImportKeyword && node.arguments.length >= 1;
-      if (isRequire || isImportCall) {
-        const arg = node.arguments[0];
-        if (arg && (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) && arg.text === PKG && !allowed) {
-          record(
-            node,
-            isRequire
-              ? "require('@supabase/supabase-js') outside dashboard allowlist"
-              : "dynamic import('@supabase/supabase-js') outside dashboard allowlist",
-          );
-        }
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sf);
-  return violations;
+  return collectSupabaseViolations(sf, filePath, source, isAllowed);
 }
 
 // Only auto-run as a script when invoked directly (e.g. `tsx
