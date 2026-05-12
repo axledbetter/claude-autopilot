@@ -267,13 +267,22 @@ function tryPath(opts: PathLookupOpts): TsxResolution | null {
     if (!candidate) continue;
 
     // A3 — PATH hit that is actually inside our bundled node_modules
-    // is not really "user-supplied tsx on PATH"; fall through to bundled
-    // so the deprecation warning still fires. Resolve symlinks first
-    // because `node_modules/.bin/tsx` is typically a symlink to
-    // `../tsx/dist/cli.mjs` on Unix (and a .cmd shim on Windows that
-    // textually references the package directory).
+    // is not really "user-supplied tsx on PATH"; skip this candidate and
+    // keep searching subsequent PATH entries. If no real user tsx exists
+    // anywhere on PATH, the loop falls off the end and the caller
+    // (resolveTsx) falls through to bundled with the deprecation warning.
+    //
+    // Critical: this MUST be `continue`, not `return null`. npm prepends
+    // `node_modules/.bin` to PATH when running scripts, so the bundled-
+    // pointing entry is hit first. A `return null` here would abort the
+    // entire PATH search, hiding a user's globally-installed tsx that
+    // appears later in PATH and triggering a spurious deprecation warning.
+    //
+    // Resolve symlinks via realpath because `node_modules/.bin/tsx` is
+    // typically a symlink to `../tsx/dist/cli.mjs` on Unix (and a .cmd
+    // shim on Windows that textually references the package directory).
     if (bundledPkgRoot && isInBundledPackageRoot(candidate, bundledPkgRoot)) {
-      return null;
+      continue;
     }
 
     // For a PATH-resolved bin, spawn it directly. On Windows the .cmd

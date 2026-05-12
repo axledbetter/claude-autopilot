@@ -121,12 +121,15 @@ function pathTsxPath() {
         })();
     if (!cand) continue;
     // A3 self-pointer: if PATH-resolved bin's package root is OUR own
-    // bundled tsx package root, treat it as bundled so the deprecation
-    // warning still fires. Compare package roots (not bin dirs) and
-    // resolve symlinks — `.bin/tsx` is a symlink to `../tsx/dist/...`
-    // on Unix and a `.cmd` shim on Windows.
+    // bundled tsx package root, skip this candidate and keep searching.
+    // npm prepends `node_modules/.bin` to PATH for `npm run`, so the
+    // bundled-pointing entry is typically hit first. `return null` here
+    // would abort the whole PATH search and hide a user's globally-
+    // installed tsx later in PATH. `continue` instead — if no other PATH
+    // entry hits, the loop falls off the end and the caller falls
+    // through to bundled with the deprecation warning.
     if (isInBundledPackage(cand, bundled)) {
-      return null;
+      continue;
     }
     // On Windows, `.cmd`/`.bat` shims can't be executed directly by
     // spawn() — callers must pass `shell: true`. Mark the resolution
