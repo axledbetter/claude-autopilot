@@ -6,14 +6,11 @@
 
 **Open source, MIT-licensed, runs on your machine with your API keys.** No hosted agent, no per-seat subscription — `npm install -g @delegance/claude-autopilot@latest` and you're done.
 
-## Hosted product (v7)
+## Hosted dashboard (early access)
 
-A hosted dashboard at **[autopilot.dev](https://autopilot.dev)** complements the self-hosted CLI. The CLI keeps doing all the work locally on your machine — running models, writing code, opening PRs — and optionally uploads each completed run's state + cost summary to the hosted dashboard so your team can see what's been shipped, audit cost, and manage memberships from the browser.
+A hosted dashboard for team-wide run history, cost roll-up, and member management is in design-partner phase — not yet open for self-serve signup. The CLI is and stays fully usable without it.
 
-- **CLI (this package)** — local-first, no telemetry by default, your machine + your API keys. Pipeline stays the same.
-- **Dashboard ([autopilot.dev](https://autopilot.dev))** — opt-in. After `claude-autopilot dashboard login` mints a personal API key via a loopback OAuth flow, every engine-on autopilot run uploads its `state.json` + `events.ndjson` + cost roll-up at run.complete. Org admin (members, billing, SSO) lives there.
-
-The CLI works offline; the dashboard is purely additive. See [docs/v7/runbook.md](./docs/v7/runbook.md) for operating the hosted product and [docs/v7/breaking-changes.md](./docs/v7/breaking-changes.md) for the v6→v7 migration checklist.
+If you're interested in early access, open an issue or email alex@delegance.com. Otherwise the rest of this README covers everything you need to run the CLI locally with your own API keys.
 
 ```bash
 claude-autopilot brainstorm "add SSO with SAML for enterprise tenants"
