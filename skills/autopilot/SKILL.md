@@ -31,13 +31,23 @@ and exit. Do NOT half-run with a missing dependency.
 
 ## Operational preflight (run before Step 0/1)
 
-Verify before any LLM call:
+Each numbered check below is a HARD GATE. ALL must pass before any LLM call. There are no "OR" conditions — every condition listed inside a check must hold.
 
-1. **Working-tree state** — `git diff --quiet` AND `git diff --cached --quiet` must both succeed (no dirty tracked changes). Run `git status --porcelain` to enumerate untracked files; abort if any are present unless the user explicitly opted in via `--allow-untracked`. Additionally, current branch MUST NOT be `main`/`master` — create a dedicated worktree/branch first if it is.
-2. **GitHub auth + push permission** — `gh auth status` AND `gh repo view <owner>/<repo>` succeed; if the target remote is a fork, verify push permission with a no-op `git push --dry-run origin HEAD:refs/heads/<probe-branch>` (or `gh api -X GET repos/<owner>/<repo>/collaborators/<user>/permission`). Abort if the authenticated user cannot push to the target branch.
-3. **Codex CLI resolution** — Resolve the codex-review command ONCE here and cache the resolved invocation for the rest of the pipeline. Try in order: `npx tsx scripts/codex-review.ts --help` (project-local), then `npx claude-autopilot codex-review --help` (package CLI fallback). Use whichever resolves first; abort if neither does.
-4. **Test runner reachable** — Detect from `package.json`: if `scripts.test` is defined, run `npm run test -- --help` (or framework-specific equivalent: `vitest --version`, `jest --help`, `playwright --version`). Do NOT assume `--dry-run` is supported. Abort only if no test script is detected AND no project validation script exists.
-5. **Migration tool reachable** (if `data/deltas/` exists) — `/migrate` skill or `supabase` CLI
+1. **Branch is NOT `main`/`master`** — independent hard gate. Run `git rev-parse --abbrev-ref HEAD`; if the result is `main` or `master`, ABORT immediately. The skill never commits or mutates `main`/`master` directly. Resolution: create a feature branch or worktree first.
+2. **Working tree is clean (tracked AND untracked)** — `git diff --quiet` AND `git diff --cached --quiet` must both succeed. Run `git status --porcelain`; abort if any untracked files are present unless the user explicitly opted in via `--allow-untracked`.
+3. **GitHub auth resolved** — accept ANY of:
+   - `gh auth status` succeeds (interactive CLI login), OR
+   - `GITHUB_TOKEN`/`GH_TOKEN` is set AND `gh api user` (using that token) returns 200.
+
+   Then verify push permission for the target repo: `gh repo view <owner>/<repo>` succeeds AND either (a) `gh api repos/<owner>/<repo>/collaborators/<user>/permission` returns `admin`/`maintain`/`write`, or (b) a no-op `git push --dry-run origin HEAD:refs/heads/<probe-branch>` succeeds. Abort if no push permission.
+4. **Codex CLI resolution** — Resolve the codex-review command ONCE here and cache the resolved invocation for the rest of the pipeline. Try in order:
+   - `npx tsx scripts/codex-review.ts --help` (project-local script), OR
+   - `npx @delegance/claude-autopilot codex-review --help` (package CLI, also exposes `codex-pr-review`, `bugbot`, `validate`).
+
+   Use whichever resolves first; cache the resolved command. Abort if neither does. The accepted package CLI verbs are: `codex-review`, `codex-pr-review`, `bugbot`, `validate` — pinned to the major version of `@delegance/claude-autopilot` declared in the host project's `package.json`.
+5. **Test runner reachable** — Detect from `package.json`: if `scripts.test` is defined, run `npm run test -- --help` or framework-specific probe (`vitest --version`, `jest --help`, `playwright --version`). Do NOT assume `--dry-run` is supported. If no `test` script exists, accept presence of `scripts/validate.ts` or `scripts.validate` instead. Abort only if neither test nor validation entrypoint is reachable.
+6. **Implementation-agent credentials present** — `ANTHROPIC_API_KEY` is required because the skill drives Claude Code subagents for implementation; this is independent of which provider the host project uses for application LLM calls. If your impl-agent backend is intentionally non-Anthropic, document the override in `.claude/autopilot.config.json` and the preflight will accept the configured alternative.
+7. **Migration tool reachable** (if `data/deltas/` exists) — `/migrate` skill or `supabase` CLI
 
 If any preflight check fails, abort with the specific check and remediation hint. Do NOT proceed and discover the failure mid-pipeline.
 
@@ -93,11 +103,12 @@ risk: low | medium | high
 
 **Backward-compatibility for missing `risk:`:**
 
-If the spec frontmatter is missing `risk:`, default to `medium` AND emit a warning. Auto-escalate to `high` if the spec content contains any of these keyword triggers:
-- `multi-tenant`, `tenancy`, `RLS`, `SECURITY DEFINER`
-- `secret`, `credential`, `vault`, `token-handling`
+If the spec frontmatter is missing `risk:`, default to `medium` AND emit a warning. Auto-escalate to `high` only when the spec content crosses a trust boundary — match on these specific phrases (not the bare word `auth`, which is too broad and conflicts with the medium-risk "auth changes" classification in the table above):
+
+- `multi-tenant`, `tenancy`, `RLS bypass`, `SECURITY DEFINER`
+- `secret handling`, `credential handling`, `vault`, `token storage`, `session token`
 - `auto-merge`, `automerge`, `sandbox`, `sandboxed`
-- `auth`, `OAuth`, `SAML`, `SSO`
+- `SSO provisioning`, `SAML assertion`, `OAuth provider integration`, `privilege escalation`
 - `repo mutation`, `force-push`
 
 The risk-tier confirmation happens during preflight (see "Risk-tier confirmation is preflight, not mid-pipeline" above), not as a separate mid-pipeline pause.
