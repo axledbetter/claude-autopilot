@@ -424,7 +424,7 @@ leaner package:
   v8.0.0. The smoke workflow `.github/workflows/omit-optional-smoke.yml`
   verifies the install-with-omit path on every PR.
 
-Discussion + migration notes: https://github.com/axledbetter/claude-autopilot/discussions/<TBD>
+Track the v8.0.0 plan and request comments at https://github.com/axledbetter/claude-autopilot/issues
 
 ## Contributing
 
