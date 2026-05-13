@@ -2,6 +2,17 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.9.1 — 2026-05-13 (correctness hotfix)
+
+### Fixed
+- **`skills/autopilot/SKILL.md` ran migrate BEFORE validate.** On stacks that auto-promote (Supabase-script-specific), this could leave production with new schema and no working code if validate or PR review later failed. Resequenced: validate is now Step 4, migrate-dev is Step 5. PR + Codex + bugbot follow. Production migration is explicitly handed off to the user's CI/CD pipeline.
+- **Removed misleading "dev → QA → prod auto-promote" claim.** That behavior is Supabase-stack-specific, not a generic CLI capability. The skill now references the four real `migrate.policy` keys (`allow_prod_in_ci`, `require_clean_git`, `require_manual_approval`, `require_dry_run_first`) and explains how to wire them in `.autopilot/stack.md`.
+
+### Out of scope (filed as v7.10.0 + v7.11.0 candidates)
+- Expand/contract migration classification (additive vs destructive enforcement)
+- v6 run-state engine integration into the autopilot skill (4,873 LOC of checkpoint/resume infra currently unused by the skill)
+- Retry-loop sameness detector ("same fingerprint twice → escalate to human")
+
 ## 7.9.0 — 2026-05-12
 
 ### Changed

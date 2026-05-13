@@ -1,6 +1,6 @@
 ---
 name: autopilot
-description: End-to-end pipeline — brainstorm → spec → plan → implement → migrate → validate → PR → Codex review → bugbot. Risk-tiered. No manual intervention after spec approval.
+description: End-to-end pipeline — brainstorm → spec → plan → implement → validate → migrate dev → PR → Codex review → bugbot → merge. Risk-tiered. No manual intervention after spec approval until PR merge; production deploy/migration gates are handled by the user's CI/CD pipeline.
 ---
 
 # Autopilot — Idea to Merged PR Pipeline
@@ -209,26 +209,16 @@ For each task:
 - Skip formal spec/quality review to maintain speed (the validate step catches issues)
 - If subagent fails to write to worktree: implement directly
 
-### Step 4: Auto-migrate
+### Step 4: Validate
 
-For any `.sql` files created in `data/deltas/` during implementation:
-
-```bash
-/migrate
-```
-
-Run against dev → QA → prod with auto-promote. If migration fails, fix the SQL and retry.
-
-### Step 5: Validate
-
-Run both checks in order:
+Run both checks in order. **Autofix runs first** so the static review sees the final post-autofix diff (otherwise the LLM review is stale on autofix mutations):
 
 ```bash
-# 1. Static rules + LLM review on changed files
-npx autopilot run --base main
-
-# 2. Full project validation (autofix, tests, codex, gate)
+# 1. Full project validation FIRST (autofix, tests, codex, gate) — mutates files
 npx tsx scripts/validate.ts --commit-autofix --allow-dirty
+
+# 2. THEN static rules + LLM review on the final diff
+npx autopilot run --base main
 ```
 
 The `validate.ts` Phase 1 includes a **tsc regression check**: it runs `npx tsc --noEmit` against both the PR and the merge-base (cached at `.claude/.tsc-baseline-cache.json`) and surfaces only files where the PR introduces *new* TypeScript errors versus the baseline. Forward-pressure check — type errors are warnings, not blockers.
@@ -239,7 +229,73 @@ If either FAIL:
 - Re-run the failing check
 - Max 3 retry iterations
 
-If both PASS: proceed to PR.
+If both PASS: proceed to Step 5.
+
+### Step 5: Migrate dev-only (verify SQL parses + applies)
+
+For any `.sql` files created in `data/deltas/` during implementation, run the migration against the dev database ONLY. Always invoke explicitly — do not rely on the CLI default:
+
+```bash
+/migrate --env=dev
+```
+
+This verifies the SQL parses and applies against the real schema shape before the PR opens. Prod migration is **deferred to the user's CI/CD pipeline** after the PR merges — autopilot does NOT orchestrate prod deploys or migrations directly, because deployment ordering varies wildly across user infrastructure (ECS, CodeBuild, blue/green, manual approvals).
+
+**Post-migration re-validate** (catches type/test failures that only surface after the schema actually changes):
+
+```bash
+# Regenerate any stack-specific DB types if migration introduced schema changes
+# (e.g. Supabase: scripts/gen-types.ts). Stack-specific — skip if N/A.
+# REQUIRED for any stack with generated DB-typed code: missing regeneration leaves
+# stale types and validate.ts may not catch runtime/schema mismatches if the PR
+# does not directly touch the changed columns.
+
+# Re-run validation against the post-migration dev state (no autofix this time):
+npx tsx scripts/validate.ts --allow-dirty
+
+# If migration or type generation produced new file changes, re-run the
+# static/LLM review against the final diff — the Step 4 review is now stale.
+git diff --quiet HEAD -- || npx autopilot run --base main
+```
+
+> **v7.10+ candidate:** automate detection by reading a `post_migrate_dev: [...]` hook list from `.autopilot/stack.md` and failing Step 5 if schema changes are detected but no type-generation hook is configured. Today this is advisory — operator responsibility.
+
+**Dev database drift** — `/migrate --env=dev` applies schema changes to dev BEFORE the PR is merged. If the PR is later rejected, substantially changed, or abandoned, dev will contain unmerged schema. Mitigations:
+
+- **Preferred:** target an isolated/ephemeral dev database per branch (per-PR Supabase project, Postgres schema namespace, or local container).
+- **Shared dev DB fallback:** before running Step 5, capture the current migration_state head; on PR abandonment, run a corrective migration that brings dev back to that head. Document the policy in `.autopilot/stack.md` so the team knows the cleanup contract.
+
+If migration fails:
+- **Before retrying:** confirm the dev migration rolled back cleanly. Some migration tools leave partial state on failure (non-transactional DDL, drift in migration_state table). If partial state exists, reset the dev database to the pre-migration baseline OR write a corrective migration that brings dev back to a known state.
+- Fix the SQL
+- Re-run Step 4 (validate) against the corrected code
+- Re-run Step 5 (migrate dev)
+- Max 3 retry iterations
+
+**For prod-safety policy**, projects should set in `.autopilot/stack.md`:
+
+```yaml
+migrate:
+  skill: <your-skill>@1
+  policy:
+    require_dry_run_first: true       # always preview before apply
+    require_manual_approval: true     # CI gates prod on human approval
+    require_clean_git: true           # never apply against dirty tree
+```
+
+As of v7.9.1, the valid keys per `presets/schemas/migrate.schema.json` are: `allow_prod_in_ci`, `require_clean_git`, `require_manual_approval`, `require_dry_run_first`. If the schema changes in a future release, that file is the source of truth.
+
+These keys are **declarative policy inputs**, not autopilot enforcement. Your CI/CD pipeline must explicitly invoke a migrate runner that reads `.autopilot/stack.md` AND enforces equivalent checks (e.g. require-clean-git, dry-run-before-apply, manual-approval-for-prod). Setting them in stack.md alone does not protect production unless your pipeline reads them.
+
+**Minimum CI/CD migrate-runner contract** (fail closed on all of these):
+
+1. Refuse to apply if `.autopilot/stack.md` cannot be read or parsed.
+2. Refuse to apply if the policy block contains unknown keys (schema-validate against `presets/schemas/migrate.schema.json`).
+3. If `require_dry_run_first: true`: refuse apply without a matching dry-run artifact for the current git head + target env.
+4. If `require_manual_approval: true` and `env != dev`: require an explicit human approval signal (CI approval gate, signed commit, etc.) before apply.
+5. If `require_clean_git: true`: refuse to apply against a dirty working tree (untracked or unstaged changes). This is intentionally limited to working-tree cleanliness — commit topology (squash vs rebase vs merge vs tag) is a separate concern not enforced by this key.
+6. If `allow_prod_in_ci: false` (the default): refuse prod apply from any CI context. **Note:** teams whose intended prod migration path is CI/CD with manual approval must explicitly set `allow_prod_in_ci: true` alongside `require_manual_approval: true` and `require_dry_run_first: true`. `allow_prod_in_ci: false` is for manual/operator-run production migration workflows only.
+7. On any policy-read or schema-validation failure, exit non-zero and surface the specific check that failed.
 
 ### Step 6: Push + create PR
 
@@ -289,7 +345,8 @@ Tell the user:
 - **Preflight failure:** Surface the specific check, exit. Do not partially run.
 - **Missing skill/credential:** Exit with install/auth hint.
 - **Subagent failure:** Re-dispatch with more context or implement directly.
-- **Migration failure:** Fix SQL, re-run `/migrate`.
+- **Migration failure (Step 5 — dev only):** Fix SQL, re-run Step 4 (validate) against corrected code, then re-run Step 5 (migrate dev). Prod stays untouched. Max 3 retries.
+- **Prod migration:** Out of scope for autopilot. Handed off to user's CI/CD pipeline via `migrate.policy` (require_manual_approval, require_dry_run_first).
 - **Validate failure:** Fix issues, re-run (max 3 retries).
 - **Codex CRITICAL findings:** REMEDIATE (apply fix), push, re-review (max 2 retries). Do NOT continue past unremediated CRITICALs.
 - **Bugbot findings:** `/bugbot` handles triage + fix automatically (max 3 rounds).
