@@ -39,6 +39,10 @@
       "types": "./dist/src/index.d.ts",
       "default": "./dist/src/index.js"
     },
+    "./run-state/sameness-detector": {
+      "types": "./dist/src/core/run-state/sameness-detector.d.ts",
+      "default": "./dist/src/core/run-state/sameness-detector.js"
+    },
     "./bin/claude-autopilot.js": "./bin/claude-autopilot.js",
     "./bin/guardrail.js": "./bin/guardrail.js",
     "./package.json": "./package.json"

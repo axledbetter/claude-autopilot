@@ -69,12 +69,24 @@ describe('library export surface (v7.3.0)', () => {
     assert.match(dot.default, /^\.\/dist\//, 'default points at dist/');
     // Exports map intentionally does NOT expose ./cli/*, ./core/*, etc.
     // Consumers who need internals can deep-import via a deliberate
-    // unsupported path.
+    // unsupported path. As of v7.10.0, `./run-state/sameness-detector` is
+    // an explicit public subpath consumed by the autopilot skill agent.
     const supportedKeys = Object.keys(pkg.exports).sort();
     assert.deepEqual(
       supportedKeys,
-      ['.', './bin/claude-autopilot.js', './bin/guardrail.js', './package.json'].sort(),
-      'export map shape is the locked v7.3.0 set',
+      [
+        '.',
+        './bin/claude-autopilot.js',
+        './bin/guardrail.js',
+        './package.json',
+        './run-state/sameness-detector',
+      ].sort(),
+      'export map shape is the locked v7.10.0 set',
     );
+    // Verify the sameness-detector subpath points at compiled output.
+    const sd = pkg.exports['./run-state/sameness-detector'];
+    assert.ok(sd, 'has sameness-detector subpath export');
+    assert.match(sd.types, /^\.\/dist\//, 'sameness-detector types in dist/');
+    assert.match(sd.default, /^\.\/dist\//, 'sameness-detector default in dist/');
   });
 });

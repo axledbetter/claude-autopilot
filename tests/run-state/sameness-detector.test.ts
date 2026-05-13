@@ -121,6 +121,32 @@ describe('sameness-detector / computeFingerprint', () => {
     assert.equal(a.hash, b.hash);
   });
 
+  it('is delimiter-safe — pipe characters in fields do not collide', () => {
+    // Regression: an earlier draft used pipe-delimited concatenation as the
+    // pre-hash canonical form. That was vulnerable to:
+    //   `a|b|c|d` == `a|b|c|d`  even if fields legitimately contained '|'.
+    // The current implementation uses JSON.stringify of a 4-tuple, which is
+    // unambiguous. These two inputs should produce DIFFERENT hashes despite
+    // the pipe-delimited concatenation being identical.
+    const a = computeFingerprint({
+      phase: 'validate',
+      errorType: 'tsc_error',
+      errorLocation: 'foo|bar',
+      errorMessage: 'msg',
+    });
+    const b = computeFingerprint({
+      phase: 'validate',
+      errorType: 'tsc_error|foo',
+      errorLocation: 'bar',
+      errorMessage: 'msg',
+    });
+    assert.notEqual(
+      a.hash,
+      b.hash,
+      'fields with embedded pipes must not produce hash collisions',
+    );
+  });
+
   it('handles missing / undefined fields without crashing', () => {
     const fp = computeFingerprint({
       phase: 'validate',

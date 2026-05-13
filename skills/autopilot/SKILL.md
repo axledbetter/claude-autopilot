@@ -228,8 +228,10 @@ If either FAIL:
 - Fix the blocking issues
 - **Before consuming a retry, compute the failure fingerprint** with `computeFingerprint({ phase: 'validate', errorType, errorLocation, errorMessage })` from `src/core/run-state/sameness-detector.ts`:
   - `errorType`: `tsc_error` | `test_failure` | `lint_error` (whichever class caused the FAIL)
-  - `errorLocation`: `file:line` for tsc/lint, test name for test failures
-  - `errorMessage`: first 200 chars of the canonical message
+  - `errorLocation`: prefer stable identifiers — `<repo-relative-path>:<line>` for tsc/lint, test-suite-name+test-name for tests. Avoid absolute paths and transient temp dirs; use the repo-relative form so the hash survives across working-tree moves.
+  - `errorMessage`: first 200 chars of the canonical message. Strip any embedded UUIDs, ports, or epoch timestamps from the message before computing — those rotate per run and will mask true sameness.
+
+  **Known limitation:** if the underlying fix shifts line numbers, two retries can produce different fingerprints even when the root cause is identical (false negative — no escalation). The current behavior is conservative: it never falsely escalates, but it may let the loop run its full retry budget on a shifting-line-number failure. If you see this pattern, prefer test name + diagnostic code over `file:line`.
 - Append the fingerprint to an in-memory list for this retry loop, then call `shouldEscalate(history)`. If `escalate === true` (the last two attempts produced the same fingerprint), STOP — do not consume another retry. Surface the matching fingerprint to the user and stop the pipeline.
 - Re-run the failing check
 - Max 3 retry iterations
@@ -318,7 +320,7 @@ npx tsx scripts/codex-pr-review.ts <pr-number>
 Posts Codex review as a GitHub PR comment. **This serves as the second risk-tiered pass for medium-risk specs and the third pass for high-risk specs.** Remediate CRITICAL findings:
 - Fix on the branch
 - Push
-- **Before consuming a re-review iteration, compute the failure fingerprint** with `computeFingerprint({ phase: 'codex-review', errorType: 'codex_critical', errorLocation: <finding-id OR `${title}|${path}`>, errorMessage: <first sentence of the finding> })` from `src/core/run-state/sameness-detector.ts`. Append to an in-memory list for this retry loop and call `shouldEscalate(history)`. If `escalate === true` — the same critical finding fired twice after a remediation attempt — STOP and surface to the user. Do not consume another re-review.
+- **Before consuming a re-review iteration, compute the failure fingerprint** with `computeFingerprint({ phase: 'codex-review', errorType: 'codex_critical', errorLocation, errorMessage })` from `src/core/run-state/sameness-detector.ts`. For `errorLocation` prefer a stable composite — `${normalized-title}::${repo-relative-path}` — over the transport-level finding ID (Codex regenerates finding IDs on each review run, so the raw ID is not stable). For `errorMessage` use the first sentence of the finding body, stripping any per-run identifiers (run-id, timestamps, file SHAs). Append to an in-memory list for this retry loop and call `shouldEscalate(history)`. If `escalate === true` — the same critical finding fired twice after a remediation attempt — STOP and surface to the user. Do not consume another re-review.
 - Re-run Codex review
 - Max 2 iterations
 
@@ -333,7 +335,7 @@ npx tsx scripts/bugbot.ts --pr <pr-number>
 Triages each finding (real bug vs false positive), auto-fixes real bugs, dismisses false positives with GitHub replies. If fixes applied:
 - Push
 - Wait for new bugbot comments (30s)
-- **Before consuming a bugbot retry, compute the failure fingerprint** with `computeFingerprint({ phase: 'bugbot', errorType: <'bugbot_high' | 'bugbot_medium'>, errorLocation: <comment-id>, errorMessage: <first 200 chars of the comment body> })` from `src/core/run-state/sameness-detector.ts`. Append to an in-memory list for this retry loop and call `shouldEscalate(history)`. If `escalate === true` — a "fixed" finding re-fired identically — STOP and surface the fingerprint to the user. Do not consume another round.
+- **Before consuming a bugbot retry, compute the failure fingerprint** with `computeFingerprint({ phase: 'bugbot', errorType: <'bugbot_high' | 'bugbot_medium'>, errorLocation, errorMessage })` from `src/core/run-state/sameness-detector.ts`. For `errorLocation` prefer the stable `<repo-relative-path>:<line>` rather than the GitHub comment ID — Cursor reposts findings with fresh comment IDs after each push, so comment ID is not stable across retries. The comment ID can be surfaced as metadata for human inspection but should not enter the hash. For `errorMessage` use the first 200 chars of the finding body. Append to an in-memory list for this retry loop and call `shouldEscalate(history)`. If `escalate === true` — a "fixed" finding re-fired identically — STOP and surface the fingerprint to the user. Do not consume another round.
 - Re-run /bugbot
 - Max 3 rounds
 
@@ -351,11 +353,17 @@ Tell the user:
 
 As of v7.10.0, the three retry loops (Step 4 validate, Step 7 Codex PR review, Step 8 bugbot) MUST consult `src/core/run-state/sameness-detector.ts` before consuming a retry. The pipeline halts when retries make no progress — even if you have retries remaining.
 
+**The detector is consumed by the autopilot skill agent itself** (the LLM following this skill), not by the underlying `scripts/validate.ts` / `scripts/codex-pr-review.ts` / `scripts/bugbot.ts` CLI scripts. Those scripts are stateless per-invocation; the retry loop with its history lives inside this skill execution scope. That is why the integration is in this document and not in the CLI source.
+
 ```ts
+// Public package import (uses the subpath export added in v7.10.0):
 import {
   computeFingerprint,
   shouldEscalate,
-} from '@delegance/claude-autopilot/run-state/sameness-detector'; // or the src/ path when running from a checkout
+} from '@delegance/claude-autopilot/run-state/sameness-detector';
+
+// Or from a local checkout:
+import { computeFingerprint, shouldEscalate } from './src/core/run-state/sameness-detector.ts';
 ```
 
 How to use inside each retry loop:

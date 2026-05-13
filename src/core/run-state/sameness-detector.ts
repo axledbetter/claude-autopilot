@@ -17,6 +17,15 @@
 //     pipeline can adopt the detector without waiting on persistence.
 //   - All functions are pure (modulo `crypto.createHash`), making this easy
 //     to unit-test under node:test.
+//
+// Who calls this:
+//   The detector is consumed by the autopilot skill agent (an LLM following
+//   `skills/autopilot/SKILL.md`), NOT by the `scripts/validate.ts`,
+//   `scripts/codex-pr-review.ts`, or `scripts/bugbot.ts` CLI scripts. Those
+//   scripts are stateless per-invocation; the retry loop lives one layer
+//   above them, inside the skill execution. Wiring this into the CLIs would
+//   not catch repeated failures because each CLI invocation is a clean
+//   process. The skill agent is the durable retry-loop scope.
 
 import { createHash } from 'node:crypto';
 
@@ -88,11 +97,14 @@ export function computeFingerprint(
   const errorLocation = (input.errorLocation ?? '').toString();
   const errorMessage = normalizeMessage(input.errorMessage ?? '');
 
-  // Pipe-delimited because none of the four fields legitimately contain '|'
-  // in practice (file paths use '/', test names use spaces, codex IDs are
-  // alphanumeric). Keeping the delimiter outside the message ensures
-  // truncation can't accidentally re-introduce ambiguity.
-  const canonical = `${phase}|${errorType}|${errorLocation}|${errorMessage}`;
+  // Use JSON.stringify of a 4-tuple as the canonical pre-hash serialization.
+  // This is unambiguous under any field content — pipe characters, quotes,
+  // braces, embedded JSON, etc. all serialize unambiguously and cannot
+  // produce collisions across different `[phase, type, location, message]`
+  // tuples. (Earlier drafts used a pipe-delimited string; that was vulnerable
+  // to delimiter ambiguity when, e.g., a test name legitimately contained
+  // '|'. The JSON form has no such edge case.)
+  const canonical = JSON.stringify([phase, errorType, errorLocation, errorMessage]);
   const hash = createHash('sha256').update(canonical).digest('hex');
 
   return { phase, errorType, errorLocation, errorMessage, hash };
