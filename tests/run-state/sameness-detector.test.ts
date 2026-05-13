@@ -4,6 +4,7 @@ import {
   computeFingerprint,
   isSameFailure,
   shouldEscalate,
+  stripVolatileTokens,
   FINGERPRINT_MESSAGE_MAX,
   type FailureFingerprint,
 } from '../../src/core/run-state/sameness-detector.ts';
@@ -169,6 +170,109 @@ describe('sameness-detector / computeFingerprint', () => {
     assert.equal(fp.errorType, 'bugbot_high');
     assert.equal(fp.errorLocation, 'comment-12345');
     assert.equal(fp.errorMessage, 'Hardcoded secret detected');
+  });
+});
+
+describe('sameness-detector / stripVolatileTokens', () => {
+  it('replaces UUIDs with <uuid>', () => {
+    const out = stripVolatileTokens('Failed at request 550e8400-e29b-41d4-a716-446655440000 retry');
+    assert.equal(out, 'Failed at request <uuid> retry');
+  });
+
+  it('replaces ISO timestamps with <ts>', () => {
+    const out = stripVolatileTokens('Error at 2026-05-13T07:00:00.123Z during apply');
+    assert.equal(out, 'Error at <ts> during apply');
+  });
+
+  it('replaces 13-digit epoch ms with <ts>', () => {
+    const out = stripVolatileTokens('run started 1715587200000 ended');
+    assert.equal(out, 'run started <ts> ended');
+  });
+
+  it('replaces sha1 / sha256 hex digests with <sha>', () => {
+    const sha1 = 'a'.repeat(40);
+    const sha256 = 'b'.repeat(64);
+    assert.equal(stripVolatileTokens(`commit ${sha1} ok`), 'commit <sha> ok');
+    assert.equal(stripVolatileTokens(`tree ${sha256} ok`), 'tree <sha> ok');
+  });
+
+  it('replaces /tmp and /var/folders paths with <tmpdir>', () => {
+    assert.equal(
+      stripVolatileTokens('Wrote /tmp/abc-XYZ-123/foo.json bytes'),
+      'Wrote <tmpdir> bytes',
+    );
+    assert.equal(
+      stripVolatileTokens('cached at /var/folders/9q/abc/T/x.txt now'),
+      'cached at <tmpdir> now',
+    );
+  });
+
+  it('replaces localhost:port with <host:port>', () => {
+    assert.equal(
+      stripVolatileTokens('connect refused at 127.0.0.1:49213 sock'),
+      'connect refused at <host:port> sock',
+    );
+    assert.equal(
+      stripVolatileTokens('connect refused at localhost:49213 sock'),
+      'connect refused at <host:port> sock',
+    );
+  });
+
+  it('returns empty string for non-string input', () => {
+    // @ts-expect-error — testing runtime resilience
+    assert.equal(stripVolatileTokens(undefined), '');
+    // @ts-expect-error — testing runtime resilience
+    assert.equal(stripVolatileTokens(null), '');
+  });
+});
+
+describe('sameness-detector / fingerprint stability under volatile tokens', () => {
+  it('two messages differing only in UUID produce the same hash', () => {
+    const a = computeFingerprint({
+      phase: 'validate',
+      errorType: 'test_failure',
+      errorLocation: 'suite > test',
+      errorMessage: 'request 550e8400-e29b-41d4-a716-446655440000 timed out',
+    });
+    const b = computeFingerprint({
+      phase: 'validate',
+      errorType: 'test_failure',
+      errorLocation: 'suite > test',
+      errorMessage: 'request 11111111-2222-3333-4444-555555555555 timed out',
+    });
+    assert.equal(a.hash, b.hash);
+  });
+
+  it('two locations differing only in tmpdir path produce the same hash', () => {
+    const a = computeFingerprint({
+      phase: 'validate',
+      errorType: 'test_failure',
+      errorLocation: '/tmp/rs-state-AbCdEf/state.json:5',
+      errorMessage: 'parse error',
+    });
+    const b = computeFingerprint({
+      phase: 'validate',
+      errorType: 'test_failure',
+      errorLocation: '/tmp/rs-state-ZyXwVu/state.json:5',
+      errorMessage: 'parse error',
+    });
+    assert.equal(a.hash, b.hash);
+  });
+
+  it('two messages differing only in ISO timestamp produce the same hash', () => {
+    const a = computeFingerprint({
+      phase: 'codex-review',
+      errorType: 'codex_critical',
+      errorLocation: 'finding-1',
+      errorMessage: 'review at 2026-05-13T07:00:00Z failed: missing tenant',
+    });
+    const b = computeFingerprint({
+      phase: 'codex-review',
+      errorType: 'codex_critical',
+      errorLocation: 'finding-1',
+      errorMessage: 'review at 2026-05-13T08:30:42.123Z failed: missing tenant',
+    });
+    assert.equal(a.hash, b.hash);
   });
 });
 

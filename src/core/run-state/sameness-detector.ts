@@ -70,20 +70,65 @@ export interface ComputeFingerprintInput {
   errorMessage: string;
 }
 
-/** Normalize a free-form error message: trim, collapse all runs of
- *  whitespace (including newlines/tabs) to single spaces, and truncate to
- *  `FINGERPRINT_MESSAGE_MAX` characters. The truncation is what makes
- *  the fingerprint stable across runs whose messages differ only in
+/** Strip known volatile / per-run tokens from a free-form string so that two
+ *  retries that differ only in transient data (UUIDs, ports, epoch
+ *  timestamps, ISO timestamps, hex SHAs, absolute temp paths) produce the
+ *  same canonical form. Order matters — broader patterns run first so they
+ *  can swallow embedded delimiters before narrower patterns see them.
+ *
+ *  Exported because callers building locations/messages outside this module
+ *  may want to apply the same scrubbing before constructing a fingerprint
+ *  (e.g. when assembling an `errorLocation` from a tool output that embeds
+ *  a run-id). */
+export function stripVolatileTokens(s: string): string {
+  if (typeof s !== 'string') return '';
+  return (
+    s
+      // ISO-8601 timestamps (e.g. 2026-05-13T07:00:00.000Z)
+      .replace(
+        /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})?\b/g,
+        '<ts>',
+      )
+      // 13-digit epoch ms
+      .replace(/\b\d{13}\b/g, '<ts>')
+      // UUIDs (v1-v5)
+      .replace(
+        /\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b/g,
+        '<uuid>',
+      )
+      // 40-char (sha1) or 64-char (sha256) hex digests
+      .replace(/\b[0-9a-fA-F]{40}\b/g, '<sha>')
+      .replace(/\b[0-9a-fA-F]{64}\b/g, '<sha>')
+      // macOS / Linux temp paths (/tmp, /var/folders) up to the next whitespace
+      .replace(/\/(?:tmp|var\/folders)\/[^\s'"`]+/g, '<tmpdir>')
+      // localhost ports like :49213
+      .replace(/\b(?:127\.0\.0\.1|localhost):\d{2,5}\b/g, '<host:port>')
+  );
+}
+
+/** Normalize a free-form error message: strip volatile tokens, trim, collapse
+ *  all runs of whitespace (including newlines/tabs) to single spaces, and
+ *  truncate to `FINGERPRINT_MESSAGE_MAX` characters. The truncation is what
+ *  makes the fingerprint stable across runs whose messages differ only in
  *  trailing stack-frame noise. */
 function normalizeMessage(msg: string): string {
   if (typeof msg !== 'string') {
     return '';
   }
-  const collapsed = msg.replace(/\s+/g, ' ').trim();
+  const scrubbed = stripVolatileTokens(msg);
+  const collapsed = scrubbed.replace(/\s+/g, ' ').trim();
   if (collapsed.length <= FINGERPRINT_MESSAGE_MAX) {
     return collapsed;
   }
   return collapsed.slice(0, FINGERPRINT_MESSAGE_MAX);
+}
+
+/** Normalize an `errorLocation` (file path / test name / etc.) by applying
+ *  the same volatile-token scrubbing as the message, plus whitespace trim.
+ *  Does NOT truncate — locations are short by construction. */
+function normalizeLocation(loc: string): string {
+  if (typeof loc !== 'string') return '';
+  return stripVolatileTokens(loc).trim();
 }
 
 /** Compute a stable fingerprint for a single failure occurrence. The
@@ -94,7 +139,7 @@ export function computeFingerprint(
 ): FailureFingerprint {
   const phase = input.phase;
   const errorType = (input.errorType ?? '').toString();
-  const errorLocation = (input.errorLocation ?? '').toString();
+  const errorLocation = normalizeLocation((input.errorLocation ?? '').toString());
   const errorMessage = normalizeMessage(input.errorMessage ?? '');
 
   // Use JSON.stringify of a 4-tuple as the canonical pre-hash serialization.
