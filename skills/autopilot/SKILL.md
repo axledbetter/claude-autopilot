@@ -1,6 +1,6 @@
 ---
 name: autopilot
-description: End-to-end pipeline — brainstorm → spec → plan → implement → validate → migrate dev → PR → Codex review → bugbot → merge. Risk-tiered. No manual intervention after spec approval. Production migrations are handed off to the user's CI/CD pipeline.
+description: End-to-end pipeline — brainstorm → spec → plan → implement → validate → migrate dev → PR → Codex review → bugbot → merge. Risk-tiered. No manual intervention after spec approval until PR merge; production deploy/migration gates are handled by the user's CI/CD pipeline.
 ---
 
 # Autopilot — Idea to Merged PR Pipeline
@@ -249,7 +249,16 @@ This verifies the SQL parses and applies against the real schema shape before th
 
 # Re-run validation against the post-migration dev state (no autofix this time):
 npx tsx scripts/validate.ts --allow-dirty
+
+# If migration or type generation produced new file changes, re-run the
+# static/LLM review against the final diff — the Step 4 review is now stale.
+git diff --quiet HEAD -- || npx autopilot run --base main
 ```
+
+**Dev database drift** — `/migrate --env=dev` applies schema changes to dev BEFORE the PR is merged. If the PR is later rejected, substantially changed, or abandoned, dev will contain unmerged schema. Mitigations:
+
+- **Preferred:** target an isolated/ephemeral dev database per branch (per-PR Supabase project, Postgres schema namespace, or local container).
+- **Shared dev DB fallback:** before running Step 5, capture the current migration_state head; on PR abandonment, run a corrective migration that brings dev back to that head. Document the policy in `.autopilot/stack.md` so the team knows the cleanup contract.
 
 If migration fails:
 - **Before retrying:** confirm the dev migration rolled back cleanly. Some migration tools leave partial state on failure (non-transactional DDL, drift in migration_state table). If partial state exists, reset the dev database to the pre-migration baseline OR write a corrective migration that brings dev back to a known state.
@@ -272,6 +281,16 @@ migrate:
 As of v7.9.1, the valid keys per `presets/schemas/migrate.schema.json` are: `allow_prod_in_ci`, `require_clean_git`, `require_manual_approval`, `require_dry_run_first`. If the schema changes in a future release, that file is the source of truth.
 
 These keys are **declarative policy inputs**, not autopilot enforcement. Your CI/CD pipeline must explicitly invoke a migrate runner that reads `.autopilot/stack.md` AND enforces equivalent checks (e.g. require-clean-git, dry-run-before-apply, manual-approval-for-prod). Setting them in stack.md alone does not protect production unless your pipeline reads them.
+
+**Minimum CI/CD migrate-runner contract** (fail closed on all of these):
+
+1. Refuse to apply if `.autopilot/stack.md` cannot be read or parsed.
+2. Refuse to apply if the policy block contains unknown keys (schema-validate against `presets/schemas/migrate.schema.json`).
+3. If `require_dry_run_first: true`: refuse apply without a matching dry-run artifact for the current git head + target env.
+4. If `require_manual_approval: true` and `env != dev`: require an explicit human approval signal (CI approval gate, signed commit, etc.) before apply.
+5. If `require_clean_git: true`: refuse to apply against a dirty working tree or a non-merge commit.
+6. If `allow_prod_in_ci: false` (the default): refuse prod apply from any CI context.
+7. On any policy-read or schema-validation failure, exit non-zero and surface the specific check that failed.
 
 ### Step 6: Push + create PR
 
