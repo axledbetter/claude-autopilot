@@ -246,6 +246,9 @@ This verifies the SQL parses and applies against the real schema shape before th
 ```bash
 # Regenerate any stack-specific DB types if migration introduced schema changes
 # (e.g. Supabase: scripts/gen-types.ts). Stack-specific — skip if N/A.
+# REQUIRED for any stack with generated DB-typed code: missing regeneration leaves
+# stale types and validate.ts may not catch runtime/schema mismatches if the PR
+# does not directly touch the changed columns.
 
 # Re-run validation against the post-migration dev state (no autofix this time):
 npx tsx scripts/validate.ts --allow-dirty
@@ -254,6 +257,8 @@ npx tsx scripts/validate.ts --allow-dirty
 # static/LLM review against the final diff — the Step 4 review is now stale.
 git diff --quiet HEAD -- || npx autopilot run --base main
 ```
+
+> **v7.10+ candidate:** automate detection by reading a `post_migrate_dev: [...]` hook list from `.autopilot/stack.md` and failing Step 5 if schema changes are detected but no type-generation hook is configured. Today this is advisory — operator responsibility.
 
 **Dev database drift** — `/migrate --env=dev` applies schema changes to dev BEFORE the PR is merged. If the PR is later rejected, substantially changed, or abandoned, dev will contain unmerged schema. Mitigations:
 
@@ -288,8 +293,8 @@ These keys are **declarative policy inputs**, not autopilot enforcement. Your CI
 2. Refuse to apply if the policy block contains unknown keys (schema-validate against `presets/schemas/migrate.schema.json`).
 3. If `require_dry_run_first: true`: refuse apply without a matching dry-run artifact for the current git head + target env.
 4. If `require_manual_approval: true` and `env != dev`: require an explicit human approval signal (CI approval gate, signed commit, etc.) before apply.
-5. If `require_clean_git: true`: refuse to apply against a dirty working tree or a non-merge commit.
-6. If `allow_prod_in_ci: false` (the default): refuse prod apply from any CI context.
+5. If `require_clean_git: true`: refuse to apply against a dirty working tree (untracked or unstaged changes). This is intentionally limited to working-tree cleanliness — commit topology (squash vs rebase vs merge vs tag) is a separate concern not enforced by this key.
+6. If `allow_prod_in_ci: false` (the default): refuse prod apply from any CI context. **Note:** teams whose intended prod migration path is CI/CD with manual approval must explicitly set `allow_prod_in_ci: true` alongside `require_manual_approval: true` and `require_dry_run_first: true`. `allow_prod_in_ci: false` is for manual/operator-run production migration workflows only.
 7. On any policy-read or schema-validation failure, exit non-zero and surface the specific check that failed.
 
 ### Step 6: Push + create PR
