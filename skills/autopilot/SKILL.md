@@ -226,6 +226,13 @@ The `validate.ts` Phase 1 includes a **tsc regression check**: it runs `npx tsc 
 If either FAIL:
 - Read findings / validation report at `.claude/validation-report.json`
 - Fix the blocking issues
+- **Before consuming a retry, compute the failure fingerprint** with `computeFingerprint({ phase: 'validate', errorType, errorLocation, errorMessage })` from `src/core/run-state/sameness-detector.ts`:
+  - `errorType`: `tsc_error` | `test_failure` | `lint_error` (whichever class caused the FAIL)
+  - `errorLocation`: prefer stable identifiers — `<repo-relative-path>:<line>` for tsc/lint, test-suite-name+test-name for tests. Avoid absolute paths and transient temp dirs; use the repo-relative form so the hash survives across working-tree moves.
+  - `errorMessage`: first 200 chars of the canonical message. Strip any embedded UUIDs, ports, or epoch timestamps from the message before computing — those rotate per run and will mask true sameness.
+
+  **Known limitation:** if the underlying fix shifts line numbers, two retries can produce different fingerprints even when the root cause is identical (false negative — no escalation). The current behavior is conservative: it never falsely escalates, but it may let the loop run its full retry budget on a shifting-line-number failure. If you see this pattern, prefer test name + diagnostic code over `file:line`.
+- Append the fingerprint to an in-memory list for this retry loop, then call `shouldEscalate(history)`. If `escalate === true` (the last two attempts produced the same fingerprint), STOP — do not consume another retry. Surface the matching fingerprint to the user and stop the pipeline.
 - Re-run the failing check
 - Max 3 retry iterations
 
@@ -313,6 +320,7 @@ npx tsx scripts/codex-pr-review.ts <pr-number>
 Posts Codex review as a GitHub PR comment. **This serves as the second risk-tiered pass for medium-risk specs and the third pass for high-risk specs.** Remediate CRITICAL findings:
 - Fix on the branch
 - Push
+- **Before consuming a re-review iteration, compute the failure fingerprint** with `computeFingerprint({ phase: 'codex-review', errorType: 'codex_critical', errorLocation, errorMessage })` from `src/core/run-state/sameness-detector.ts`. For `errorLocation` prefer a stable composite — `${normalized-title}::${repo-relative-path}` — over the transport-level finding ID (Codex regenerates finding IDs on each review run, so the raw ID is not stable). For `errorMessage` use the first sentence of the finding body, stripping any per-run identifiers (run-id, timestamps, file SHAs). Append to an in-memory list for this retry loop and call `shouldEscalate(history)`. If `escalate === true` — the same critical finding fired twice after a remediation attempt — STOP and surface to the user. Do not consume another re-review.
 - Re-run Codex review
 - Max 2 iterations
 
@@ -327,6 +335,7 @@ npx tsx scripts/bugbot.ts --pr <pr-number>
 Triages each finding (real bug vs false positive), auto-fixes real bugs, dismisses false positives with GitHub replies. If fixes applied:
 - Push
 - Wait for new bugbot comments (30s)
+- **Before consuming a bugbot retry, compute the failure fingerprint** with `computeFingerprint({ phase: 'bugbot', errorType: <'bugbot_high' | 'bugbot_medium'>, errorLocation, errorMessage })` from `src/core/run-state/sameness-detector.ts`. For `errorLocation` prefer the stable `<repo-relative-path>:<line>` rather than the GitHub comment ID — Cursor reposts findings with fresh comment IDs after each push, so comment ID is not stable across retries. The comment ID can be surfaced as metadata for human inspection but should not enter the hash. For `errorMessage` use the first 200 chars of the finding body. Append to an in-memory list for this retry loop and call `shouldEscalate(history)`. If `escalate === true` — a "fixed" finding re-fired identically — STOP and surface the fingerprint to the user. Do not consume another round.
 - Re-run /bugbot
 - Max 3 rounds
 
@@ -340,6 +349,33 @@ Tell the user:
 - Bugbot triage summary (fixed / dismissed / needs-human)
 - Any human-required items that couldn't be auto-resolved
 
+## Retry-loop sameness detector (Steps 4, 7, 8)
+
+As of v7.10.0, the three retry loops (Step 4 validate, Step 7 Codex PR review, Step 8 bugbot) MUST consult `src/core/run-state/sameness-detector.ts` before consuming a retry. The pipeline halts when retries make no progress — even if you have retries remaining.
+
+**The detector is consumed by the autopilot skill agent itself** (the LLM following this skill), not by the underlying `scripts/validate.ts` / `scripts/codex-pr-review.ts` / `scripts/bugbot.ts` CLI scripts. Those scripts are stateless per-invocation; the retry loop with its history lives inside this skill execution scope. That is why the integration is in this document and not in the CLI source.
+
+```ts
+// Public package import (uses the subpath export added in v7.10.0):
+import {
+  computeFingerprint,
+  shouldEscalate,
+} from '@delegance/claude-autopilot/run-state/sameness-detector';
+
+// Or from a local checkout:
+import { computeFingerprint, shouldEscalate } from './src/core/run-state/sameness-detector.ts';
+```
+
+How to use inside each retry loop:
+
+1. On a FAIL, derive `{ phase, errorType, errorLocation, errorMessage }` for the most salient blocker.
+2. `const fp = computeFingerprint({...})`.
+3. Append `fp` to an in-memory list for THIS retry loop (no cross-loop state — bugbot and validate keep separate histories).
+4. `const decision = shouldEscalate(history)` — if `decision.escalate === true`, STOP. Surface `decision.fingerprint` and `decision.reason` to the user. Do not consume another retry attempt even if the per-loop max isn't reached.
+5. Otherwise apply the fix, run again.
+
+Persistence is in-memory only in v7.10.0. The v6 run-state events.ndjson integration is tracked as issue #180.
+
 ## Error Recovery
 
 - **Preflight failure:** Surface the specific check, exit. Do not partially run.
@@ -347,9 +383,10 @@ Tell the user:
 - **Subagent failure:** Re-dispatch with more context or implement directly.
 - **Migration failure (Step 5 — dev only):** Fix SQL, re-run Step 4 (validate) against corrected code, then re-run Step 5 (migrate dev). Prod stays untouched. Max 3 retries.
 - **Prod migration:** Out of scope for autopilot. Handed off to user's CI/CD pipeline via `migrate.policy` (require_manual_approval, require_dry_run_first).
-- **Validate failure:** Fix issues, re-run (max 3 retries).
-- **Codex CRITICAL findings:** REMEDIATE (apply fix), push, re-review (max 2 retries). Do NOT continue past unremediated CRITICALs.
-- **Bugbot findings:** `/bugbot` handles triage + fix automatically (max 3 rounds).
+- **Validate failure:** Fix issues, re-run (max 3 retries, sameness-detector may halt earlier).
+- **Codex CRITICAL findings:** REMEDIATE (apply fix), push, re-review (max 2 retries, sameness-detector may halt earlier). Do NOT continue past unremediated CRITICALs.
+- **Bugbot findings:** `/bugbot` handles triage + fix automatically (max 3 rounds, sameness-detector may halt earlier).
+- **Sameness detector halt:** The same failure fingerprint fired in two consecutive retry attempts — the loop is not making progress. Stop, surface the fingerprint, ask the human to inspect.
 - **External hard-block** (TCC, network, etc.): Stop, report what was completed, surface the blocker.
 
 ## When NOT to use

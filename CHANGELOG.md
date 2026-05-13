@@ -2,6 +2,23 @@
 
 - v5.6 Phase 7 (docs reconciliation) — pending.
 
+## 7.10.0 — 2026-05-13
+
+### Added
+- **Retry-loop sameness detector** (`src/core/run-state/sameness-detector.ts`) — new pure-TS module exporting `computeFingerprint`, `isSameFailure`, `shouldEscalate`, and `stripVolatileTokens`. A failure fingerprint is `{ phase, errorType, errorLocation, errorMessage, hash }` where `hash` is `sha256(JSON.stringify([phase, errorType, errorLocation, normalize(message[:200])]))`. JSON encoding is delimiter-safe — pipes, quotes, and embedded JSON in fields cannot produce cross-tuple collisions. `shouldEscalate(history)` returns `{ escalate: true }` when the last two entries have identical hashes — the signal that retries are making no progress.
+- **Volatile-token stripping built into the detector.** Both `errorLocation` and `errorMessage` are scrubbed of UUIDs, ISO timestamps, 13-digit epoch ms, sha1/sha256 hex digests, /tmp + /var/folders paths, and localhost:port before hashing — so a retry whose message differs only in a per-run UUID or temp directory still hashes to the same fingerprint. Exported as `stripVolatileTokens()` for callers that want to scrub before constructing a fingerprint.
+- **Public package subpath export.** `package.json` adds `./run-state/sameness-detector` pointing at `dist/src/core/run-state/sameness-detector.{js,d.ts}` so consumers can `import { computeFingerprint, shouldEscalate } from '@delegance/claude-autopilot/run-state/sameness-detector'` without deep-importing into compiled paths.
+- **Pipeline halts when retries make no progress, even if you have retries remaining.** `skills/autopilot/SKILL.md` Step 4 (validate), Step 7 (Codex PR review), and Step 8 (bugbot) now consult the detector before consuming a retry. If the same failure fingerprint fires twice in a row inside any retry loop, the pipeline stops and surfaces the matching fingerprint to the user instead of burning the remaining retry budget. This catches the class of bug where validate retries fix nothing because the underlying type error is unreachable from the change set.
+- Tests: `tests/run-state/sameness-detector.test.ts` (32 cases) covers the three issue-#181 acceptance scenarios (same × 2 escalates, same × 1 continues, different × 3 continues), edge cases (empty history, ABA pattern, message truncation, all three phases), delimiter-safety (fields containing `|`), and volatile-token scrubbing (UUIDs, timestamps, tmpdirs). `tests/run-state/sameness-detector-integration.test.ts` (7 cases) verifies SKILL.md retry-block references and that the compiled subpath export is importable + functional.
+
+### Notes
+- Persistence is intentionally in-memory only in v7.10.0. Per-retry-loop history is held in the autopilot skill execution scope; bugbot and validate do not share a history. The v6 run-state events.ndjson integration is tracked separately as issue #180.
+- Released as v7.10.0 even though issue #181 was originally labeled v7.11.0 — this ships before #178 and #179, so it gets the next minor.
+
+### Out of scope (still pending)
+- Expand/contract migration classification (additive vs destructive enforcement) — v7.11.0 candidate
+- v6 run-state engine integration into the autopilot skill (4,873 LOC of checkpoint/resume infra currently unused by the skill) — issue #180
+
 ## 7.9.1 — 2026-05-13 (correctness hotfix)
 
 ### Fixed

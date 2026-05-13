@@ -1,6 +1,6 @@
 {
   "name": "@delegance/claude-autopilot-web",
-  "version": "7.9.1",
+  "version": "7.10.0",
   "private": true,
   "type": "module",
   "scripts": {
